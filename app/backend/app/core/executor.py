@@ -44,26 +44,29 @@ class Executor:
     def _init_namespace(self):
         """Инициализирует пространство имён для выполнения кода"""
         from app.core.cox_selector import CoxVariableSelector
+        import json
+        from pathlib import Path
+        
+        # Load labels once
+        labels_path = Path(self.project_path) / "state" / "variable_labels.json"
+        labels = {}
+        if labels_path.exists():
+            try:
+                with open(labels_path, 'r', encoding='utf-8') as f:
+                    labels = json.load(f)
+            except:
+                pass
         
         def get_label(var_name, value=None):
             """Получить пользовательскую метку для переменной или её значения"""
-            import json
-            from pathlib import Path
-            labels_path = Path(self.project_path) / "state" / "variable_labels.json"
-            labels = {}
-            if labels_path.exists():
-                try:
-                    with open(labels_path, 'r', encoding='utf-8') as f:
-                        labels = json.load(f)
-                except:
-                    pass
-            
             var_labels = labels.get(var_name, {})
             
             if value is not None:
                 return var_labels.get('value_labels', {}).get(str(value), str(value))
             else:
                 return var_labels.get('chart_name', var_name)
+        
+        var_labels_dict = labels
         
         self.namespace = {
             'df': self.df,
@@ -73,6 +76,8 @@ class Executor:
             'save_plot': self._save_plot,
             'CoxVariableSelector': CoxVariableSelector,
             'get_label': get_label,
+            'var_labels': var_labels_dict,
+            'project_path': str(self.project_path),
         }
 
     def _save_plot(self, name: str, fig=None) -> str:

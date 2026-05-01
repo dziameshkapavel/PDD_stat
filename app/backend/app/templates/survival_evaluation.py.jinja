@@ -1,11 +1,10 @@
 # survival_evaluation.py.jinja
 # Survival Prediction Evaluation
-# C-index, Time-dependent AUC + Bootstrap CI, Model Comparison, Calibration
+# C-index, Time-dependent AUC + Bootstrap CI, Model Comparison, Stratification
 
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
 import json
 import time
 from pathlib import Path
@@ -17,19 +16,54 @@ warnings.filterwarnings('ignore')
 pred_cols = {{ pred_cols|default([])|tojson }}
 time_col = "{{ time_col }}"
 event_col = "{{ event_col }}"
+stratify_col = "{{ stratify_col|default('') }}"
 
+time_step = {{ time_step|default(6)|int }}
 time_points_raw = "{{ time_points|default('12,24,36,48,60') }}"
 time_points = [int(t.strip()) for t in time_points_raw.split(',') if t.strip().isdigit()]
 
-# Filter to actual data range
-_min_t = max(1, df[time_col].min())
-_max_t = df[time_col].max()
-eval_times = [t for t in time_points if _min_t <= t <= _max_t]
-
 n_bootstrap = {{ n_bootstrap|default(1000)|int }}
-x_tick_step = {{ x_tick_step|default(6)|int }}
 run_model_comparison = {{ run_model_comparison|default(True) }}
-run_calibration = {{ run_calibration|default(True) }}
+
+x_tick_step = {{ x_tick_step|default(6)|int }}
+x_label = "{{ x_label|default('Time, months') }}"
+y_tick_step = {{ y_tick_step|default(0.1)|float }}
+y_label = "{{ y_label|default('AUC') }}"
+
+# ========== LABELS ==========
+var_labels = {}
+try:
+    labels_path = Path(project_path) / "state" / "variable_labels.json"
+    if labels_path.exists():
+        with open(labels_path, 'r', encoding='utf-8') as f:
+            var_labels = json.load(f)
+except:
+    pass
+
+def get_label(col_name, value):
+    """Get user-defined label for a value, or return formatted value"""
+    if col_name in var_labels:
+        val_labels = var_labels[col_name].get('value_labels', {})
+        # Try "X.X" format
+        key_float = f"{float(value):.1f}"
+        if key_float in val_labels:
+            return val_labels[key_float]
+        # Try "X" format
+        key_int = str(int(float(value)))
+        if key_int in val_labels:
+            return val_labels[key_int]
+        # Try raw string
+        key_str = str(value)
+        if key_str in val_labels:
+            return val_labels[key_str]
+    # Clean number
+    try:
+        f = float(value)
+        if f == int(f):
+            return str(int(f))
+    except:
+        pass
+    return str(value)
 
 # ========== DATA PREPARATION ==========
 print("## Survival Prediction Evaluation\n")
@@ -41,7 +75,17 @@ valid_preds = [p for p in pred_cols if p in df.columns]
 if not valid_preds:
     raise ValueError("No valid prediction columns")
 
-df_eval = df[[time_col, event_col] + valid_preds].copy().dropna()
+strata = [None]
+if stratify_col and stratify_col in df.columns:
+    strata = sorted(df[stratify_col].dropna().unique(), key=lambda x: str(x))
+    strata_labels = [get_label(stratify_col, s) for s in strata]
+    print(f"**Stratify by:** `{stratify_col}` ({len(strata)} groups: {', '.join(strata_labels)})")
+
+cols_to_keep = [time_col, event_col] + valid_preds
+if stratify_col and stratify_col in df.columns:
+    cols_to_keep.append(stratify_col)
+
+df_eval = df[cols_to_keep].copy().dropna()
 n_total = len(df_eval)
 n_events = int(df_eval[event_col].sum())
 
@@ -50,350 +94,214 @@ print(f"**Event:** `{event_col}`  ")
 print(f"**Models:** {', '.join([f'`{p}`' for p in valid_preds])}  ")
 print(f"**Observations:** {n_total}  ")
 print(f"**Events:** {n_events} ({n_events/n_total*100:.1f}%)  ")
-print(f"**Bootstrap samples:** {n_bootstrap}  ")
-print(f"**Time points:** {', '.join(str(t) for t in time_points)} months  \n")
+print(f"**Bootstrap samples:** {n_bootstrap}  \n")
 
-y_time = df_eval[time_col].values
-y_event = df_eval[event_col].values.astype(bool)
-
-# sksurv structured array
+# ========== HELPERS ==========
 from sksurv.util import Surv
-y_surv = Surv.from_arrays(event=y_event, time=y_time)
+from sksurv.metrics import concordance_index_censored, cumulative_dynamic_auc
+from scipy import stats
 
-# ========== HELPER FUNCTIONS ==========
-def concordance_index(y_event, y_time, risk):
-    """C-index with handling for edge cases"""
-    from sksurv.metrics import concordance_index_censored
+def calc_cindex(y_ev, y_tm, risk):
     try:
-        c_idx = concordance_index_censored(y_event, y_time, risk)[0]
-        return float(c_idx)
+        return float(concordance_index_censored(y_ev, y_tm, risk)[0])
     except:
         return 0.5
 
-def bootstrap_ci_cindex(y_event, y_time, risk, n_iter=1000, alpha=0.05):
-    """Bootstrap CI for C-index with BCa correction"""
-    n = len(y_event)
-    base_c = concordance_index(y_event, y_time, risk)
+def bootstrap_cindex(y_ev, y_tm, risk, n_iter=1000):
+    n = len(y_ev)
+    base_c = calc_cindex(y_ev, y_tm, risk)
     boot_c = []
-    
     np.random.seed(42)
     for _ in range(n_iter):
         idx = np.random.choice(n, n, replace=True)
-        y_e_boot = y_event[idx]
-        y_t_boot = y_time[idx]
-        risk_boot = risk[idx]
-        
-        if y_e_boot.sum() == 0 or y_e_boot.sum() == len(y_e_boot):
+        if y_ev[idx].sum() == 0 or y_ev[idx].sum() == len(y_ev[idx]):
             continue
-            
         try:
-            c_boot = concordance_index(y_e_boot, y_t_boot, risk_boot)
-            if not np.isnan(c_boot):
-                boot_c.append(c_boot)
+            c = calc_cindex(y_ev[idx], y_tm[idx], risk[idx])
+            if not np.isnan(c):
+                boot_c.append(c)
         except:
             continue
-    
     if len(boot_c) < 50:
         return base_c, base_c, base_c
-    
     boot_c = np.array(boot_c)
-    
-    # BCa correction
-    z0 = stats.norm.ppf((boot_c < base_c).mean())
-    
-    # Acceleration factor
-    jack_c = []
-    for i in range(min(n, 100)):
-        idx_jack = np.ones(n, dtype=bool)
-        idx_jack[i] = False
-        try:
-            c_jack = concordance_index(y_event[idx_jack], y_time[idx_jack], risk[idx_jack])
-            jack_c.append(c_jack)
-        except:
-            continue
-    
-    if jack_c:
-        jack_c = np.array(jack_c)
-        jack_mean = jack_c.mean()
-        a = np.sum((jack_mean - jack_c)**3) / (6 * (np.sum((jack_mean - jack_c)**2))**1.5)
-        a = np.clip(a, -1, 1) if not np.isnan(a) else 0
-    else:
-        a = 0
-    
-    z_alpha = stats.norm.ppf(alpha / 2)
-    z_1_alpha = stats.norm.ppf(1 - alpha / 2)
-    
-    # BCa percentiles
-    p_low = stats.norm.cdf(z0 + (z0 + z_alpha) / (1 - a * (z0 + z_alpha)))
-    p_high = stats.norm.cdf(z0 + (z0 + z_1_alpha) / (1 - a * (z0 + z_1_alpha)))
-    
-    ci_low = np.percentile(boot_c, max(0.1, p_low * 100))
-    ci_high = np.percentile(boot_c, min(99.9, p_high * 100))
-    
-    return float(base_c), float(ci_low), float(ci_high)
+    return float(base_c), float(np.percentile(boot_c, 2.5)), float(np.percentile(boot_c, 97.5))
 
-def time_dependent_auc_bootstrap(y_surv, risk, time_points, n_iter=500):
-    """Time-dependent AUC with bootstrap CI"""
-    from sksurv.metrics import cumulative_dynamic_auc
+def calc_time_auc(y_surv_local, risk, times, y_ev, y_tm):
+    ev_idx = np.where(y_ev)[0]
+    ne_idx = np.where(~y_ev)[0]
+    if len(ev_idx) < 5 or len(ne_idx) < 5:
+        return {}
     
-    n = len(risk)
-    auc_results = {}
+    n_ev_train = len(ev_idx) // 2
+    n_ne_train = len(ne_idx) // 2
+    train_idx = np.concatenate([ev_idx[:n_ev_train], ne_idx[:n_ne_train]])
+    test_idx = np.concatenate([ev_idx[n_ev_train:], ne_idx[n_ne_train:]])
     
-    for t in time_points:
-        if t <= 0 or t > y_time.max():
+    results = {}
+    for t in times:
+        if t <= 0 or t > y_tm.max():
             continue
-            
-        # Point estimate
         try:
-            # Split for stable estimate
-            ev_idx = np.where(y_event)[0]
-            ne_idx = np.where(~y_event)[0]
-            
-            n_ev_train = len(ev_idx) // 2
-            n_ne_train = len(ne_idx) // 2
-            
-            train_idx = np.concatenate([ev_idx[:n_ev_train], ne_idx[:n_ne_train]])
-            test_idx = np.concatenate([ev_idx[n_ev_train:], ne_idx[n_ne_train:]])
-            
-            auc_val = cumulative_dynamic_auc(
-                y_surv[train_idx], y_surv[test_idx], risk[test_idx], [t]
-            )
+            auc_val = cumulative_dynamic_auc(y_surv_local[train_idx], y_surv_local[test_idx], risk[test_idx], [t])
             base_auc = float(auc_val[0][0]) if isinstance(auc_val, tuple) else float(auc_val[0])
+            results[t] = {'auc': base_auc}
         except:
             continue
+    return results
+
+# ========== ANALYSIS ==========
+results_by_stratum = []
+all_auc_plot_data = {}
+model_comparisons = []
+
+for s in strata:
+    if s is None:
+        stratum_df = df_eval
+        label = "All"
+    else:
+        stratum_df = df_eval[df_eval[stratify_col] == s]
+        label = get_label(stratify_col, s)
+    
+    if len(stratum_df) < 20:
+        print(f"*Stratum '{label}': insufficient data ({len(stratum_df)} obs)*\n")
+        continue
+    
+    local_y_time = stratum_df[time_col].values
+    local_y_event = stratum_df[event_col].values.astype(bool)
+    local_y_surv = Surv.from_arrays(event=local_y_event, time=local_y_time)
+    
+    local_times = [t for t in time_points if t <= local_y_time.max()]
+    if not local_times:
+        local_times = [int(local_y_time.max())]
+    
+    c_indices = {}
+    auc_data = {}
+    
+    for pred_col in valid_preds:
+        risk = stratum_df[pred_col].values
         
-        # Bootstrap
-        boot_aucs = []
+        if n_bootstrap > 0:
+            c_val, ci_low, ci_high = bootstrap_cindex(local_y_event, local_y_time, risk, n_bootstrap)
+        else:
+            c_val = calc_cindex(local_y_event, local_y_time, risk)
+            ci_low, ci_high = c_val, c_val
+        
+        c_indices[pred_col] = {'value': c_val, 'ci_low': ci_low, 'ci_high': ci_high}
+        auc_data[pred_col] = calc_time_auc(local_y_surv, risk, local_times, local_y_event, local_y_time)
+    
+    results_by_stratum.append({
+        'label': label,
+        'n': len(stratum_df),
+        'events': int(local_y_event.sum()),
+        'c_indices': c_indices,
+        'auc_data': auc_data
+    })
+    
+    print(f"### Stratum: {label} (n={len(stratum_df)}, events={int(local_y_event.sum())})\n")
+    
+    print("| Model | C-index | 95% CI |")
+    print("|-------|---------|--------|")
+    for m, c in c_indices.items():
+        print(f"| {m} | {c['value']:.4f} | [{c['ci_low']:.4f}, {c['ci_high']:.4f}] |")
+    print()
+    
+    if local_times:
+        print("| Time | " + " | ".join([f"`{p}`" for p in valid_preds]) + " |")
+        print("|------|" + "|".join(["-------" for _ in valid_preds]) + "|")
+        for t in local_times:
+            row = f"| {t}mo |"
+            for m in valid_preds:
+                if t in auc_data.get(m, {}):
+                    row += f" {auc_data[m][t]['auc']:.3f} |"
+                else:
+                    row += " — |"
+            print(row)
+        print()
+    
+    # Store for plot
+    for m, auc_d in auc_data.items():
+        key = f"{label}|{m}"
+        all_auc_plot_data[key] = {'data': auc_d, 'label': label, 'model': m, 'times': local_times}
+
+# Model comparison (overall only, without stratification)
+if run_model_comparison and len(valid_preds) >= 2 and len(strata) == 1:
+    print("### Model Comparison\n")
+    y_all_time = df_eval[time_col].values
+    y_all_event = df_eval[event_col].values.astype(bool)
+    
+    for m1, m2 in combinations(valid_preds, 2):
+        c1 = calc_cindex(y_all_event, y_all_time, df_eval[m1].values)
+        c2 = calc_cindex(y_all_event, y_all_time, df_eval[m2].values)
+        delta = c1 - c2
+        
+        n_boot_test = min(n_bootstrap, 500)
+        boot_deltas = []
         np.random.seed(42)
-        for _ in range(min(n_iter, 200)):
-            idx = np.random.choice(n, n, replace=True)
-            y_s_boot = y_surv[idx]
-            risk_boot = risk[idx]
-            
-            ev_idx_b = np.where(y_s_boot['event'])[0]
-            ne_idx_b = np.where(~y_s_boot['event'])[0]
-            
-            if len(ev_idx_b) < 5 or len(ne_idx_b) < 5:
+        for _ in range(n_boot_test):
+            idx = np.random.choice(len(y_all_event), len(y_all_event), replace=True)
+            if y_all_event[idx].sum() == 0:
                 continue
-            
-            n_ev_tr = len(ev_idx_b) // 2
-            n_ne_tr = len(ne_idx_b) // 2
-            
-            tr = np.concatenate([ev_idx_b[:n_ev_tr], ne_idx_b[:n_ne_tr]])
-            te = np.concatenate([ev_idx_b[n_ev_tr:], ne_idx_b[n_ne_tr:]])
-            
             try:
-                auc_b = cumulative_dynamic_auc(y_s_boot[tr], y_s_boot[te], risk_boot[te], [t])
-                v = float(auc_b[0][0]) if isinstance(auc_b, tuple) else float(auc_b[0])
-                if not np.isnan(v):
-                    boot_aucs.append(v)
+                cb1 = calc_cindex(y_all_event[idx], y_all_time[idx], df_eval[m1].values[idx])
+                cb2 = calc_cindex(y_all_event[idx], y_all_time[idx], df_eval[m2].values[idx])
+                boot_deltas.append(cb1 - cb2)
             except:
                 continue
         
-        if boot_aucs:
-            auc_results[t] = {
-                'auc': base_auc,
-                'ci_low': float(np.percentile(boot_aucs, 2.5)),
-                'ci_high': float(np.percentile(boot_aucs, 97.5))
-            }
-    
-    return auc_results
-
-def integrated_brier_score_wrapper(y_surv, risk, eval_times):
-    """Integrated Brier Score"""
-    from sksurv.metrics import integrated_brier_score
-    try:
-        ibs = integrated_brier_score(y_surv, y_surv, risk, eval_times)
-        return float(ibs)
-    except:
-        return None
-
-# ========== MAIN ANALYSIS ==========
-from scipy import stats
-
-# Storage
-all_c_indices = {}
-all_auc_data = {}
-all_brier_scores = {}
-model_comparisons = []
-calibration_data = {}
-
-# ========== 1. C-INDEX ==========
-print("### C-index (Concordance Index)\n")
-print("| Model | C-index | 95% CI (BCa bootstrap) |")
-print("|-------|---------|------------------------|")
-
-for pred_col in valid_preds:
-    risk = df_eval[pred_col].values
-    
-    if n_bootstrap > 0:
-        c_val, ci_low, ci_high = bootstrap_ci_cindex(y_event, y_time, risk, n_bootstrap)
-    else:
-        c_val = concordance_index(y_event, y_time, risk)
-        ci_low, ci_high = c_val, c_val
-    
-    all_c_indices[pred_col] = {
-        'value': c_val,
-        'ci_low': ci_low,
-        'ci_high': ci_high
-    }
-    
-    print(f"| {pred_col} | {c_val:.4f} | [{ci_low:.4f}, {ci_high:.4f}] |")
-
-print()
-
-# ========== 2. TIME-DEPENDENT AUC ==========
-print(f"### Time-dependent AUC\n")
-
-if len(eval_times) >= 2:
-    print("| Time | " + " | ".join([f"`{p}`" for p in valid_preds]) + " |")
-    print("|------|" + "|".join(["-------" for _ in valid_preds]) + "|")
-    
-    for pred_col in valid_preds:
-        risk = df_eval[pred_col].values
-        auc_data = time_dependent_auc_bootstrap(y_surv, risk, eval_times, n_bootstrap)
-        all_auc_data[pred_col] = auc_data
-    
-    for t in eval_times:
-        row = f"| {t}mo |"
-        for pred_col in valid_preds:
-            if t in all_auc_data[pred_col]:
-                a = all_auc_data[pred_col][t]
-                row += f" {a['auc']:.4f} [{a['ci_low']:.3f}-{a['ci_high']:.3f}] |"
-            else:
-                row += " — |"
-        print(row)
-    print()
-else:
-    print("*Not enough valid time points*\n")
-
-# ========== 4. MODEL COMPARISON ==========
-if run_model_comparison and len(valid_preds) >= 2:
-    print("### Model Comparison (IPCW-based DeLong test)\n")
-    
-    for m1, m2 in combinations(valid_preds, 2):
-        risk1 = df_eval[m1].values
-        risk2 = df_eval[m2].values
+        if boot_deltas:
+            se = np.array(boot_deltas).std()
+            z_stat = delta / se if se > 0 else 0
+            p_val = 2 * (1 - stats.norm.cdf(abs(z_stat)))
+        else:
+            p_val = 1.0
         
-        # IPCW weights for censoring
-        try:
-            from lifelines import KaplanMeierFitter
-            
-            # Fit censoring model
-            kmf = KaplanMeierFitter()
-            kmf.fit(y_time, ~y_event)  # censoring survival
-            
-            # Get IPCW weights
-            ipcw = np.zeros(len(y_time))
-            for i in range(len(y_time)):
-                t_i = y_time[i]
-                s_c = kmf.survival_function_at_times([t_i]).values[0]
-                if s_c > 0.01:
-                    ipcw[i] = 1.0 / s_c
-                else:
-                    ipcw[i] = 0
-            
-            # Normalize weights
-            ipcw = ipcw / ipcw.sum() * len(ipcw)
-            
-            # Compute weighted AUC for each model
-            from sklearn.metrics import roc_auc_score
-            
-            c1 = concordance_index(y_event, y_time, risk1)
-            c2 = concordance_index(y_event, y_time, risk2)
-            
-            delta = c1 - c2
-            
-            # Bootstrap test statistic
-            n_boot_test = min(n_bootstrap, 500)
-            boot_deltas = []
-            
-            np.random.seed(42)
-            for _ in range(n_boot_test):
-                idx = np.random.choice(len(y_event), len(y_event), replace=True)
-                y_e_b = y_event[idx]
-                y_t_b = y_time[idx]
-                r1_b = risk1[idx]
-                r2_b = risk2[idx]
-                
-                if y_e_b.sum() == 0:
-                    continue
-                
-                try:
-                    c1_b = concordance_index(y_e_b, y_t_b, r1_b)
-                    c2_b = concordance_index(y_e_b, y_t_b, r2_b)
-                    boot_deltas.append(c1_b - c2_b)
-                except:
-                    continue
-            
-            if boot_deltas:
-                boot_deltas = np.array(boot_deltas)
-                se_delta = boot_deltas.std()
-                z_stat = delta / se_delta if se_delta > 0 else 0
-                p_val = 2 * (1 - stats.norm.cdf(abs(z_stat)))
-            else:
-                se_delta = 0
-                z_stat = 0
-                p_val = 1.0
-            
-            sig_mark = " **" if p_val < 0.05 else ""
-            
-            model_comparisons.append({
-                'model1': m1,
-                'model2': m2,
-                'c_index_1': float(c1),
-                'c_index_2': float(c2),
-                'delta': float(delta),
-                'z_statistic': float(z_stat),
-                'p_value': float(p_val)
-            })
-            
-            print(f"| {m1} vs {m2} | ΔC = {delta:+.4f} | z = {z_stat:.3f} | p = {p_val:.4f}{sig_mark} |")
-        
-        except Exception as e:
-            print(f"| {m1} vs {m2} | Comparison failed: {e} |")
-    
+        sig = "**" if p_val < 0.05 else ""
+        print(f"| {m1} vs {m2} | ΔC = {delta:+.4f} | p = {p_val:.4f}{sig} |")
+        model_comparisons.append({'model1': m1, 'model2': m2, 'delta': float(delta), 'p_value': float(p_val)})
     print()
 
-# ========== 6. PLOTS ==========
+# ========== PLOT ==========
 timestamp = str(int(time.time()))
+output_plots = []
+max_time_for_ticks = 60
 
-# Only Time-dependent AUC plot
-if eval_times and all_auc_data:
+if all_auc_plot_data:
     fig, ax = plt.subplots(figsize=(10, 6))
-    colors = plt.cm.tab10(np.linspace(0, 1, len(valid_preds)))
+    colors = plt.cm.tab10(np.linspace(0, 1, max(len(all_auc_plot_data), 1)))
     
-    for i, pred_col in enumerate(valid_preds):
-        auc_vals = [all_auc_data[pred_col][t]['auc'] for t in eval_times if t in all_auc_data[pred_col]]
-        ci_lows_vals = [all_auc_data[pred_col][t]['ci_low'] for t in eval_times if t in all_auc_data[pred_col]]
-        ci_highs_vals = [all_auc_data[pred_col][t]['ci_high'] for t in eval_times if t in all_auc_data[pred_col]]
-        t_vals = [t for t in eval_times if t in all_auc_data[pred_col]]
+    for i, (key, info) in enumerate(sorted(all_auc_plot_data.items())):
+        auc_d = info['data']
+        t_vals = info['times']
         
-        if auc_vals:
-            ax.plot(t_vals, auc_vals, 'o-', color=colors[i], lw=2, label=pred_col, markersize=6)
-            for tx, vy in zip(t_vals, auc_vals):
+        if not t_vals or not auc_d:
+            continue
+        
+        auc_vals = [auc_d[t]['auc'] for t in t_vals if t in auc_d]
+        plot_t_vals = [t for t in t_vals if t in auc_d]
+        
+        if plot_t_vals:
+            lbl = f"{info['label']} - {info['model']}" if stratify_col else info['model']
+            ax.plot(plot_t_vals, auc_vals, 'o-', color=colors[i % len(colors)], lw=2, label=lbl, markersize=6)
+            for tx, vy in zip(plot_t_vals, auc_vals):
                 ax.annotate(f'{vy:.3f}', (tx, vy), textcoords="offset points", xytext=(0, 10),
-                            ha='center', fontsize=8, color=colors[i])
-
+                           ha='center', fontsize=8, color=colors[i % len(colors)])
+            max_time_for_ticks = max(max_time_for_ticks, max(plot_t_vals))
     
     ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5)
-    ax.set_xlabel('Time (months)')
-    max_t = max(t_vals) if t_vals else max(y_time)
-    ax.set_xticks(np.arange(0, max_t + x_tick_step, x_tick_step))
-    ax.set_ylabel('AUC')
+    ax.set_xlabel(x_label, fontsize=12)
+    ax.set_ylabel(y_label, fontsize=12)
     ax.set_title('Time-dependent AUC', fontsize=14, fontweight='bold')
-    ax.legend(fontsize=10, loc='lower left')
+    ax.legend(fontsize=9, loc='lower left')
     ax.set_ylim(0.4, 1.05)
     ax.grid(True, alpha=0.3)
+    ax.set_xticks(np.arange(0, max_time_for_ticks + x_tick_step, x_tick_step))
     
     plt.tight_layout()
     plot_filename = f"surv_eval_{timestamp}"
     save_plot(plot_filename, fig)
     output_plots = [f"{plot_filename}.png"]
     print(f"![Survival Evaluation](/plots/{plot_filename}.png)\n")
-else:
-    output_plots = []
-    print("*No plot generated — insufficient time points*\n")
 
 print("---")
 print("**Survival evaluation complete**")
@@ -403,17 +311,14 @@ output_metrics = {
     "model_type": "survival_evaluation",
     "time_col": time_col,
     "event_col": event_col,
+    "stratify_col": stratify_col if stratify_col else None,
     "n_total": int(n_total),
     "n_events": int(n_events),
     "models": valid_preds,
-    "c_indices": all_c_indices,
-    "time_auc": {
-        m: {str(t): v for t, v in auc_data.items()} 
-        for m, auc_data in all_auc_data.items()
-    },
-    "brier_scores": all_brier_scores,
+    "strata": [{'label': r['label'], 'n': r['n'], 'events': r['events'], 'c_indices': r['c_indices']} for r in results_by_stratum],
+    "c_indices": {r['label']: r['c_indices'] for r in results_by_stratum},
+    "time_auc": {r['label']: {m: {str(t): v for t, v in r['auc_data'].get(m, {}).items()} for m in valid_preds} for r in results_by_stratum},
     "model_comparisons": model_comparisons,
-    "calibration": calibration_data,
     "plots": output_plots
 }
 

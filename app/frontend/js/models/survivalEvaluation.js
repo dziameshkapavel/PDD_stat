@@ -17,6 +17,20 @@ export class SurvivalEvaluationModel extends BaseModel {
         this.ui.panels.addCard(card);
         this.setupFieldListeners(card);
         
+        // Chart Axes toggle
+        const chartAxesBtn = card.querySelector('.chart-axes-btn');
+        const axesRow = card.querySelector('.chart-axes-row');
+        
+        if (chartAxesBtn && axesRow) {
+            axesRow.style.display = 'none';
+            chartAxesBtn.classList.remove('active');
+            
+            chartAxesBtn.addEventListener('click', () => {
+                chartAxesBtn.classList.toggle('active');
+                axesRow.style.display = chartAxesBtn.classList.contains('active') ? 'flex' : 'none';
+            });
+        }
+        
         // Кнопка Run
         card.querySelector('.run-btn').addEventListener('click', () => this.run(card));
         card.querySelector('.card-close-btn').addEventListener('click', () => this.removeCard(card));
@@ -120,10 +134,23 @@ export class SurvivalEvaluationModel extends BaseModel {
         const evalTimes = timePointsStr.split(',')
             .map(t => parseInt(t.trim()))
             .filter(t => !isNaN(t) && t > 0);
+        const timeStep = evalTimes.length >= 2 ? evalTimes[1] - evalTimes[0] : 6;
         
         const nBootstrap = parseInt(bootstrapInput?.value) || 1000;
         const runComparison = comparisonCheck?.checked && nBootstrap > 0;
         const runCalibration = false;
+        
+        const stratifyInput = card.querySelector('.stratify-input');
+        const stratifyCol = stratifyInput?.value?.trim() || vars.stratify || '';
+        
+        let xTickStep = 6, xLabel = 'Time, months', yTickStep = 0.1, yLabel = 'AUC';
+        const axesRow = card.querySelector('.chart-axes-row');
+        if (axesRow && axesRow.style.display !== 'none') {
+            xTickStep = parseInt(card.querySelector('.x-step-input')?.value) || 6;
+            xLabel = card.querySelector('.x-label-input')?.value || 'Time, months';
+            yTickStep = parseFloat(card.querySelector('.y-step-input')?.value) || 0.1;
+            yLabel = card.querySelector('.y-label-input')?.value || 'AUC';
+        }
         
         return {
             time_col: timeCol,
@@ -131,7 +158,12 @@ export class SurvivalEvaluationModel extends BaseModel {
             pred_cols: predCols,
             time_points: timePointsStr,
             eval_times: evalTimes,
-            x_tick_step: parseInt(xStepInput?.value) || 6,
+            time_step: timeStep,
+            stratify_col: stratifyCol,
+            x_tick_step: xTickStep,
+            x_label: xLabel,
+            y_tick_step: yTickStep,
+            y_label: yLabel,
             n_bootstrap: nBootstrap,
             run_model_comparison: runComparison,
             run_calibration: runCalibration
@@ -143,55 +175,66 @@ export class SurvivalEvaluationModel extends BaseModel {
         if (!container) return;
         
         const metrics = result.metrics || {};
+        const strata = metrics.strata || [];
         let html = '';
         
-        // C-index
-        const cIndices = metrics.c_indices || {};
-        if (Object.keys(cIndices).length > 0) {
-            html += '<div class="diagnostic-card" style="margin-bottom:12px;">';
-            html += '<h3 class="diagnostic-card-title">C-index (BCa Bootstrap CI)</h3>';
-            html += '<table class="results-table"><thead><tr><th>Model</th><th>C-index</th><th>95% CI</th></tr></thead><tbody>';
-            for (const [m, c] of Object.entries(cIndices)) {
-                html += `<tr><td><strong>${m}</strong></td><td>${(c.value||0).toFixed(4)}</td><td>[${(c.ci_low||0).toFixed(4)}, ${(c.ci_high||0).toFixed(4)}]</td></tr>`;
-            }
-            html += '</tbody></table></div>';
-        }
-        
-        // Time-dependent AUC table
-        const timeAuc = metrics.time_auc || {};
-        if (Object.keys(timeAuc).length > 0) {
-            const allTimes = new Set();
-            for (const [m, data] of Object.entries(timeAuc)) {
-                Object.keys(data).forEach(t => allTimes.add(parseInt(t)));
-            }
-            const sortedTimes = Array.from(allTimes).sort((a, b) => a - b);
-            
-            html += '<div class="diagnostic-card" style="margin-bottom:12px;">';
-            html += '<h3 class="diagnostic-card-title">Time-dependent AUC</h3>';
-            html += '<table class="results-table"><thead><tr><th>Model</th>';
-            sortedTimes.forEach(t => html += `<th>${t}mo</th>`);
-            html += '</tr></thead><tbody>';
-            
-            for (const [m, data] of Object.entries(timeAuc)) {
-                html += `<tr><td><strong>${m}</strong></td>`;
-                sortedTimes.forEach(t => {
-                    const d = data[String(t)];
-                    if (d?.auc != null) {
-                        html += `<td title="95% CI: ${d.ci_low?.toFixed(3)||'—'}–${d.ci_high?.toFixed(3)||'—'}">${d.auc.toFixed(3)}</td>`;
-                    } else {
-                        html += '<td>—</td>';
+        if (strata.length > 0) {
+            for (const s of strata) {
+                const label = s.label || 'All';
+                html += `<div class="diagnostic-card" style="margin-bottom:12px;">`;
+                html += `<h3 class="diagnostic-card-title">${label} (n=${s.n}, events=${s.events})</h3>`;
+                
+                const cIndices = s.c_indices || {};
+                if (Object.keys(cIndices).length > 0) {
+                    html += '<table class="results-table"><thead><tr><th>Model</th><th>C-index</th><th>95% CI</th></tr></thead><tbody>';
+                    for (const [m, c] of Object.entries(cIndices)) {
+                        html += `<tr><td><strong>${m}</strong></td><td>${(c.value||0).toFixed(4)}</td><td>[${(c.ci_low||0).toFixed(4)}, ${(c.ci_high||0).toFixed(4)}]</td></tr>`;
                     }
-                });
-                html += '</tr>';
+                    html += '</tbody></table>';
+                }
+                
+                const timeAuc = metrics.time_auc?.[label] || {};
+                if (Object.keys(timeAuc).length > 0) {
+                    const allTimes = new Set();
+                    for (const [, data] of Object.entries(timeAuc)) {
+                        Object.keys(data || {}).forEach(t => allTimes.add(parseInt(t)));
+                    }
+                    const sortedTimes = Array.from(allTimes).sort((a, b) => a - b);
+                    
+                    if (sortedTimes.length > 0) {
+                        html += '<table class="results-table"><thead><tr><th>Model</th>';
+                        sortedTimes.forEach(t => html += `<th>${t}mo</th>`);
+                        html += '</tr></thead><tbody>';
+                        for (const [m, data] of Object.entries(timeAuc)) {
+                            html += `<tr><td><strong>${m}</strong></td>`;
+                            sortedTimes.forEach(t => {
+                                html += `<td>${data?.[String(t)]?.auc?.toFixed(3) || '—'}</td>`;
+                            });
+                            html += '</tr>';
+                        }
+                        html += '</tbody></table>';
+                    }
+                }
+                
+                html += '</div>';
             }
-            html += '</tbody></table></div>';
+        } else {
+            const cIndices = metrics.c_indices || {};
+            if (Object.keys(cIndices).length > 0 && typeof Object.values(cIndices)[0] === 'object' && 'value' in Object.values(cIndices)[0]) {
+                html += '<div class="diagnostic-card" style="margin-bottom:12px;">';
+                html += '<h3 class="diagnostic-card-title">C-index</h3>';
+                html += '<table class="results-table"><thead><tr><th>Model</th><th>C-index</th><th>95% CI</th></tr></thead><tbody>';
+                for (const [m, c] of Object.entries(cIndices)) {
+                    html += `<tr><td><strong>${m}</strong></td><td>${(c.value||0).toFixed(4)}</td><td>[${(c.ci_low||0).toFixed(4)}, ${(c.ci_high||0).toFixed(4)}]</td></tr>`;
+                }
+                html += '</tbody></table></div>';
+            }
         }
         
-        // Model comparison
         const comps = metrics.model_comparisons || [];
         if (comps.length > 0) {
             html += '<div class="diagnostic-card">';
-            html += '<h3 class="diagnostic-card-title">Model Comparison (IPCW DeLong Test)</h3>';
+            html += '<h3 class="diagnostic-card-title">Model Comparison</h3>';
             html += '<table class="results-table"><thead><tr><th>Comparison</th><th>ΔC</th><th>p-value</th></tr></thead><tbody>';
             for (const c of comps) {
                 const sig = c.p_value < 0.05 ? ' **' : '';

@@ -873,9 +873,33 @@
             </div>
             
             <div class="form-group">
-                <label class="form-label">X-axis step (months)</label>
-                <input type="number" class="form-input x-step-input" 
-                       value="6" min="1" max="120" style="width:100%;">
+                <label class="form-label">Stratify by (optional)</label>
+                <input type="text" class="form-input stratify-input" data-field="stratify" 
+                       placeholder="Select variable to stratify..." readonly>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Plot type</label>
+                <div class="button-group">
+                    <button class="btn-secondary chart-axes-btn" title="Customize axes">Chart Axes</button>
+                </div>
+                <div class="chart-axes-row" style="display:none;margin-top:8px;gap:12px;align-items:center;flex-wrap:wrap;">
+                    <div style="display:flex;align-items:center;gap:4px;">
+                        <span style="font-size:11px;">X step:</span>
+                        <input type="number" class="form-input x-step-input" value="6" min="1" max="120" style="width:55px;padding:4px 6px;font-size:12px;">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:4px;">
+                        <span style="font-size:11px;">X label:</span>
+                        <input type="text" class="form-input x-label-input" value="Time, months" style="width:120px;padding:4px 6px;font-size:12px;">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:4px;">
+                        <span style="font-size:11px;">Y step:</span>
+                        <input type="number" class="form-input y-step-input" value="0.1" min="0.05" max="0.5" step="0.05" style="width:55px;padding:4px 6px;font-size:12px;">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:4px;">
+                        <span style="font-size:11px;">Y label:</span>
+                        <input type="text" class="form-input y-label-input" value="AUC" style="width:80px;padding:4px 6px;font-size:12px;">
+                    </div>
+                </div>
             </div>
             
             <!-- Bootstrap settings -->
