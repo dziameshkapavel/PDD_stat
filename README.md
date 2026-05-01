@@ -1,5 +1,5 @@
 # PDD_stat by P. Demeshko
-# PDD_STAT — Statistical Analysis Platform for Clinical Research
+# Statistical Analysis Platform for Clinical Research
 
 A web-based statistical analysis application for survival analysis and binary outcome modeling in clinical studies. Built with FastAPI (Python) and vanilla JavaScript SPA.
 
