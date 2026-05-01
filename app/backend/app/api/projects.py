@@ -52,6 +52,8 @@ async def create_project(name: str):
         project_path = pm.create_project(name)
         state["current_project_name"] = name
         state["cached_cleaning_plan"] = None
+        active_path = Path(__file__).parent.parent / "active_project.txt"
+        active_path.write_text(str(project_path))
         print(f"[DEBUG] Project created: {name}, path: {project_path}")
         return {"status": "created", "name": name, "path": str(project_path)}
     except FileExistsError:
@@ -65,6 +67,8 @@ async def open_project(name: str):
         project_path = pm.open_project(name)
         state["current_project_name"] = name
         state["cached_cleaning_plan"] = None
+        active_path = Path(__file__).parent.parent / "active_project.txt"
+        active_path.write_text(str(project_path))
         print(f"[DEBUG] Project opened: {name}")
         return {"status": "opened", "name": name, "path": str(project_path)}
     except FileNotFoundError:
@@ -205,6 +209,8 @@ async def delete_project(name: str):
     if state.get("current_project_name") == name:
         state["current_project_name"] = None
         state["cached_cleaning_plan"] = None
+        active_path = Path(__file__).parent.parent / "active_project.txt"
+        active_path.write_text("")
     return {"status": "deleted", "name": name}
 
 
