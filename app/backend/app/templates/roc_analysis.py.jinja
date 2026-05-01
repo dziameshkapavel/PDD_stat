@@ -1,0 +1,291 @@
+# roc_analysis.py.jinja
+# ROC Analysis for multiple numeric predictors vs binary target
+# Uses Hanley-McNeil for AUC confidence intervals
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import roc_auc_score, roc_curve
+import time
+import json
+import scipy.stats
+from pathlib import Path
+
+var_labels = {}
+try:
+    labels_path = Path(project_path) / "state" / "variable_labels.json"
+    if labels_path.exists():
+        with open(labels_path, 'r', encoding='utf-8') as f:
+            var_labels = json.load(f)
+except:
+    pass
+
+print("## ROC Analysis: Multiple Predictors\n")
+
+target_col = "{{ target_col }}"
+predictors = {{ predictors|default([])|tojson }}
+event_value = {{ event_value|default(1)|int }}
+
+# ========== DeLong Test Functions ==========
+def compute_midrank(x):
+    J = np.argsort(x)
+    Z = x[J]
+    N = len(x)
+    T = np.zeros(N, dtype=float)
+    i = 0
+    while i < N:
+        j = i
+        while j < N and Z[j] == Z[i]:
+            j += 1
+        T[i:j] = 0.5 * (i + j - 1)
+        i = j
+    T2 = np.empty(N, dtype=float)
+    T2[J] = T + 1
+    return T2
+
+def fastDeLong(predictions_sorted_transposed, label_1_count):
+    m = label_1_count
+    n = predictions_sorted_transposed.shape[1] - m
+    positive_examples = predictions_sorted_transposed[:, :m]
+    negative_examples = predictions_sorted_transposed[:, m:]
+    k = predictions_sorted_transposed.shape[0]
+    tx = np.empty([k, m], dtype=float)
+    ty = np.empty([k, n], dtype=float)
+    tz = np.empty([k, m + n], dtype=float)
+    for r in range(k):
+        tx[r, :] = compute_midrank(positive_examples[r, :])
+        ty[r, :] = compute_midrank(negative_examples[r, :])
+        tz[r, :] = compute_midrank(predictions_sorted_transposed[r, :])
+    aucs = tz[:, :m].sum(axis=1) / m / n - float(m + 1.0) / 2.0 / n
+    v01 = (tz[:, :m] - tx[:, :]) / n
+    v10 = 1.0 - (tz[:, m:] - ty[:, :]) / m
+    sx = np.cov(v01)
+    sy = np.cov(v10)
+    delongcov = sx / m + sy / n
+    return aucs, delongcov
+
+def delong_roc_test(ground_truth, predictions_one, predictions_two):
+    order = (-ground_truth).argsort()
+    label_1_count = int(ground_truth.sum())
+    predictions_sorted_transposed = np.vstack((predictions_one, predictions_two))[:, order]
+    aucs, delongcov = fastDeLong(predictions_sorted_transposed, label_1_count)
+    l = np.array([[1, -1]])
+    z = np.abs(np.diff(aucs)) / np.sqrt(np.dot(np.dot(l, delongcov), l.T))
+    p_value = 2 * (1 - scipy.stats.norm.cdf(z[0, 0]))
+    return aucs, z[0, 0], p_value
+
+def hanley_mcneil_ci(y_true, y_pred):
+    """95% CI for AUC using Hanley-McNeil formula"""
+    auc_val = roc_auc_score(y_true, y_pred)
+    n_pos = y_true.sum()
+    n_neg = len(y_true) - n_pos
+    
+    if n_pos == 0 or n_neg == 0:
+        return auc_val, auc_val, auc_val
+    
+    q1 = auc_val / (2 - auc_val) if auc_val < 1 else 1.0
+    q2 = 2 * auc_val**2 / (1 + auc_val) if auc_val > 0 else 0.0
+    
+    se_auc = np.sqrt(
+        (auc_val * (1 - auc_val) + 
+         (n_pos - 1) * (q1 - auc_val**2) + 
+         (n_neg - 1) * (q2 - auc_val**2)) / 
+        (n_pos * n_neg)
+    )
+    
+    ci_low = max(0.0, auc_val - 1.96 * se_auc)
+    ci_high = min(1.0, auc_val + 1.96 * se_auc)
+    
+    return auc_val, ci_low, ci_high
+
+if target_col not in df.columns:
+    print(f"Error: Target column '{target_col}' not found")
+    exit()
+
+if not predictors:
+    print("Error: No predictors specified")
+    exit()
+
+valid_predictors = [p for p in predictors if p in df.columns and pd.api.types.is_numeric_dtype(df[p])]
+if len(valid_predictors) == 0:
+    print("Error: No valid numeric predictors")
+    exit()
+
+# Подготовка целевой переменной
+y = df[target_col].dropna().astype(int)
+
+# Кодируем: event_value -> 1, остальное -> 0
+y = (y == event_value).astype(int)
+
+print(f"**Target:** `{target_col}` (event = {event_value})")
+print(f"**Predictors:** {', '.join([f'`{p}`' for p in valid_predictors])}")
+print(f"**CI method:** Hanley-McNeil (no bootstrap)\n")
+
+results = []
+for pred in valid_predictors:
+    y_pred_orig = df[pred].dropna()
+    common_idx = y.index.intersection(y_pred_orig.index)
+    y_t = y.loc[common_idx]
+    y_p_orig = y_pred_orig.loc[common_idx]
+    mask = y_t.notna() & y_p_orig.notna()
+    y_t = y_t[mask]
+    y_p_orig = y_p_orig[mask]
+    if len(y_t) < 10:
+        continue
+    
+    # Hanley-McNeil CI
+    auc_base, ci_low, ci_high = hanley_mcneil_ci(y_t, y_p_orig)
+    
+    # ROC curve
+    fpr, tpr_all, thresholds = roc_curve(y_t, y_p_orig)
+    
+    # Optimal threshold (Youden)
+    j_scores = tpr_all - fpr
+    opt_idx = np.argmax(j_scores)
+    opt_thresh = thresholds[opt_idx]
+    sensitivity = tpr_all[opt_idx]
+    specificity = 1 - fpr[opt_idx]
+    
+    # PPV and NPV at optimal threshold
+    y_pred_bin = (y_p_orig >= opt_thresh).astype(int)
+    tp = ((y_pred_bin == 1) & (y_t == 1)).sum()
+    fp = ((y_pred_bin == 1) & (y_t == 0)).sum()
+    tn = ((y_pred_bin == 0) & (y_t == 0)).sum()
+    fn = ((y_pred_bin == 0) & (y_t == 1)).sum()
+    
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+    npv = tn / (tn + fn) if (tn + fn) > 0 else 0
+    
+    # Проверка на слабый предиктор
+    note = ""
+    if auc_base < 0.5:
+        note = " (inverted: predictor inversely associated with event)"
+    
+    results.append({
+        'predictor': pred,
+        'auc': auc_base,
+        'ci_low': ci_low,
+        'ci_high': ci_high,
+        'optimal_threshold': opt_thresh,
+        'sensitivity': sensitivity,
+        'specificity': specificity,
+        'precision': precision,
+        'npv': npv,
+        'fpr': fpr,
+        'tpr': tpr_all,
+        'note': note
+    })
+
+results.sort(key=lambda x: x['auc'], reverse=True)
+
+n_total = len(y)
+n_events = int(y.sum())
+
+print(f"**Observations:** {n_total}")
+print(f"**Events ({event_value}):** {n_events} ({n_events/n_total*100:.1f}%)\n")
+
+# Таблица результатов
+print("### ROC Results (sorted by AUC)\n")
+print("| Predictor | AUC | 95% CI | Threshold | Sens. | Spec. | PPV | NPV |")
+print("|-----------|-----|--------|----------|------|------|-----|-----|")
+for r in results:
+    note_str = " ⚠️" if r['note'] else ""
+    print(f"| `{r['predictor']}`{note_str} | {r['auc']:.4f} | {r['ci_low']:.3f}-{r['ci_high']:.3f} | {r['optimal_threshold']:.3f} | {r['sensitivity']:.3f} | {r['specificity']:.3f} | {r['precision']:.3f} | {r['npv']:.3f} |")
+
+if any(r['note'] for r in results):
+    print("\n*⚠️ AUC < 0.5: predictor is inversely associated with event. Consider changing event value.*")
+print()
+
+# ROC Curves
+fig, ax = plt.subplots(figsize=(10, 8))
+colors = plt.cm.tab10(np.linspace(0, 1, len(results)))
+for i, r in enumerate(results):
+    label = f"{r['predictor']} (AUC={r['auc']:.3f})"
+    ax.plot(r['fpr'], r['tpr'], color=colors[i], linewidth=2, label=label)
+ax.plot([0, 1], [0, 1], 'k--', alpha=0.5, linewidth=1, label='Random')
+ax.set_xlabel('False Positive Rate', fontsize=12)
+ax.set_ylabel('True Positive Rate', fontsize=12)
+ax.set_title(f'ROC Curves: Predicting {target_col}={event_value}', fontsize=14, fontweight='bold')
+ax.legend(loc='lower right', fontsize=10)
+ax.grid(True, alpha=0.3)
+ax.set_xlim([0, 1])
+ax.set_ylim([0, 1])
+plt.tight_layout()
+
+timestamp = str(int(time.time()))
+plot_name = f"roc_multiple_{timestamp}"
+save_plot(plot_name, fig)
+print(f"![ROC Curves](/plots/{plot_name}.png)\n")
+
+# Pairwise comparison (DeLong)
+if len(results) >= 2:
+    print("### Pairwise Comparison (DeLong test)\n")
+    print("| Comparison | Delta AUC | Z-score | p-value |")
+    print("|------------|-----------|---------|---------|")
+    
+    for i in range(len(results)):
+        for j in range(i + 1, len(results)):
+            r1 = results[i]
+            r2 = results[j]
+            y_all = df[target_col].dropna().astype(int)
+            y_all = (y_all == event_value).astype(int)
+            y_pred_1 = df[r1['predictor']].dropna()
+            y_pred_2 = df[r2['predictor']].dropna()
+            common_idx = y_all.index.intersection(y_pred_1.index).intersection(y_pred_2.index)
+            y_t = y_all.loc[common_idx].values
+            y_p1 = y_pred_1.loc[common_idx].values
+            y_p2 = y_pred_2.loc[common_idx].values
+            mask = np.isfinite(y_t) & np.isfinite(y_p1) & np.isfinite(y_p2)
+            y_t = y_t[mask].astype(int)
+            y_p1 = y_p1[mask]
+            y_p2 = y_p2[mask]
+            if len(y_t) < 20:
+                continue
+            _, z_stat, p_val = delong_roc_test(y_t, y_p1, y_p2)
+            delta = r1['auc'] - r2['auc']
+            sig = "**" if p_val < 0.05 else ""
+            comparison = f"{r1['predictor']} vs {r2['predictor']}"
+            print(f"| {comparison} | {delta:+.4f} | {z_stat:+.3f} | {p_val:.4f}{sig} |")
+
+print("")
+print("---")
+print("**ROC Analysis complete**")
+
+# JSON метрики для AI
+output_metrics = {
+    "model_type": "roc_analysis",
+    "target": target_col,
+    "event_value": event_value,
+    "n_total": n_total,
+    "n_events": n_events,
+    "n_predictors": len(results),
+    "ci_method": "Hanley-McNeil",
+    "best_predictor": results[0]['predictor'] if results else None,
+    "best_auc": float(results[0]['auc']) if results else None,
+    "results": [
+        {
+            "predictor": r['predictor'],
+            "auc": float(r['auc']),
+            "ci_low": float(r['ci_low']),
+            "ci_high": float(r['ci_high']),
+            "sensitivity": float(r['sensitivity']),
+            "specificity": float(r['specificity']),
+            "note": r['note']
+        }
+        for r in results
+    ]
+}
+
+if len(results) >= 2:
+    best_vs_others = []
+    best = results[0]
+    for r in results[1:]:
+        delta = best['auc'] - r['auc']
+        if delta > 0.05:
+            best_vs_others.append(f"{best['predictor']} beats {r['predictor']} by {delta:.3f}")
+    if best_vs_others:
+        output_metrics["best_vs_others"] = best_vs_others[:3]
+
+print("\n<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False))
+print("<!-- JSON_METRICS_END -->")

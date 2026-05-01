@@ -1,0 +1,326 @@
+# spline_analysis.py.jinja
+# Linear spline analysis: non-linear associations
+# Auto-detects Cox or Logistic based on input
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import LabelEncoder
+import json
+import time
+from pathlib import Path
+import warnings
+warnings.filterwarnings('ignore')
+
+var_labels = {}
+try:
+    labels_path = Path(project_path) / "state" / "variable_labels.json"
+    if labels_path.exists():
+        with open(labels_path, 'r', encoding='utf-8') as f:
+            var_labels = json.load(f)
+except:
+    pass
+
+print("## Spline Analysis: Non-Linear Association\n")
+
+variable = "{{ variable }}"
+target_col = "{{ target_col|default('') }}"
+time_col = "{{ time_col|default('') }}"
+event_col = "{{ event_col|default('') }}"
+covariates = {{ covariates|default([]) }}
+knot_type = "{{ knot_type|default('median') }}"  # median, quartiles, custom
+custom_knot = {{ custom_knot|default(0)|float }}
+
+# Определяем тип модели
+is_survival = time_col and event_col and time_col in df.columns and event_col in df.columns
+is_binary = target_col and target_col in df.columns
+
+if is_survival:
+    model_type = "Cox"
+    outcome_str = f"Survival: {time_col} / {event_col}"
+elif is_binary:
+    model_type = "Logistic"
+    outcome_str = f"Binary: {target_col}"
+else:
+    print("Error: Specify either binary target OR time+event columns")
+    exit()
+
+print(f"**Variable:** `{variable}`")
+print(f"**Model:** {model_type}")
+print(f"**Outcome:** {outcome_str}")
+print(f"**Knot type:** {knot_type}")
+print(f"**Adjusted for:** {', '.join([f'`{c}`' for c in covariates]) if covariates else 'None (univariate)'}")
+
+if variable not in df.columns:
+    print(f"Error: Variable '{variable}' not found")
+    exit()
+
+# Подготовка данных
+cols = [variable]
+if is_survival:
+    if time_col != variable:
+        cols.append(time_col)
+    cols.append(event_col)
+else:
+    cols.append(target_col)
+cols.extend(covariates)
+df_model = df[cols].copy().dropna().reset_index(drop=True)
+
+# Кодируем категориальные ковариаты
+for col in covariates:
+    if col in df_model.columns and df_model[col].dtype == 'object':
+        le = LabelEncoder()
+        df_model[col] = le.fit_transform(df_model[col].astype(str))
+
+n_total = len(df_model)
+print(f"**Observations:** {n_total}")
+
+if is_survival:
+    n_events = int(df_model[event_col].sum())
+    print(f"**Events:** {n_events}")
+print()
+
+if n_total < 20:
+    print("Error: Insufficient data")
+    exit()
+
+# Определяем узел (узлы)
+x = df_model[variable].values.ravel()
+if knot_type == 'median':
+    knots = [np.median(x)]
+    knot_labels = [f"Median ({knots[0]:.1f})"]
+elif knot_type == 'quartiles':
+    knots = [np.percentile(x, 25), np.percentile(x, 50), np.percentile(x, 75)]
+    knot_labels = [f"Q1 ({knots[0]:.1f})", f"Q2 ({knots[1]:.1f})", f"Q3 ({knots[2]:.1f})"]
+else:
+    knots = [custom_knot]
+    knot_labels = [f"Custom ({knots[0]:.1f})"]
+
+print(f"**Knots:** {', '.join(knot_labels)}\n")
+
+# Создаём сплайн-переменные
+for i, k in enumerate(knots):
+    df_model[f'spline_{i+1}'] = np.maximum(x.ravel() - k, 0)
+
+# Формула
+spline_cols = [f'spline_{i+1}' for i in range(len(knots))]
+all_preds = spline_cols + covariates
+
+# Стандартизация
+from sklearn.preprocessing import StandardScaler
+scaler = StandardScaler()
+X = df_model[all_preds].copy()
+X_scaled = scaler.fit_transform(X)
+X_scaled = pd.DataFrame(X_scaled, columns=all_preds)
+
+if is_survival:
+    # COX MODEL
+    from lifelines import CoxPHFitter
+    df_cox = df_model[[time_col, event_col, variable] + all_preds].copy()
+    
+    cph = CoxPHFitter()
+    cph.fit(df_cox, duration_col=time_col, event_col=event_col)
+    
+    print("### Cox Model with Spline\n")
+    print("| Segment | Knot | HR | 95% CI | p-value |")
+    print("|---------|------|-----|--------|---------|")
+    
+    summary = cph.summary
+    base_hr = float(summary.loc[variable, 'exp(coef)'])
+    base_p = float(summary.loc[variable, 'p'])
+    base_ci_low = float(summary.loc[variable, 'exp(coef) lower 95%'])
+    base_ci_high = float(summary.loc[variable, 'exp(coef) upper 95%'])
+    
+    print(f"| Below first knot | — | {base_hr:.3f} | {base_ci_low:.3f}-{base_ci_high:.3f} | {base_p:.4f} |")
+    
+    for i, k in enumerate(knots):
+        col = f'spline_{i+1}'
+        if col in summary.index:
+            hr = float(summary.loc[col, 'exp(coef)'])
+            p = float(summary.loc[col, 'p'])
+            ci_low = float(summary.loc[col, 'exp(coef) lower 95%'])
+            ci_high = float(summary.loc[col, 'exp(coef) upper 95%'])
+            combined_hr = base_hr * hr
+            print(f"| Above {knot_labels[i]} | {k:.1f} | {combined_hr:.3f} | {base_ci_low*ci_low:.3f}-{base_ci_high*ci_high:.3f} | {p:.4f} |")
+    
+    # Тест нелинейности
+    if len(knots) > 0:
+        try:
+            null_cph = CoxPHFitter()
+            null_cph.fit(df_cox[[time_col, event_col, variable] + covariates], 
+                        duration_col=time_col, event_col=event_col)
+            
+            from lifelines.statistics import logrank_test
+            nonlin_p = float(summary.loc[spline_cols[0], 'p']) if spline_cols[0] in summary.index else 1.0
+            print(f"\n**Non-linearity test:** p = {nonlin_p:.4f}{' **' if nonlin_p < 0.05 else ''}")
+            if nonlin_p < 0.05:
+                print("**Conclusion:** Significant non-linear association detected.")
+            else:
+                print("**Conclusion:** No evidence of non-linearity.")
+        except:
+            pass
+    
+    # График
+    timestamp = str(int(time.time()))
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # Plot 1: Log HR
+    ax1 = axes[0]
+    x_range = np.linspace(x.min(), x.max(), 200)
+    log_hr = np.zeros_like(x_range)
+    
+    beta_base = cph.params_[variable]
+    log_hr = beta_base * x_range.ravel()
+    
+    for i, k in enumerate(knots):
+        col = f'spline_{i+1}'
+        if col in cph.params_:
+            beta_k = cph.params_[col]
+            log_hr += beta_k * np.maximum(x_range.ravel() - k, 0)
+    
+    ax1.plot(x_range, log_hr, 'b-', linewidth=2, label='Log HR')
+    ax1.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+    for k, label in zip(knots, knot_labels):
+        ax1.axvline(x=k, color='red', linestyle='--', alpha=0.7, label=label)
+    ax1.set_xlabel(variable)
+    ax1.set_ylabel('Log Hazard Ratio')
+    ax1.set_title('Spline: Log HR vs Variable')
+    ax1.legend(fontsize=8)
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot 2: Histogram
+    ax2 = axes[1]
+    ax2.hist(x, bins=30, color='steelblue', edgecolor='white', alpha=0.7)
+    for k, label in zip(knots, knot_labels):
+        ax2.axvline(x=k, color='red', linestyle='--', linewidth=2, label=label)
+    ax2.set_xlabel(variable)
+    ax2.set_ylabel('Frequency')
+    ax2.set_title('Distribution with Knots')
+    ax2.legend(fontsize=8)
+    
+    plt.tight_layout()
+    plot_name = f"spline_{timestamp}"
+    save_plot(plot_name, fig)
+    print(f"\n![Spline Plot](/plots/{plot_name}.png)\n")
+
+else:
+    # LOGISTIC MODEL
+    from sklearn.linear_model import LogisticRegression
+    
+    y = df_model[target_col].values
+    
+    lr = LogisticRegression(max_iter=1000, random_state=42)
+    lr.fit(X_scaled, y)
+    
+    print("### Logistic Model with Spline\n")
+    print("| Segment | Knot | OR | 95% CI | p-value |")
+    print("|---------|------|-----|--------|---------|")
+    
+    # Приближённые p-value через bootstrap
+    from scipy import stats as scipy_stats
+    
+    coefs = lr.coef_[0]
+    intercept = lr.intercept_[0]
+    
+    # Bootstrap для SE
+    n_boot = 500
+    boot_coefs = []
+    np.random.seed(42)
+    for _ in range(n_boot):
+        idx = np.random.choice(len(y), len(y), replace=True)
+        Xb = X_scaled.iloc[idx]
+        yb = y[idx]
+        try:
+            lrb = LogisticRegression(max_iter=1000, random_state=42)
+            lrb.fit(Xb, yb)
+            boot_coefs.append(lrb.coef_[0])
+        except:
+            continue
+    
+    boot_coefs = np.array(boot_coefs)
+    se = boot_coefs.std(axis=0)
+    z_scores = coefs / se
+    p_values = 2 * (1 - scipy_stats.norm.cdf(np.abs(z_scores)))
+    
+    base_or = float(np.exp(coefs[0]))
+    base_p = float(p_values[0])
+    print(f"| Below first knot | — | {base_or:.3f} | — | {base_p:.4f} |")
+    
+    for i, k in enumerate(knots):
+        col_idx = i + 1
+        if col_idx < len(coefs):
+            or_val = float(np.exp(coefs[col_idx]))
+            p_val = float(p_values[col_idx])
+            combined_or = base_or * or_val
+            print(f"| Above {knot_labels[i]} | {k:.1f} | {combined_or:.3f} | — | {p_val:.4f} |")
+    
+    # Тест нелинейности
+    if len(knots) > 0 and len(coefs) > 1:
+        nonlin_p = float(p_values[1])
+        print(f"\n**Non-linearity test:** p = {nonlin_p:.4f}{' **' if nonlin_p < 0.05 else ''}")
+        if nonlin_p < 0.05:
+            print("**Conclusion:** Significant non-linear association detected.")
+        else:
+            print("**Conclusion:** No evidence of non-linearity.")
+    
+    # График
+    timestamp = str(int(time.time()))
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    
+    ax1 = axes[0]
+    x_range = np.linspace(x.min(), x.max(), 200)
+    log_odds = np.zeros_like(x_range)
+    
+    beta_base = coefs[0] / scaler.scale_[0]
+    log_odds = beta_base * (x_range - scaler.mean_[0])
+    
+    for i, k in enumerate(knots):
+        col_idx = i + 1
+        if col_idx < len(coefs):
+            beta_k = coefs[col_idx] / scaler.scale_[col_idx]
+            log_odds += beta_k * np.maximum(x_range - k, 0)
+    
+    ax1.plot(x_range, log_odds, 'b-', linewidth=2, label='Log Odds')
+    ax1.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+    for k, label in zip(knots, knot_labels):
+        ax1.axvline(x=k, color='red', linestyle='--', alpha=0.7, label=label)
+    ax1.set_xlabel(variable)
+    ax1.set_ylabel('Log Odds Ratio')
+    ax1.set_title('Spline: Log Odds vs Variable')
+    ax1.legend(fontsize=8)
+    ax1.grid(True, alpha=0.3)
+    
+    ax2 = axes[1]
+    ax2.hist(x, bins=30, color='steelblue', edgecolor='white', alpha=0.7)
+    for k, label in zip(knots, knot_labels):
+        ax2.axvline(x=k, color='red', linestyle='--', linewidth=2, label=label)
+    ax2.set_xlabel(variable)
+    ax2.set_ylabel('Frequency')
+    ax2.set_title('Distribution with Knots')
+    ax2.legend(fontsize=8)
+    
+    plt.tight_layout()
+    plot_name = f"spline_{timestamp}"
+    save_plot(plot_name, fig)
+    print(f"\n![Spline Plot](/plots/{plot_name}.png)\n")
+
+print("---")
+print("**Spline analysis complete**")
+
+# JSON метрики для AI
+output_metrics = {
+    "model_type": f"spline_{model_type.lower()}",
+    "variable": variable,
+    "knot_type": knot_type,
+    "knots": [float(k) for k in knots],
+    "n_total": n_total,
+    "nonlinear_p": float(nonlin_p) if 'nonlin_p' in dir() else None,
+    "significant_nonlinear": bool(nonlin_p < 0.05) if 'nonlin_p' in dir() else None
+}
+
+if is_survival:
+    output_metrics["events"] = n_events
+
+print("\n<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False))
+print("<!-- JSON_METRICS_END -->")

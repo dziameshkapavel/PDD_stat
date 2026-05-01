@@ -1,0 +1,338 @@
+# anova.py.jinja
+# One-way ANOVA + Kruskal-Wallis + Post-hoc + Trend Test
+
+import pandas as pd
+import numpy as np
+from scipy import stats
+from scipy.stats import f_oneway, kruskal, shapiro, levene, bartlett
+from statsmodels.stats.multicomp import pairwise_tukeyhsd
+import matplotlib.pyplot as plt
+import json
+from pathlib import Path
+import warnings
+warnings.filterwarnings('ignore')
+
+var_labels = {}
+try:
+    labels_path = Path(project_path) / "state" / "variable_labels.json"
+    if labels_path.exists():
+        with open(labels_path, 'r', encoding='utf-8') as f:
+            var_labels = json.load(f)
+except:
+    pass
+
+# Format group label using user-defined labels or clean numbers
+def format_group_label(g):
+    """Format group value: use label if available, clean numbers"""
+    # Try to find user label
+    if group_col in var_labels:
+        val_labels = var_labels[group_col].get('value_labels', {})
+        g_str = str(g)
+        g_float_str = str(float(g)) if not isinstance(g, float) else g_str
+        g_int_str = str(int(float(g))) if float(g) == int(float(g)) else None
+        
+        for key, label in val_labels.items():
+            if key == g_str or key == g_float_str:
+                return label
+            if g_int_str and key == g_int_str:
+                return label
+    
+    # No user label — clean the number
+    try:
+        f = float(g)
+        if f == int(f):
+            return str(int(f))
+    except (ValueError, TypeError):
+        pass
+    return str(g)
+
+print("## One-way ANOVA / Kruskal-Wallis\n")
+
+value_col = "{{ value_col }}"
+group_col = "{{ group_col }}"
+
+if value_col not in df.columns:
+    print(f"Error: Value column '{value_col}' not found")
+    exit()
+if group_col not in df.columns:
+    print(f"Error: Group column '{group_col}' not found")
+    exit()
+
+df_clean = df[[value_col, group_col]].dropna()
+n_total = len(df_clean)
+
+groups = df_clean[group_col].unique()
+groups = sorted(groups, key=lambda x: str(x))
+n_groups = len(groups)
+
+if n_groups < 2:
+    print("Error: Need at least 2 groups")
+    exit()
+
+print(f"**Value:** `{value_col}`")
+print(f"**Group by:** `{group_col}` ({n_groups} groups)")
+print(f"**Observations:** {n_total}\n")
+
+# Data by group
+data_by_group = {}
+for g in groups:
+    data_by_group[g] = df_clean[df_clean[group_col] == g][value_col].values
+
+# ========== DESCRIPTIVE STATISTICS ==========
+print("### Descriptive Statistics\n")
+print("| Group | N | Mean | SD | Median | Min | Max | Q1 | Q3 |")
+print("|-------|---|------|-----|--------|-----|-----|----|----|")
+for g in groups:
+    vals = data_by_group[g]
+    n = len(vals)
+    mean = np.mean(vals)
+    sd = np.std(vals, ddof=1)
+    median = np.median(vals)
+    min_v = np.min(vals)
+    max_v = np.max(vals)
+    q1 = np.percentile(vals, 25)
+    q3 = np.percentile(vals, 75)
+    print(f"| {g} | {n} | {mean:.2f} | {sd:.2f} | {median:.2f} | {min_v:.2f} | {max_v:.2f} | {q1:.2f} | {q3:.2f} |")
+print()
+
+# ========== NORMALITY ==========
+print("### Normality Test (Shapiro-Wilk)\n")
+all_normal = True
+print("| Group | W | p-value | Normal? |")
+print("|-------|---|---------|---------|")
+for g in groups:
+    vals = data_by_group[g]
+    if len(vals) >= 3:
+        w, p = shapiro(vals)
+        is_normal = p >= 0.05
+        if not is_normal:
+            all_normal = False
+        print(f"| {g} | {w:.4f} | {p:.4f} | {'Yes' if is_normal else 'No'} |")
+print()
+
+# ========== HOMOGENEITY ==========
+print("### Homogeneity of Variances\n")
+if n_groups >= 2:
+    arrays = [data_by_group[g] for g in groups]
+    try:
+        lev_stat, lev_p = levene(*arrays)
+        print(f"Levene's test: W = {lev_stat:.4f}, p = {lev_p:.4f}")
+        equal_var = lev_p >= 0.05
+    except:
+        equal_var = False
+        print("Levene's test: could not compute")
+print()
+
+# ========== DESCRIPTIVE STATS ==========
+descriptive_stats = []
+for g in groups:
+    vals = data_by_group[g]
+    descriptive_stats.append({
+        "group": str(g),
+        "n": int(len(vals)),
+        "mean": float(np.mean(vals)),
+        "sd": float(np.std(vals, ddof=1)),
+        "median": float(np.median(vals)),
+        "min": float(np.min(vals)),
+        "max": float(np.max(vals)),
+        "q1": float(np.percentile(vals, 25)),
+        "q3": float(np.percentile(vals, 75))
+    })
+
+# ========== MAIN TEST ==========
+output_metrics = {
+    "model_type": "anova",
+    "value_col": value_col,
+    "group_col": group_col,
+    "n_total": n_total,
+    "n_groups": n_groups,
+    "groups": [format_group_label(g) for g in groups],
+    "group_labels": {str(g): format_group_label(g) for g in groups},
+    "all_normal": all_normal,
+    "equal_var": equal_var,
+    "descriptive": descriptive_stats,
+    "posthoc": []
+}
+
+if all_normal and equal_var and n_groups >= 2:
+    # ONE-WAY ANOVA
+    print("### One-way ANOVA\n")
+    f_stat, anova_p = f_oneway(*arrays)
+    print(f"F({n_groups-1}, {n_total-n_groups}) = {f_stat:.4f}")
+    print(f"**p = {anova_p:.4f}**")
+    
+    # Effect size: eta-squared
+    grand_mean = np.mean(df_clean[value_col].values)
+    ss_between = sum(len(data_by_group[g]) * (np.mean(data_by_group[g]) - grand_mean)**2 for g in groups)
+    ss_total = sum((df_clean[value_col].values - grand_mean)**2)
+    eta_sq = ss_between / ss_total if ss_total > 0 else 0
+    omega_sq = (ss_between - (n_groups-1) * (ss_total-ss_between)/(n_total-n_groups)) / (ss_total + (ss_total-ss_between)/(n_total-n_groups)) if ss_total > 0 else 0
+    
+    print(f"η² = {eta_sq:.4f}")
+    print(f"ω² = {omega_sq:.4f}\n")
+    
+    output_metrics["test_name"] = "ANOVA"
+    output_metrics["F_stat"] = float(f_stat)
+    output_metrics["p_value"] = float(anova_p)
+    output_metrics["eta_sq"] = float(eta_sq)
+    output_metrics["omega_sq"] = float(omega_sq)
+    output_metrics["significant"] = bool(anova_p < 0.05)
+    
+    # Post-hoc Tukey HSD
+    if anova_p < 0.05 and n_groups >= 3:
+        print("### Post-hoc: Tukey HSD\n")
+        try:
+            tukey = pairwise_tukeyhsd(df_clean[value_col].values, df_clean[group_col].values, alpha=0.05)
+            print(tukey)
+            # Extract as table
+            print("\n| Comparison | Mean Diff | p-value | Significant |")
+            print("|------------|-----------|---------|-------------|")
+            for row in tukey.summary().data[1:]:
+                comp = f"{row[0]} vs {row[1]}"
+                diff = float(row[2])
+                p_val = float(row[3])
+                sig = "Yes **" if row[4] else "No"
+                print(f"| {comp} | {diff:.2f} | {p_val:.4f} | {sig} |")
+                output_metrics["posthoc"].append({
+                    "group1": str(row[0]),
+                    "group2": str(row[1]),
+                    "mean_diff": diff,
+                    "p_value": p_val,
+                    "significant": bool(row[4])
+                })
+        except:
+            print("*Post-hoc test could not be computed*\n")
+    
+else:
+    # KRUSKAL-WALLIS
+    print("### Kruskal-Wallis H Test\n")
+    print(f"*Reason: {'Non-normal distribution' if not all_normal else 'Unequal variances'}*\n")
+    h_stat, kw_p = kruskal(*arrays)
+    print(f"H = {h_stat:.4f}")
+    print(f"**p = {kw_p:.4f}**")
+    
+    # Effect size: epsilon-squared
+    epsilon_sq = h_stat / (n_total - 1) if n_total > 1 else 0
+    print(f"ε² = {epsilon_sq:.4f}\n")
+    
+    output_metrics["test_name"] = "Kruskal-Wallis"
+    output_metrics["H_stat"] = float(h_stat)
+    output_metrics["p_value"] = float(kw_p)
+    output_metrics["epsilon_sq"] = float(epsilon_sq)
+    output_metrics["significant"] = bool(kw_p < 0.05)
+    
+    # Post-hoc Dunn (Монте-Карло permutation + Бонферрони)
+    if kw_p < 0.05 and n_groups >= 3:
+        print("### Post-hoc: Pairwise Comparisons\n")
+        print("*Corrected for multiple comparisons*\n")
+        
+        from itertools import combinations
+        alpha = 0.05
+        n_comparisons = n_groups * (n_groups - 1) / 2
+        bonferroni_alpha = alpha / n_comparisons
+        
+        print(f"Bonferroni corrected α = {bonferroni_alpha:.4f} ({int(n_comparisons)} comparisons)\n")
+        print("| Comparison | p-value (Mann-Whitney) | Significant |")
+        print("|------------|------------------------|-------------|")
+        
+        for g1, g2 in combinations(groups, 2):
+            u_stat, u_p = stats.mannwhitneyu(data_by_group[g1], data_by_group[g2], alternative='two-sided')
+            sig = u_p < bonferroni_alpha
+            print(f"| {g1} vs {g2} | {u_p:.4f} | {'Yes **' if sig else 'No'} |")
+            output_metrics["posthoc"].append({
+                "group1": str(g1),
+                "group2": str(g2),
+                "p_value": float(u_p),
+                "significant": bool(sig),
+                "bonferroni_alpha": float(bonferroni_alpha)
+            })
+
+# ========== TREND TEST ==========
+if n_groups >= 3:
+    print("\n### Trend Test (Jonckheere-Terpstra)\n")
+    try:
+        # Encode groups as ordinal
+        group_order = {g: i for i, g in enumerate(groups)}
+        ordered_groups = df_clean[group_col].map(group_order).values
+        jt_stat, jt_p = stats.jonckheere(ordered_groups, df_clean[value_col].values)
+        print(f"JT = {jt_stat:.4f}, p = {jt_p:.4f}")
+        if jt_p < 0.05:
+            print("**Significant monotonic trend detected**")
+        output_metrics["trend_test"] = {
+            "name": "Jonckheere-Terpstra",
+            "statistic": float(jt_stat),
+            "p_value": float(jt_p),
+            "significant": bool(jt_p < 0.05)
+        }
+    except:
+        print("*Trend test not available*")
+
+# ========== PLOT ==========
+timestamp = str(int(__import__("time").time()))
+plot_labels = [format_group_label(g) for g in groups]
+fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+# Box + jitter
+ax1 = axes[0]
+positions = range(len(groups))
+for i, g in enumerate(groups):
+    vals = data_by_group[g]
+    ax1.boxplot([vals], positions=[i], widths=0.5, patch_artist=True,
+                boxprops=dict(facecolor=plt.cm.Set2(i/len(groups)), alpha=0.7))
+    jitter = np.random.normal(i, 0.04, size=len(vals))
+    ax1.scatter(jitter, vals, alpha=0.4, s=10, color='black')
+ax1.set_xticks(positions)
+ax1.set_xticklabels(plot_labels)
+ax1.set_ylabel(value_col)
+ax1.set_title(f'{value_col} by {group_col}')
+ax1.grid(True, alpha=0.3, axis='y')
+
+# Mean ± SD
+ax2 = axes[1]
+means = [np.mean(data_by_group[g]) for g in groups]
+sds = [np.std(data_by_group[g], ddof=1) for g in groups]
+ax2.bar(positions, means, yerr=sds, color=plt.cm.Set2(np.linspace(0, 1, len(groups))), capsize=8, alpha=0.8)
+ax2.set_xticks(positions)
+ax2.set_xticklabels(plot_labels)
+ax2.set_ylabel(value_col)
+ax2.set_title(f'Mean ± SD of {value_col} by {group_col}')
+ax2.grid(True, alpha=0.3, axis='y')
+
+plt.tight_layout()
+plot_name = f"anova_{timestamp}"
+save_plot(plot_name, fig)
+output_metrics["plots"] = [f"{plot_name}.png"]
+print(f"\n![ANOVA Plot](/plots/{plot_name}.png)\n")
+
+# ========== SUMMARY ==========
+print("---")
+print("**Analysis complete**")
+
+test_name = output_metrics.get("test_name", "?")
+p_val = output_metrics.get("p_value", 1.0)
+if p_val < 0.05:
+    print(f"\n**Conclusion:** {test_name} shows significant differences between groups (p = {p_val:.4f}).")
+else:
+    print(f"\n**Conclusion:** {test_name} shows no significant differences between groups (p = {p_val:.4f}).")
+
+# ========== JSON METRICS ==========
+def make_serializable(obj):
+    if isinstance(obj, dict):
+        return {str(k): make_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_serializable(v) for v in obj]
+    elif isinstance(obj, (np.integer, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64)):
+        if np.isnan(obj): return None
+        return float(obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif obj is None:
+        return None
+    return obj
+
+output_metrics = make_serializable(output_metrics)
+print("\n<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False))
+print("<!-- JSON_METRICS_END -->")

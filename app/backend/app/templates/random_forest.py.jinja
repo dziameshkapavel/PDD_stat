@@ -1,0 +1,318 @@
+# random_forest.py.jinja
+# Random Forest + OOB-оценка + важность признаков + SHAP
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+import time
+from pathlib import Path
+import json
+
+project_path = Path("{{ project_path }}") if "{{ project_path }}" else Path(".")
+var_labels = {}
+try:
+    labels_path = Path(project_path) / "state" / "variable_labels.json"
+    if labels_path.exists():
+        with open(labels_path, 'r', encoding='utf-8') as f:
+            var_labels = json.load(f)
+except:
+    pass
+
+target = "{{ target_col }}"
+covariates = {{ covariates|default([])|tojson }}
+top_n = {{ top_n|default(15)|int }}
+calculate_shap = "{{ calculate_shap|default('false') }}" == "True"
+shap_metrics = None
+
+print("## Random Forest\n")
+
+if target not in df.columns:
+    print(f"Error: Target column '{target}' not found")
+    exit()
+
+print(f"**Целевая переменная:** `{target}`  ")
+
+# Ковариаты - все числовые колонки кроме исключений
+user_excl_raw = "{{ exclusions }}"
+if user_excl_raw and user_excl_raw.lower() not in ['none', 'нет', '', '[]']:
+    try:
+        user_exclusions = json.loads(user_excl_raw)
+    except:
+        user_exclusions = [x.strip() for x in user_excl_raw.split(',') if x.strip()]
+else:
+    user_exclusions = []
+
+# Автоисключение очевидных мета-колонок
+auto_exclude = []
+for col in df.columns:
+    col_lower = col.lower()
+    if any(p in col_lower for p in ['_event', 'event_', '_time', 'time_', 'predicted_', '_prob', 'censored', 'followup', 'cox_', 'logistic_']):
+        auto_exclude.append(col)
+auto_exclude = list(set(auto_exclude))
+
+# Все исключения вместе
+all_exclude = set(auto_exclude + user_exclusions)
+
+all_numeric = [c for c in df.columns if c != target and pd.api.types.is_numeric_dtype(df[c]) and c not in all_exclude]
+
+print(f"**Ковариаты:** все числовые ({len(all_numeric)} шт.)")
+if all_exclude:
+    excl_list = list(all_exclude)[:8]
+    print(f"**Исключены:** {', '.join(excl_list)}{'...' if len(all_exclude) > 8 else ''}")
+print(f"**Топ признаков для показа:** {top_n if top_n > 0 else 'все'}")
+print(f"**SHAP анализ:** {'Да' if calculate_shap else 'Нет'}")
+print()
+
+valid_cov = all_numeric
+if len(valid_cov) == 0:
+    print("Error: No valid predictors")
+    exit()
+
+X = df[valid_cov].copy()
+y = df[target].copy()
+
+# Удаляем пропуски
+mask = y.notna() & X.notna().all(axis=1)
+X = X.loc[mask]
+y = y.loc[mask]
+
+# Кодируем
+if y.dtype == 'object' or y.dtype.name == 'category':
+    le = LabelEncoder()
+    y = le.fit_transform(y)
+    print(f"**Целевая закодирована:** {le.classes_.tolist()}  ")
+
+is_binary = y.nunique() == 2
+print(f"**Наблюдений:** {len(X)}  ")
+print(f"**Признаков:** {X.shape[1]}  ")
+print(f"**Тип задачи:** {'бинарная' if is_binary else 'мультиклассовая'}  \n")
+
+# Разделение
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.25, random_state=42, stratify=y if is_binary else None
+)
+
+print(f"**Обучающая выборка:** {len(X_train)}  ")
+print(f"**Тестовая выборка:** {len(X_test)}  \n")
+
+# Обучение
+print("Обучение модели Random Forest...\n")
+rf = RandomForestClassifier(
+    n_estimators=200,
+    max_depth=10,
+    min_samples_leaf=5,
+    oob_score=True,
+    random_state=42,
+    n_jobs=-1,
+    class_weight='balanced' if is_binary else None
+)
+rf.fit(X_train, y_train)
+
+# Метрики
+print("### Метрики качества\n")
+print(f"| Metric | Value |")
+print(f"|--------|-------|")
+print(f"| OOB Score | {rf.oob_score_:.4f} |")
+
+y_pred = rf.predict(X_test)
+print(f"| Accuracy | {accuracy_score(y_test, y_pred):.4f} |")
+
+if is_binary:
+    print(f"| Precision | {precision_score(y_test, y_pred, average='binary', zero_division=0):.4f} |")
+    print(f"| Recall | {recall_score(y_test, y_pred, average='binary'):.4f} |")
+    print(f"| F1-score | {f1_score(y_test, y_pred, average='binary'):.4f} |")
+    
+    y_proba = rf.predict_proba(X_test)[:, 1]
+    auc = roc_auc_score(y_test, y_proba)
+    print(f"| **AUC** | **{auc:.4f}** |")
+
+# Важность признаков (RF)
+importances = pd.Series(rf.feature_importances_, index=X.columns).sort_values(ascending=False)
+top_features = importances.head(top_n) if top_n > 0 else importances
+
+print(f"\n### Топ-{len(top_features)} важных признаков (Random Forest)\n")
+print("| # | Variable | Importance |")
+print("|---|----------|------------|")
+for i, (feat, imp) in enumerate(top_features.items(), 1):
+    print(f"| {i} | {feat} | {imp:.4f} |")
+
+# График важности RF
+timestamp = str(int(time.time()))
+fig, ax = plt.subplots(figsize=(10, 8))
+colors = plt.cm.Blues(np.linspace(0.4, 0.9, len(top_features)))
+bars = ax.barh(range(len(top_features)), top_features.values[::-1], color=colors[::-1])
+ax.set_yticks(range(len(top_features)))
+ax.set_yticklabels(top_features.index[::-1])
+ax.set_xlabel('Importance')
+ax.set_title(f'Random Forest: Feature Importance (Top {len(top_features)})')
+ax.grid(True, alpha=0.3, axis='x')
+plt.tight_layout()
+save_plot(f"rf_importance_{timestamp}")
+print(f"\n![Важность признаков](/plots/rf_importance_{timestamp}.png)\n")
+
+# SHAP анализ
+if calculate_shap:
+    try:
+        import shap
+        print("\n### SHAP Analysis\n")
+        
+        # Создаём объяснитель
+        explainer = shap.TreeExplainer(rf)
+        
+        # Выбираем подвыборку для ускорения
+        if len(X_test) > 100:
+            X_shap = X_test.sample(100, random_state=42)
+        else:
+            X_shap = X_test
+        
+        shap_values = explainer.shap_values(X_shap)
+        
+        # Обработка разных форматов shap_values
+        # 1. shap_values может быть списком (для старых версий shap)
+        # 2. numpy массивом：新ый формат (n_samples, n_features, n_classes) или старый (n_classes, n_samples, n_features)
+        if isinstance(shap_values, list):
+            if is_binary:
+                shap_vals = shap_values[1]  # класс 1
+            else:
+                shap_vals = shap_values
+        elif isinstance(shap_values, np.ndarray):
+            shape_len = len(shap_values.shape)
+            if shape_len == 3:
+                # Определяем формат: (n_samples, n_features, n_classes) или (n_classes, n_samples, n_features)
+                n_classes_dim = shap_values.shape[2] if shap_values.shape[2] < 10 else shap_values.shape[0]
+                if n_classes_dim <= 2:
+                    # (n_samples, n_features, n_classes) - новый формат
+                    shap_vals = shap_values[:, :, 1] if is_binary else shap_values.mean(axis=2)
+                else:
+                    # (n_classes, n_samples, n_features) - старый формат
+                    shap_vals = shap_values[1] if is_binary else shap_values.mean(axis=0)
+            else:
+                shap_vals = shap_values
+        else:
+            shap_vals = shap_values
+        
+        print(f"shap_vals shape: {shap_vals.shape}")
+        
+        # SHAP Bar Plot
+        plt.close('all')  # Очищаем предыдущие фигуры
+        shap.summary_plot(shap_vals, X_shap, plot_type="bar", show=False)
+        fig = plt.gcf()
+        fig.set_size_inches(10, 6)
+        save_plot(f"rf_shap_bar_{timestamp}", fig)
+        plt.close('all')
+        print(f"\n![SHAP Bar](/plots/rf_shap_bar_{timestamp}.png)\n")
+        
+        # 4. Топ SHAP признаки в таблице
+        shap_importance = np.abs(shap_vals).mean(axis=0)
+        shap_df = pd.DataFrame({
+            'Feature': X_shap.columns,
+            'SHAP Importance': shap_importance
+        }).sort_values('SHAP Importance', ascending=False).head(top_n if top_n > 0 else 15)
+        
+        shap_metrics = [
+            {"feature": str(row['Feature']), "importance": float(row['SHAP Importance'])}
+            for _, row in shap_df.iterrows()
+        ][:10]
+        
+        print(f"\n### Топ-{len(shap_df)} SHAP признаков\n")
+        print("| # | Feature | SHAP Importance |")
+        print("|---|---------|-----------------|")
+        for i, (_, row) in enumerate(shap_df.iterrows(), 1):
+            print(f"| {i} | {row['Feature']} | {row['SHAP Importance']:.4f} |")
+            
+    except Exception as e:
+        print(f"\n**SHAP analysis failed:** {e}")
+        print("*Try installing shap: `pip install shap`*\n")
+        shap_metrics = None
+
+# Сохраняем модель если пользователь запросил
+save_model = "{{ save_model|default('false') }}" == "True"
+saved_model_path = None
+if save_model:
+    # Собираем кодировки для бинарных и категориальных переменных
+    feature_encodings = {}
+    for col in valid_cov:
+        unique_vals = sorted(df[col].dropna().unique())
+        if len(unique_vals) <= 10:
+            feature_encodings[col] = {i: str(v) for i, v in enumerate(unique_vals)}
+    
+    try:
+        import joblib
+        from datetime import datetime
+        model_bundle = {
+            'model': rf,
+            'features': valid_cov,
+            'target': target,
+            'feature_encodings': feature_encodings,
+            'training_metrics': {
+                'oob_score': float(rf.oob_score_),
+                'accuracy': float(accuracy_score(y_test, y_pred)),
+                'auc': float(auc) if is_binary else None,
+                'precision': float(precision_score(y_test, y_pred, average='binary', zero_division=0)) if is_binary else None,
+                'recall': float(recall_score(y_test, y_pred, average='binary')) if is_binary else None,
+                'f1': float(f1_score(y_test, y_pred, average='binary')) if is_binary else None,
+                'sensitivity': float(recall_score(y_test, y_pred, average='binary')) if is_binary else None,
+                'specificity': float(((y_test == 0) & (y_pred == 0)).sum() / (y_test == 0).sum()) if is_binary and (y_test == 0).sum() > 0 else None
+            },
+            'training_date': datetime.now().isoformat()
+        }
+        model_name = "rf_model_" + str(int(timestamp)) + ".joblib"
+        model_path = Path(project_path) / model_name
+        joblib.dump(model_bundle, str(model_path))
+        saved_model_path = str(model_path)
+        print("\n**Model saved:** " + model_name)
+    except Exception as e:
+        print("\n**Failed to save model:** " + str(e))
+
+# JSON метрики
+output_metrics = {
+    "model_type": "random_forest",
+    "target": target,
+    "is_binary": is_binary,
+    "oob_score": float(rf.oob_score_),
+    "accuracy": float(accuracy_score(y_test, y_pred)),
+    "auc": float(auc) if is_binary else None,
+    "precision": float(precision_score(y_test, y_pred, average='binary', zero_division=0)) if is_binary else None,
+    "recall": float(recall_score(y_test, y_pred, average='binary')) if is_binary else None,
+    "f1": float(f1_score(y_test, y_pred, average='binary', zero_division=0)) if is_binary else None,
+    "n_samples": int(len(X)),
+    "n_features": int(X.shape[1]),
+    "top_features": [
+        {"variable": str(feat), "importance": float(imp)} 
+        for feat, imp in top_features.items()
+    ],
+    "shap_features": shap_metrics if shap_metrics else [],
+    "model_saved": saved_model_path is not None,
+    "model_path": saved_model_path if saved_model_path else None,
+}
+
+def make_json_serializable(obj):
+    if isinstance(obj, dict):
+        return {str(k): make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_json_serializable(item) for item in obj]
+    elif isinstance(obj, (np.integer, np.int64, np.int32)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64, np.float32)):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+        return float(obj)
+    elif isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    elif obj is None:
+        return None
+    else:
+        try:
+            return float(obj)
+        except:
+            return str(obj)
+
+output_metrics = make_json_serializable(output_metrics)
+print("\n<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False))
+print("<!-- JSON_METRICS_END -->")

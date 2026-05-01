@@ -1,0 +1,239 @@
+# numeric_compare.py.jinja
+# Numeric Comparison: t-test, ANOVA, Mann-Whitney, Kruskal-Wallis
+
+import pandas as pd
+import numpy as np
+from scipy import stats
+from pathlib import Path
+import json
+import time
+import warnings
+warnings.filterwarnings('ignore')
+
+var_labels = {}
+try:
+    labels_path = Path(project_path) / "state" / "variable_labels.json"
+    if labels_path.exists():
+        with open(labels_path, 'r', encoding='utf-8') as f:
+            var_labels = json.load(f)
+except:
+    pass
+
+print("## Numeric Comparison\n")
+
+value_col = "{{ value }}"
+group_col = "{{ group }}"
+
+if value_col not in df.columns:
+    print(f"Error: Column '{value_col}' not found")
+    exit()
+if group_col not in df.columns:
+    print(f"Error: Column '{group_col}' not found")
+    exit()
+
+print(f"**Value variable:** `{value_col}`")
+print(f"**Group variable:** `{group_col}`\n")
+
+groups = df[group_col].dropna().unique()
+n_groups = len(groups)
+
+print(f"**Number of groups:** {n_groups}\n")
+
+data_by_group = {}
+for g in groups:
+    vals = df[df[group_col] == g][value_col].dropna()
+    data_by_group[g] = vals
+
+print("### Descriptive Statistics\n")
+stats_data = []
+for g, vals in data_by_group.items():
+    q1 = vals.quantile(0.25)
+    q3 = vals.quantile(0.75)
+    stats_data.append({
+        'Group': str(g),
+        'N': len(vals),
+        'Median': vals.median(),
+        'Q1': q1,
+        'Q3': q3,
+        'IQR': q3 - q1
+    })
+
+print("| Group | N | Median | Q1 | Q3 | IQR |")
+print("|-------|---|--------|----|----|-----|")
+for row in stats_data:
+    print(f"| {row['Group']} | {int(row['N'])} | {row['Median']:.2f} | {row['Q1']:.2f} | {row['Q3']:.2f} | {row['IQR']:.2f} |")
+print()
+
+print("### Normality Tests\n")
+for g, vals in data_by_group.items():
+    if len(vals) >= 3:
+        stat, p = stats.shapiro(vals)
+        sig = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else ""
+        print(f"**{str(g)}:** Shapiro-Wilk W = {stat:.4f}, p = {p:.4f} {sig}")
+print()
+
+all_normal = all(
+    len(v) >= 3 and stats.shapiro(v)[1] >= 0.05
+    for v in data_by_group.values()
+)
+
+all_values = df[value_col].dropna()
+n_total = len(all_values)
+
+if all_normal:
+    print("**Normality assumption:** Satisfied for all groups (p >= 0.05)")
+else:
+    print("**Normality assumption:** Not satisfied for one or more groups")
+print()
+
+print("### Homogeneity of Variances\n")
+group_arrays = [v.values for v in data_by_group.values()]
+levene_stat, levene_p = stats.levene(*group_arrays)
+bartlett_stat, bartlett_p = stats.bartlett(*group_arrays)
+
+sig_levene = "***" if levene_p < 0.001 else "**" if levene_p < 0.01 else "*" if levene_p < 0.05 else ""
+sig_bartlett = "***" if bartlett_p < 0.001 else "**" if bartlett_p < 0.01 else "*" if bartlett_p < 0.05 else ""
+
+print(f"**Levene's test:** W = {levene_stat:.4f}, p = {levene_p:.4f} {sig_levene}")
+print(f"**Bartlett's test:** statistic = {bartlett_stat:.4f}, p = {bartlett_p:.4f} {sig_bartlett}")
+
+equal_var = levene_p >= 0.05
+if equal_var:
+    print("**Equal variances assumed**")
+else:
+    print("**Unequal variances (Welch correction recommended)**")
+print()
+
+if all_normal and equal_var:
+    print("### Statistical Tests\n")
+    if n_groups == 2:
+        g1, g2 = list(data_by_group.keys())
+        t_stat, t_p = stats.ttest_ind(data_by_group[g1], data_by_group[g2])
+        sig = "***" if t_p < 0.001 else "**" if t_p < 0.01 else "*" if t_p < 0.05 else ""
+        print(f"**Independent t-test:** t = {t_stat:.4f}, **p = {t_p:.4f}** {sig}")
+        
+        mean_diff = data_by_group[g1].mean() - data_by_group[g2].mean()
+        print(f"**Mean difference ({g1} - {g2}):** {mean_diff:.4f}")
+        
+        pooled_std = np.sqrt(
+            ((len(data_by_group[g1]) - 1) * data_by_group[g1].std()**2 + 
+             (len(data_by_group[g2]) - 1) * data_by_group[g2].std()**2) /
+            (len(data_by_group[g1]) + len(data_by_group[g2]) - 2)
+        )
+        cohens_d = mean_diff / pooled_std
+        print(f"**Cohen's d:** {cohens_d:.4f}")
+        
+    else:
+        f_stat, f_p = stats.f_oneway(*[v.values for v in data_by_group.values()])
+        sig = "***" if f_p < 0.001 else "**" if f_p < 0.01 else "*" if f_p < 0.05 else ""
+        print(f"**One-way ANOVA:** F = {f_stat:.4f}, **p = {f_p:.4f}** {sig}")
+        
+        eta_sq = f_stat / (f_stat + n_total - n_groups)
+        print(f"**Effect size (eta-squared):** {eta_sq:.4f}")
+    
+else:
+    print("### Non-parametric Tests\n")
+    if n_groups == 2:
+        g1, g2 = list(data_by_group.keys())
+        u_stat, u_p = stats.mannwhitneyu(data_by_group[g1], data_by_group[g2], alternative='two-sided')
+        sig = "***" if u_p < 0.001 else "**" if u_p < 0.01 else "*" if u_p < 0.05 else ""
+        print(f"**Mann-Whitney U test:** U = {u_stat:.1f}, **p = {u_p:.4f}** {sig}")
+    else:
+        h_stat, h_p = stats.kruskal(*[v.values for v in data_by_group.values()])
+        sig = "***" if h_p < 0.001 else "**" if h_p < 0.01 else "*" if h_p < 0.05 else ""
+        print(f"**Kruskal-Wallis H test:** H = {h_stat:.4f}, **p = {h_p:.4f}** {sig}")
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+ax1 = axes[0]
+positions = range(len(data_by_group))
+bp_data = [v.values for v in data_by_group.values()]
+bp = ax1.boxplot(bp_data, positions=positions, patch_artist=True)
+colors = ['#007aff', '#34c759', '#ff9500', '#af52de', '#ff3b30', '#5856d6']
+for patch, color in zip(bp['boxes'], colors):
+    patch.set_facecolor(color)
+    patch.set_alpha(0.7)
+ax1.set_xticks(positions)
+ax1.set_xticklabels([str(g)[:15] for g in data_by_group.keys()], rotation=45, ha='right')
+ax1.set_ylabel(value_col)
+ax1.set_title(f'Distribution of {value_col} by {group_col}')
+ax1.grid(axis='y', alpha=0.3)
+
+ax2 = axes[1]
+means = [v.mean() for v in data_by_group.values()]
+stds = [v.std() for v in data_by_group.values()]
+x_pos = range(len(data_by_group))
+ax2.bar(x_pos, means, yerr=stds, color=colors[:len(means)], alpha=0.7, capsize=5)
+ax2.set_xticks(x_pos)
+ax2.set_xticklabels([str(g)[:15] for g in data_by_group.keys()], rotation=45, ha='right')
+ax2.set_ylabel(value_col)
+ax2.set_title(f'Mean ± SD of {value_col} by {group_col}')
+ax2.grid(axis='y', alpha=0.3)
+
+plt.tight_layout()
+plot_name = "numericCompare_" + str(int(time.time()))
+save_plot(plot_name)
+plt.close()
+
+# ========== JSON METRICS FOR AI ==========
+output_metrics = {
+    "model_type": "numeric_compare",
+    "value_col": value_col,
+    "group_col": group_col,
+    "n_total": sum(len(v) for v in data_by_group.values()),
+    "n_groups": n_groups,
+    "groups": [str(g) for g in groups],
+    "descriptive_stats": [
+        {
+            "group": str(g),
+            "n": len(vals),
+            "median": float(vals.median()),
+            "q1": float(vals.quantile(0.25)),
+            "q3": float(vals.quantile(0.75))
+        }
+        for g, vals in data_by_group.items()
+    ],
+    "normality": {
+        "all_normal": all_normal,
+        "shapiro_tests": [
+            {"group": str(g), "w": float(stats.shapiro(vals)[0]), "p": float(stats.shapiro(vals)[1])}
+            for g, vals in data_by_group.items() if len(vals) >= 3
+        ]
+    },
+    "equal_var": bool(equal_var),
+    "levene_p": float(levene_p)
+}
+
+if all_normal and equal_var:
+    if n_groups == 2:
+        output_metrics["test_name"] = "t-test"
+        output_metrics["statistic"] = float(t_stat)
+        output_metrics["p_value"] = float(t_p)
+        output_metrics["cohens_d"] = float(cohens_d)
+    else:
+        output_metrics["test_name"] = "ANOVA"
+        output_metrics["statistic"] = float(f_stat)
+        output_metrics["p_value"] = float(f_p)
+else:
+    if n_groups == 2:
+        output_metrics["test_name"] = "Mann-Whitney U"
+        output_metrics["statistic"] = float(u_stat)
+        output_metrics["p_value"] = float(u_p)
+    else:
+        output_metrics["test_name"] = "Kruskal-Wallis H"
+        output_metrics["statistic"] = float(h_stat)
+        output_metrics["p_value"] = float(h_p)
+
+if 'p_value' in output_metrics:
+    output_metrics["significant"] = output_metrics["p_value"] < 0.05
+
+print("\n<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False))
+print("<!-- JSON_METRICS_END -->")
+
+print("\n---")
+print(f"**Numeric comparison complete**")

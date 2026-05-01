@@ -1,0 +1,204 @@
+# categorical_test.py.jinja
+# Chi-Square or Fisher's Exact Test
+# Automatically selects based on expected frequencies
+
+import pandas as pd
+import numpy as np
+import json
+from pathlib import Path
+from scipy.stats import chi2_contingency, fisher_exact
+
+var_labels = {}
+try:
+    labels_path = Path(project_path) / "state" / "variable_labels.json"
+    if labels_path.exists():
+        with open(labels_path, 'r', encoding='utf-8') as f:
+            var_labels = json.load(f)
+except:
+    pass
+
+print("## Categorical Comparison\n")
+
+col1 = "{{ col1 }}"
+col2 = "{{ col2 }}"
+
+if col1 not in df.columns:
+    print(f"Error: Column '{col1}' not found")
+    exit()
+if col2 not in df.columns:
+    print(f"Error: Column '{col2}' not found")
+    exit()
+
+print(f"**Columns:** `{col1}` vs `{col2}`\n")
+
+ct = pd.crosstab(df[col1], df[col2])
+print("### Contingency Table\n")
+print(ct.to_markdown())
+print()
+
+n_rows, n_cols = ct.shape
+total = ct.sum().sum()
+expected = chi2_contingency(ct)[3]
+min_expected = expected.min()
+all_expected_ge5 = bool(min_expected >= 5)
+
+print(f"**Total observations:** {int(total)}")
+print(f"**Table size:** {n_rows} x {n_cols}")
+print(f"**Minimum expected frequency:** {min_expected:.2f}")
+print()
+
+if all_expected_ge5:
+    chi2, p_value, dof, expected_df = chi2_contingency(ct)
+    test_name = "Chi-Square Test"
+    test_reason = "All expected frequencies >= 5"
+    
+    print("### Chi-Square Test\n")
+    print(f"**Test selected:** {test_name}")
+    print(f"**Reason:** {test_reason}")
+    print(f"**Chi² = {chi2:.3f}**, df = {dof}, **p = {p_value:.4f}**")
+    
+    if p_value < 0.001:
+        sig = "***"
+    elif p_value < 0.01:
+        sig = "**"
+    elif p_value < 0.05:
+        sig = "*"
+    else:
+        sig = ""
+    
+    print(f"\n**Result:** p {sig}= {p_value:.4f}")
+    if p_value < 0.05:
+        print("**Conclusion:** Statistically significant association between variables.")
+    else:
+        print("**Conclusion:** No statistically significant association.")
+    
+    print("\n### Expected Frequencies\n")
+    expected_df = pd.DataFrame(expected_df, index=ct.index, columns=ct.columns)
+    print(expected_df.round(2).to_markdown())
+    
+elif n_rows == 2 and n_cols == 2:
+    odds_ratio, p_value = fisher_exact(ct)
+    test_name = "Fisher's Exact Test"
+    test_reason = f"Minimum expected frequency ({min_expected:.2f}) < 5 (2x2 table)"
+    
+    print("### Fisher's Exact Test\n")
+    print(f"**Test selected:** {test_name}")
+    print(f"**Reason:** {test_reason}")
+    print(f"**Odds Ratio = {odds_ratio:.3f}**, **p = {p_value:.4f}**")
+    
+    if p_value < 0.001:
+        sig = "***"
+    elif p_value < 0.01:
+        sig = "**"
+    elif p_value < 0.05:
+        sig = "*"
+    else:
+        sig = ""
+    
+    print(f"\n**Result:** p {sig}= {p_value:.4f}")
+    if p_value < 0.05:
+        print("**Conclusion:** Statistically significant association between variables.")
+        print(f"\n**Odds Ratio interpretation:**")
+        if odds_ratio > 1:
+            print(f"  Values in `{col1}`=1 are {odds_ratio:.2f}x more likely to have `{col2}`=1")
+        else:
+            print(f"  Values in `{col1}`=1 are {1/odds_ratio:.2f}x less likely to have `{col2}`=1")
+    else:
+        print("**Conclusion:** No statistically significant association.")
+
+else:
+    n_iterations = 10000
+    chi2, p_value, dof, expected_df = chi2_contingency(ct, lambda_=None)
+    
+    observed = ct.values
+    row_sums = observed.sum(axis=1)
+    col_sums = observed.sum(axis=0)
+    total = observed.sum()
+    expected = np.outer(row_sums, col_sums) / total
+    
+    simulated_chi2 = []
+    np.random.seed(42)
+    
+    for _ in range(n_iterations):
+        simulated = np.random.multinomial(total, expected.flatten() / total).reshape(observed.shape)
+        sim_expected = np.outer(simulated.sum(axis=1), simulated.sum(axis=0)) / total
+        sim_expected = np.where(sim_expected == 0, 1e-10, sim_expected)
+        sim_chi2 = ((simulated - sim_expected) ** 2 / sim_expected).sum()
+        simulated_chi2.append(sim_chi2)
+    
+    simulated_chi2 = np.array(simulated_chi2)
+    mc_p_value = (simulated_chi2 >= chi2).sum() / n_iterations
+    
+    test_name = "Monte Carlo Simulation"
+    test_reason = f"Minimum expected frequency ({min_expected:.2f}) < 5, table is {n_rows}x{n_cols}"
+    
+    print(f"### {test_name}\n")
+    print(f"**Test selected:** {test_name}")
+    print(f"**Reason:** {test_reason}")
+    print(f"**Iterations:** {n_iterations:,}")
+    print(f"**Chi² = {chi2:.3f}**, df = {dof}")
+    print(f"**Monte Carlo p = {mc_p_value:.4f}**")
+    
+    if mc_p_value < 0.001:
+        sig = "***"
+    elif mc_p_value < 0.01:
+        sig = "**"
+    elif mc_p_value < 0.05:
+        sig = "*"
+    else:
+        sig = ""
+    
+    print(f"\n**Result:** p {sig}= {mc_p_value:.4f} (Monte Carlo, {n_iterations:,} iterations)")
+    if mc_p_value < 0.05:
+        print("**Conclusion:** Statistically significant association between variables.")
+    else:
+        print("**Conclusion:** No statistically significant association.")
+    print("\n**Note:** p-value obtained via Monte Carlo simulation (10,000 iterations) due to small expected frequencies.")
+
+# Метрики для AI
+output_metrics = {
+    "model_type": "categorical_test",
+    "columns": [col1, col2],
+    "test_name": test_name,
+    "table_size": f"{n_rows}x{n_cols}",
+    "n_total": int(total),
+    "min_expected_frequency": float(min_expected),
+    "all_expected_ge5": all_expected_ge5,
+}
+
+if all_expected_ge5:
+    output_metrics["chi2"] = float(chi2)
+    output_metrics["p_value"] = float(p_value)
+    output_metrics["df"] = dof
+elif n_rows == 2 and n_cols == 2:
+    output_metrics["odds_ratio"] = float(odds_ratio)
+    output_metrics["p_value"] = float(p_value)
+    output_metrics["test_name"] = "Fisher's Exact"
+else:
+    output_metrics["chi2"] = float(chi2)
+    output_metrics["p_value"] = float(mc_p_value)
+    output_metrics["df"] = dof
+    output_metrics["n_iterations"] = n_iterations
+    output_metrics["test_name"] = "Monte Carlo"
+
+if 'p_value' in output_metrics:
+    output_metrics["significant"] = bool(output_metrics["p_value"] < 0.05)
+
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (np.bool_, bool)):
+            return bool(obj)
+        if isinstance(obj, (np.integer, np.int64, np.int32)):
+            return int(obj)
+        if isinstance(obj, (np.floating, np.float64, np.float32)):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
+print("\n<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False, cls=NumpyEncoder))
+print("<!-- JSON_METRICS_END -->")
+
+print("\n---")
+print("**Categorical comparison complete**")

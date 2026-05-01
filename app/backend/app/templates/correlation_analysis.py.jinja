@@ -1,0 +1,135 @@
+# correlation_analysis.py.jinja
+# Correlation Matrix + Heatmap + Strong Pairs Table
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy import stats
+import json
+from pathlib import Path
+
+var_labels = {}
+try:
+    labels_path = Path(project_path) / "state" / "variable_labels.json"
+    if labels_path.exists():
+        with open(labels_path, 'r', encoding='utf-8') as f:
+            var_labels = json.load(f)
+except:
+    pass
+
+print("## Correlation Analysis\n")
+
+variables = {{ variables|default([]) }}
+method = "{{ method|default('pearson') }}"
+threshold = {{ threshold|default(0.5)|float }}
+
+print(f"**Method:** {method.capitalize()}")
+print(f"**Threshold:** |r| > {threshold}\n")
+
+valid_vars = [v for v in variables if v in df.columns and pd.api.types.is_numeric_dtype(df[v])]
+
+if len(valid_vars) < 2:
+    print("Error: Need at least 2 numeric variables")
+    raise ValueError("Need at least 2 numeric variables")
+
+print(f"**Variables:** {', '.join([f'`{v}`' for v in valid_vars])} ({len(valid_vars)})\n")
+
+# Корреляционная матрица
+corr_matrix = df[valid_vars].corr(method=method)
+
+# Полная корреляционная матрица в виде таблицы
+print("### Correlation Matrix\n")
+header = "| Variable | " + " | ".join(valid_vars) + " |"
+sep = "|----------|" + "|".join(["----------" for _ in valid_vars]) + "|"
+print(header)
+print(sep)
+
+for v1 in valid_vars:
+    row_vals = [f"{corr_matrix.loc[v1, v2]:.3f}" for v2 in valid_vars]
+    print(f"| {v1} | " + " | ".join(row_vals) + " |")
+print()
+
+# Heatmap
+fig, ax = plt.subplots(figsize=(max(8, len(valid_vars)*0.8), max(6, len(valid_vars)*0.7)))
+mask = np.triu(np.ones_like(corr_matrix, dtype=bool))
+sns.heatmap(corr_matrix, mask=mask, annot=True, fmt='.2f', cmap='RdBu_r',
+            center=0, vmin=-1, vmax=1, square=True, ax=ax,
+            cbar_kws={'shrink': 0.8}, annot_kws={'fontsize': 9})
+ax.set_title(f'Correlation Matrix ({method.capitalize()})', fontsize=14, fontweight='bold')
+plt.tight_layout()
+
+timestamp = str(int(__import__("time").time()))
+plot_name = f"correlation_{timestamp}"
+save_plot(plot_name, fig)
+print(f"![Correlation Matrix](/plots/{plot_name}.png)\n")
+
+# Таблица сильных корреляций
+print(f"### Strong Correlations (|r| > {threshold})\n")
+
+pairs = []
+for i in range(len(valid_vars)):
+    for j in range(i+1, len(valid_vars)):
+        r = corr_matrix.iloc[i, j]
+        if abs(r) >= threshold:
+            try:
+                mask = df[valid_vars[i]].notna() & df[valid_vars[j]].notna()
+                _, p_val = stats.pearsonr(df.loc[mask, valid_vars[i]], df.loc[mask, valid_vars[j]])
+            except:
+                p_val = 1.0
+            pairs.append((valid_vars[i], valid_vars[j], r, p_val))
+
+pairs.sort(key=lambda x: abs(x[2]), reverse=True)
+
+if pairs:
+    print("| Variable 1 | Variable 2 | r | p-value | Significant |")
+    print("|------------|------------|-----|---------|-------------|")
+    for v1, v2, r, p in pairs:
+        sig = "Yes **" if p < 0.05 else "No"
+        print(f"| {v1} | {v2} | {r:.3f} | {p:.4f} | {sig} |")
+    print()
+else:
+    print("*No strong correlations found above threshold.*\n")
+
+n_strong = len(pairs)
+n_total_pairs = len(valid_vars) * (len(valid_vars) - 1) // 2
+print(f"**Summary:** {n_strong}/{n_total_pairs} pairs exceed |r| > {threshold}")
+
+if pairs:
+    top = pairs[0]
+    print(f"**Strongest correlation:** {top[0]} vs {top[1]} (r={top[2]:.3f}, p={top[3]:.4f})")
+
+print("\n---")
+print("**Correlation analysis complete**")
+
+# JSON метрики для AI
+output_metrics = {
+    "model_type": "correlation",
+    "method": method,
+    "n_variables": len(valid_vars),
+    "n_strong_pairs": len(pairs),
+    "threshold": threshold,
+    "strongest_r": float(pairs[0][2]) if pairs else None,
+    "strongest_pair": f"{pairs[0][0]} vs {pairs[0][1]}" if pairs else None,
+    "pairs": [
+        {"var1": v1, "var2": v2, "r": float(r), "p_value": float(p)}
+        for v1, v2, r, p in pairs[:10]
+    ]
+}
+
+def make_json_serializable(obj):
+    if isinstance(obj, dict):
+        return {str(k): make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_json_serializable(item) for item in obj]
+    elif isinstance(obj, (np.integer, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64)):
+        return float(obj) if not np.isnan(obj) else None
+    return obj
+
+output_metrics = make_json_serializable(output_metrics)
+
+print("\n<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False))
+print("<!-- JSON_METRICS_END -->")

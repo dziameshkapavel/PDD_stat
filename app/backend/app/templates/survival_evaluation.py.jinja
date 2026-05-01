@@ -1,0 +1,440 @@
+# survival_evaluation.py.jinja
+# Survival Prediction Evaluation
+# C-index, Time-dependent AUC + Bootstrap CI, Model Comparison, Calibration
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
+import json
+import time
+from pathlib import Path
+from itertools import combinations
+import warnings
+warnings.filterwarnings('ignore')
+
+# ========== PARAMETERS ==========
+pred_cols = {{ pred_cols|default([])|tojson }}
+time_col = "{{ time_col }}"
+event_col = "{{ event_col }}"
+
+time_points_raw = "{{ time_points|default('12,24,36,48,60') }}"
+time_points = [int(t.strip()) for t in time_points_raw.split(',') if t.strip().isdigit()]
+
+# Filter to actual data range
+_min_t = max(1, df[time_col].min())
+_max_t = df[time_col].max()
+eval_times = [t for t in time_points if _min_t <= t <= _max_t]
+
+n_bootstrap = {{ n_bootstrap|default(1000)|int }}
+x_tick_step = {{ x_tick_step|default(6)|int }}
+run_model_comparison = {{ run_model_comparison|default(True) }}
+run_calibration = {{ run_calibration|default(True) }}
+
+# ========== DATA PREPARATION ==========
+print("## Survival Prediction Evaluation\n")
+
+if time_col not in df.columns or event_col not in df.columns:
+    raise ValueError(f"Time/event columns missing")
+
+valid_preds = [p for p in pred_cols if p in df.columns]
+if not valid_preds:
+    raise ValueError("No valid prediction columns")
+
+df_eval = df[[time_col, event_col] + valid_preds].copy().dropna()
+n_total = len(df_eval)
+n_events = int(df_eval[event_col].sum())
+
+print(f"**Time:** `{time_col}`  ")
+print(f"**Event:** `{event_col}`  ")
+print(f"**Models:** {', '.join([f'`{p}`' for p in valid_preds])}  ")
+print(f"**Observations:** {n_total}  ")
+print(f"**Events:** {n_events} ({n_events/n_total*100:.1f}%)  ")
+print(f"**Bootstrap samples:** {n_bootstrap}  ")
+print(f"**Time points:** {', '.join(str(t) for t in time_points)} months  \n")
+
+y_time = df_eval[time_col].values
+y_event = df_eval[event_col].values.astype(bool)
+
+# sksurv structured array
+from sksurv.util import Surv
+y_surv = Surv.from_arrays(event=y_event, time=y_time)
+
+# ========== HELPER FUNCTIONS ==========
+def concordance_index(y_event, y_time, risk):
+    """C-index with handling for edge cases"""
+    from sksurv.metrics import concordance_index_censored
+    try:
+        c_idx = concordance_index_censored(y_event, y_time, risk)[0]
+        return float(c_idx)
+    except:
+        return 0.5
+
+def bootstrap_ci_cindex(y_event, y_time, risk, n_iter=1000, alpha=0.05):
+    """Bootstrap CI for C-index with BCa correction"""
+    n = len(y_event)
+    base_c = concordance_index(y_event, y_time, risk)
+    boot_c = []
+    
+    np.random.seed(42)
+    for _ in range(n_iter):
+        idx = np.random.choice(n, n, replace=True)
+        y_e_boot = y_event[idx]
+        y_t_boot = y_time[idx]
+        risk_boot = risk[idx]
+        
+        if y_e_boot.sum() == 0 or y_e_boot.sum() == len(y_e_boot):
+            continue
+            
+        try:
+            c_boot = concordance_index(y_e_boot, y_t_boot, risk_boot)
+            if not np.isnan(c_boot):
+                boot_c.append(c_boot)
+        except:
+            continue
+    
+    if len(boot_c) < 50:
+        return base_c, base_c, base_c
+    
+    boot_c = np.array(boot_c)
+    
+    # BCa correction
+    z0 = stats.norm.ppf((boot_c < base_c).mean())
+    
+    # Acceleration factor
+    jack_c = []
+    for i in range(min(n, 100)):
+        idx_jack = np.ones(n, dtype=bool)
+        idx_jack[i] = False
+        try:
+            c_jack = concordance_index(y_event[idx_jack], y_time[idx_jack], risk[idx_jack])
+            jack_c.append(c_jack)
+        except:
+            continue
+    
+    if jack_c:
+        jack_c = np.array(jack_c)
+        jack_mean = jack_c.mean()
+        a = np.sum((jack_mean - jack_c)**3) / (6 * (np.sum((jack_mean - jack_c)**2))**1.5)
+        a = np.clip(a, -1, 1) if not np.isnan(a) else 0
+    else:
+        a = 0
+    
+    z_alpha = stats.norm.ppf(alpha / 2)
+    z_1_alpha = stats.norm.ppf(1 - alpha / 2)
+    
+    # BCa percentiles
+    p_low = stats.norm.cdf(z0 + (z0 + z_alpha) / (1 - a * (z0 + z_alpha)))
+    p_high = stats.norm.cdf(z0 + (z0 + z_1_alpha) / (1 - a * (z0 + z_1_alpha)))
+    
+    ci_low = np.percentile(boot_c, max(0.1, p_low * 100))
+    ci_high = np.percentile(boot_c, min(99.9, p_high * 100))
+    
+    return float(base_c), float(ci_low), float(ci_high)
+
+def time_dependent_auc_bootstrap(y_surv, risk, time_points, n_iter=500):
+    """Time-dependent AUC with bootstrap CI"""
+    from sksurv.metrics import cumulative_dynamic_auc
+    
+    n = len(risk)
+    auc_results = {}
+    
+    for t in time_points:
+        if t <= 0 or t > y_time.max():
+            continue
+            
+        # Point estimate
+        try:
+            # Split for stable estimate
+            ev_idx = np.where(y_event)[0]
+            ne_idx = np.where(~y_event)[0]
+            
+            n_ev_train = len(ev_idx) // 2
+            n_ne_train = len(ne_idx) // 2
+            
+            train_idx = np.concatenate([ev_idx[:n_ev_train], ne_idx[:n_ne_train]])
+            test_idx = np.concatenate([ev_idx[n_ev_train:], ne_idx[n_ne_train:]])
+            
+            auc_val = cumulative_dynamic_auc(
+                y_surv[train_idx], y_surv[test_idx], risk[test_idx], [t]
+            )
+            base_auc = float(auc_val[0][0]) if isinstance(auc_val, tuple) else float(auc_val[0])
+        except:
+            continue
+        
+        # Bootstrap
+        boot_aucs = []
+        np.random.seed(42)
+        for _ in range(min(n_iter, 200)):
+            idx = np.random.choice(n, n, replace=True)
+            y_s_boot = y_surv[idx]
+            risk_boot = risk[idx]
+            
+            ev_idx_b = np.where(y_s_boot['event'])[0]
+            ne_idx_b = np.where(~y_s_boot['event'])[0]
+            
+            if len(ev_idx_b) < 5 or len(ne_idx_b) < 5:
+                continue
+            
+            n_ev_tr = len(ev_idx_b) // 2
+            n_ne_tr = len(ne_idx_b) // 2
+            
+            tr = np.concatenate([ev_idx_b[:n_ev_tr], ne_idx_b[:n_ne_tr]])
+            te = np.concatenate([ev_idx_b[n_ev_tr:], ne_idx_b[n_ne_tr:]])
+            
+            try:
+                auc_b = cumulative_dynamic_auc(y_s_boot[tr], y_s_boot[te], risk_boot[te], [t])
+                v = float(auc_b[0][0]) if isinstance(auc_b, tuple) else float(auc_b[0])
+                if not np.isnan(v):
+                    boot_aucs.append(v)
+            except:
+                continue
+        
+        if boot_aucs:
+            auc_results[t] = {
+                'auc': base_auc,
+                'ci_low': float(np.percentile(boot_aucs, 2.5)),
+                'ci_high': float(np.percentile(boot_aucs, 97.5))
+            }
+    
+    return auc_results
+
+def integrated_brier_score_wrapper(y_surv, risk, eval_times):
+    """Integrated Brier Score"""
+    from sksurv.metrics import integrated_brier_score
+    try:
+        ibs = integrated_brier_score(y_surv, y_surv, risk, eval_times)
+        return float(ibs)
+    except:
+        return None
+
+# ========== MAIN ANALYSIS ==========
+from scipy import stats
+
+# Storage
+all_c_indices = {}
+all_auc_data = {}
+all_brier_scores = {}
+model_comparisons = []
+calibration_data = {}
+
+# ========== 1. C-INDEX ==========
+print("### C-index (Concordance Index)\n")
+print("| Model | C-index | 95% CI (BCa bootstrap) |")
+print("|-------|---------|------------------------|")
+
+for pred_col in valid_preds:
+    risk = df_eval[pred_col].values
+    
+    if n_bootstrap > 0:
+        c_val, ci_low, ci_high = bootstrap_ci_cindex(y_event, y_time, risk, n_bootstrap)
+    else:
+        c_val = concordance_index(y_event, y_time, risk)
+        ci_low, ci_high = c_val, c_val
+    
+    all_c_indices[pred_col] = {
+        'value': c_val,
+        'ci_low': ci_low,
+        'ci_high': ci_high
+    }
+    
+    print(f"| {pred_col} | {c_val:.4f} | [{ci_low:.4f}, {ci_high:.4f}] |")
+
+print()
+
+# ========== 2. TIME-DEPENDENT AUC ==========
+print(f"### Time-dependent AUC\n")
+
+if len(eval_times) >= 2:
+    print("| Time | " + " | ".join([f"`{p}`" for p in valid_preds]) + " |")
+    print("|------|" + "|".join(["-------" for _ in valid_preds]) + "|")
+    
+    for pred_col in valid_preds:
+        risk = df_eval[pred_col].values
+        auc_data = time_dependent_auc_bootstrap(y_surv, risk, eval_times, n_bootstrap)
+        all_auc_data[pred_col] = auc_data
+    
+    for t in eval_times:
+        row = f"| {t}mo |"
+        for pred_col in valid_preds:
+            if t in all_auc_data[pred_col]:
+                a = all_auc_data[pred_col][t]
+                row += f" {a['auc']:.4f} [{a['ci_low']:.3f}-{a['ci_high']:.3f}] |"
+            else:
+                row += " — |"
+        print(row)
+    print()
+else:
+    print("*Not enough valid time points*\n")
+
+# ========== 4. MODEL COMPARISON ==========
+if run_model_comparison and len(valid_preds) >= 2:
+    print("### Model Comparison (IPCW-based DeLong test)\n")
+    
+    for m1, m2 in combinations(valid_preds, 2):
+        risk1 = df_eval[m1].values
+        risk2 = df_eval[m2].values
+        
+        # IPCW weights for censoring
+        try:
+            from lifelines import KaplanMeierFitter
+            
+            # Fit censoring model
+            kmf = KaplanMeierFitter()
+            kmf.fit(y_time, ~y_event)  # censoring survival
+            
+            # Get IPCW weights
+            ipcw = np.zeros(len(y_time))
+            for i in range(len(y_time)):
+                t_i = y_time[i]
+                s_c = kmf.survival_function_at_times([t_i]).values[0]
+                if s_c > 0.01:
+                    ipcw[i] = 1.0 / s_c
+                else:
+                    ipcw[i] = 0
+            
+            # Normalize weights
+            ipcw = ipcw / ipcw.sum() * len(ipcw)
+            
+            # Compute weighted AUC for each model
+            from sklearn.metrics import roc_auc_score
+            
+            c1 = concordance_index(y_event, y_time, risk1)
+            c2 = concordance_index(y_event, y_time, risk2)
+            
+            delta = c1 - c2
+            
+            # Bootstrap test statistic
+            n_boot_test = min(n_bootstrap, 500)
+            boot_deltas = []
+            
+            np.random.seed(42)
+            for _ in range(n_boot_test):
+                idx = np.random.choice(len(y_event), len(y_event), replace=True)
+                y_e_b = y_event[idx]
+                y_t_b = y_time[idx]
+                r1_b = risk1[idx]
+                r2_b = risk2[idx]
+                
+                if y_e_b.sum() == 0:
+                    continue
+                
+                try:
+                    c1_b = concordance_index(y_e_b, y_t_b, r1_b)
+                    c2_b = concordance_index(y_e_b, y_t_b, r2_b)
+                    boot_deltas.append(c1_b - c2_b)
+                except:
+                    continue
+            
+            if boot_deltas:
+                boot_deltas = np.array(boot_deltas)
+                se_delta = boot_deltas.std()
+                z_stat = delta / se_delta if se_delta > 0 else 0
+                p_val = 2 * (1 - stats.norm.cdf(abs(z_stat)))
+            else:
+                se_delta = 0
+                z_stat = 0
+                p_val = 1.0
+            
+            sig_mark = " **" if p_val < 0.05 else ""
+            
+            model_comparisons.append({
+                'model1': m1,
+                'model2': m2,
+                'c_index_1': float(c1),
+                'c_index_2': float(c2),
+                'delta': float(delta),
+                'z_statistic': float(z_stat),
+                'p_value': float(p_val)
+            })
+            
+            print(f"| {m1} vs {m2} | ΔC = {delta:+.4f} | z = {z_stat:.3f} | p = {p_val:.4f}{sig_mark} |")
+        
+        except Exception as e:
+            print(f"| {m1} vs {m2} | Comparison failed: {e} |")
+    
+    print()
+
+# ========== 6. PLOTS ==========
+timestamp = str(int(time.time()))
+
+# Only Time-dependent AUC plot
+if eval_times and all_auc_data:
+    fig, ax = plt.subplots(figsize=(10, 6))
+    colors = plt.cm.tab10(np.linspace(0, 1, len(valid_preds)))
+    
+    for i, pred_col in enumerate(valid_preds):
+        auc_vals = [all_auc_data[pred_col][t]['auc'] for t in eval_times if t in all_auc_data[pred_col]]
+        ci_lows_vals = [all_auc_data[pred_col][t]['ci_low'] for t in eval_times if t in all_auc_data[pred_col]]
+        ci_highs_vals = [all_auc_data[pred_col][t]['ci_high'] for t in eval_times if t in all_auc_data[pred_col]]
+        t_vals = [t for t in eval_times if t in all_auc_data[pred_col]]
+        
+        if auc_vals:
+            ax.plot(t_vals, auc_vals, 'o-', color=colors[i], lw=2, label=pred_col, markersize=6)
+            for tx, vy in zip(t_vals, auc_vals):
+                ax.annotate(f'{vy:.3f}', (tx, vy), textcoords="offset points", xytext=(0, 10),
+                            ha='center', fontsize=8, color=colors[i])
+
+    
+    ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Time (months)')
+    max_t = max(t_vals) if t_vals else max(y_time)
+    ax.set_xticks(np.arange(0, max_t + x_tick_step, x_tick_step))
+    ax.set_ylabel('AUC')
+    ax.set_title('Time-dependent AUC', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=10, loc='lower left')
+    ax.set_ylim(0.4, 1.05)
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plot_filename = f"surv_eval_{timestamp}"
+    save_plot(plot_filename, fig)
+    output_plots = [f"{plot_filename}.png"]
+    print(f"![Survival Evaluation](/plots/{plot_filename}.png)\n")
+else:
+    output_plots = []
+    print("*No plot generated — insufficient time points*\n")
+
+print("---")
+print("**Survival evaluation complete**")
+
+# ========== JSON METRICS ==========
+output_metrics = {
+    "model_type": "survival_evaluation",
+    "time_col": time_col,
+    "event_col": event_col,
+    "n_total": int(n_total),
+    "n_events": int(n_events),
+    "models": valid_preds,
+    "c_indices": all_c_indices,
+    "time_auc": {
+        m: {str(t): v for t, v in auc_data.items()} 
+        for m, auc_data in all_auc_data.items()
+    },
+    "brier_scores": all_brier_scores,
+    "model_comparisons": model_comparisons,
+    "calibration": calibration_data,
+    "plots": output_plots
+}
+
+def make_serializable(obj):
+    if isinstance(obj, dict):
+        return {str(k): make_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_serializable(v) for v in obj]
+    elif isinstance(obj, (np.integer, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64)):
+        if np.isnan(obj):
+            return None
+        return float(obj)
+    elif isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    elif obj is None:
+        return None
+    return obj
+
+output_metrics = make_serializable(output_metrics)
+print("\n<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False))
+print("<!-- JSON_METRICS_END -->")

@@ -1,0 +1,120 @@
+# violin_plot.py.jinja
+# Violin Plots with optional box plot and swarm points
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy import stats
+import json
+from pathlib import Path
+
+var_labels = {}
+try:
+    labels_path = Path(project_path) / "state" / "variable_labels.json"
+    if labels_path.exists():
+        with open(labels_path, 'r', encoding='utf-8') as f:
+            var_labels = json.load(f)
+except:
+    pass
+
+print("## Violin Plots\n")
+
+value_col = "{{ value_col }}"
+group_col = "{{ group_col }}"
+show_box = {{ show_box|default(True) }}
+show_points = {{ show_points|default(False) }}
+
+if value_col not in df.columns:
+    raise ValueError(f"Column '{value_col}' not found")
+if group_col not in df.columns:
+    raise ValueError(f"Column '{group_col}' not found")
+
+print(f"**Variable:** `{value_col}`")
+print(f"**Group by:** `{group_col}`")
+print(f"**Box plot:** {'Yes' if show_box else 'No'}")
+print(f"**Data points:** {'Yes' if show_points else 'No'}\n")
+
+df_plot = df[[value_col, group_col]].dropna()
+groups = sorted(df_plot[group_col].unique())
+n_total = len(df_plot)
+
+# Статистика по группам
+print("### Group Statistics\n")
+print("| Group | N | Mean | Median | Std | Q1 | Q3 | IQR |")
+print("|-------|---|------|--------|-----|----|----|-----|")
+for g in groups:
+    data = df_plot[df_plot[group_col] == g][value_col]
+    n = len(data)
+    print(f"| {g} | {n} | {data.mean():.2f} | {data.median():.2f} | {data.std():.2f} | {data.quantile(0.25):.2f} | {data.quantile(0.75):.2f} | {data.quantile(0.75)-data.quantile(0.25):.2f} |")
+
+# Тест на различие
+if len(groups) == 2:
+    g1, g2 = groups
+    d1 = df_plot[df_plot[group_col] == g1][value_col]
+    d2 = df_plot[df_plot[group_col] == g2][value_col]
+    u_stat, u_p = stats.mannwhitneyu(d1, d2, alternative='two-sided')
+    print(f"\n**Mann-Whitney U test:** p = {u_p:.4f}{' **' if u_p < 0.05 else ''}")
+elif len(groups) > 2:
+    h_stat, h_p = stats.kruskal(*[df_plot[df_plot[group_col] == g][value_col] for g in groups])
+    print(f"\n**Kruskal-Wallis H test:** p = {h_p:.4f}{' **' if h_p < 0.05 else ''}")
+
+# График
+fig, ax = plt.subplots(figsize=(max(6, len(groups)*1.5), 6))
+
+colors = plt.cm.Set2(np.linspace(0, 1, len(groups)))
+plot_data = [df_plot[df_plot[group_col] == g][value_col].values for g in groups]
+
+parts = ax.violinplot(plot_data, positions=range(len(groups)), 
+                       showmeans=False, showmedians=True, widths=0.7)
+
+for i, pc in enumerate(parts['bodies']):
+    pc.set_facecolor(colors[i])
+    pc.set_alpha(0.7)
+
+if show_box:
+    bp = ax.boxplot(plot_data, positions=range(len(groups)), widths=0.15,
+                     patch_artist=True, showfliers=False,
+                     boxprops=dict(facecolor='white', alpha=0.8),
+                     medianprops=dict(color='red', linewidth=2))
+
+if show_points:
+    for i, g in enumerate(groups):
+        y = df_plot[df_plot[group_col] == g][value_col].values
+        x = np.random.normal(i, 0.04, size=len(y))
+        ax.scatter(x, y, alpha=0.4, s=10, color='black')
+
+ax.set_xticks(range(len(groups)))
+ax.set_xticklabels([f"{g}\n(n={len(df_plot[df_plot[group_col]==g])})" for g in groups])
+ax.set_ylabel(value_col)
+ax.set_title(f'Distribution of {value_col} by {group_col}', fontsize=14, fontweight='bold')
+ax.grid(True, alpha=0.3, axis='y')
+
+plt.tight_layout()
+import time
+timestamp = str(int(time.time()))
+plot_name = f"violin_{timestamp}"
+save_plot(plot_name, fig)
+print(f"\n![Violin Plot](/plots/{plot_name}.png)\n")
+
+print("---")
+print("**Violin plot complete**")
+
+# JSON метрики
+output_metrics = {
+    "model_type": "violin_plot",
+    "value_col": value_col,
+    "group_col": group_col,
+    "n_groups": len(groups),
+    "n_total": n_total
+}
+if len(groups) == 2:
+    output_metrics["mann_whitney_p"] = float(u_p)
+    output_metrics["significant"] = bool(u_p < 0.05)
+elif len(groups) > 2:
+    output_metrics["kruskal_p"] = float(h_p)
+    output_metrics["significant"] = bool(h_p < 0.05)
+
+print("\n<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False))
+print("<!-- JSON_METRICS_END -->")

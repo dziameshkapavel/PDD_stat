@@ -1,0 +1,614 @@
+# logistic.py.jinja
+# Логистическая регрессия
+# regression_type: "uni" | "multi" | "forward" | "backward"
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.metrics import roc_curve, auc, accuracy_score, confusion_matrix
+import json
+import time
+from pathlib import Path
+import warnings
+warnings.filterwarnings('ignore')
+
+var_labels = {}
+try:
+    labels_path = Path(project_path) / "state" / "variable_labels.json"
+    if labels_path.exists():
+        with open(labels_path, 'r', encoding='utf-8') as f:
+            var_labels = json.load(f)
+except:
+    pass
+
+target_col = "{{ target_col }}"
+predictors = {{ predictors|default([])|tojson }}
+regression_type = "{{ regression_type|default('multi') }}"
+
+def make_json_serializable(obj):
+    if isinstance(obj, dict):
+        return {str(k): make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_json_serializable(item) for item in obj]
+    elif isinstance(obj, (np.integer, np.int64, np.int32)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64, np.float32)):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    elif obj is None:
+        return None
+    elif pd.isna(obj):
+        return None
+    else:
+        try:
+            return float(obj)
+        except:
+            return str(obj)
+
+output_metrics = {
+    "model_type": "logistic",
+    "regression_type": regression_type,
+    "auc": None,
+    "accuracy": None,
+    "sensitivity": None,
+    "specificity": None,
+    "hosmer_lemeshow": {},
+    "vif": {},
+    "warnings": [],
+    "model_steps": []
+}
+
+print(f"## Логистическая регрессия\n")
+print(f"**Тип анализа:** ", end="")
+if regression_type == "uni":
+    print("Моновариантная (каждый предиктор отдельно)")
+elif regression_type in ["multi", "enter"]:
+    print("Мультивариантная (все предикторы вместе)")
+elif regression_type == "forward":
+    print("Forward selection (прямой пошаговый отбор)")
+elif regression_type == "backward":
+    print("Backward elimination (обратный пошаговый отбор)")
+else:
+    print(regression_type)
+print()
+
+if target_col not in df.columns:
+    print(f"Error: Target column '{target_col}' not found. Available columns: {', '.join(df.columns)}")
+    raise ValueError(f"Target column '{target_col}' not found")
+if not predictors:
+    print("Error: No predictors specified")
+    raise ValueError("No predictors specified")
+
+valid_pred = [c for c in predictors if c in df.columns and c != target_col]
+if len(valid_pred) == 0:
+    print("Error: No valid predictors")
+    raise ValueError("No valid predictors")
+
+print(f"**Целевая переменная:** `{target_col}`  ")
+print(f"**Предикторы:** {', '.join(valid_pred)}  \n")
+
+df_log = df.copy()
+encoding_map = {}
+scaler = StandardScaler()
+
+for col in valid_pred:
+    if col in df_log.columns and (df_log[col].dtype == 'object' or df_log[col].dtype.name == 'category'):
+        df_log[col] = df_log[col].fillna('__MISSING__')
+        le = LabelEncoder()
+        df_log[col] = le.fit_transform(df_log[col].astype(str))
+        encoding_map[col] = {int(k): str(v) for k, v in dict(zip(range(len(le.classes_)), le.classes_)).items()}
+
+if df_log[target_col].dtype == 'object' or df_log[target_col].dtype.name == 'category':
+    le_target = LabelEncoder()
+    df_log[target_col] = le_target.fit_transform(df_log[target_col].astype(str))
+    print(f"**Target encoded:** 0 = {le_target.classes_[0]}, 1 = {le_target.classes_[1]}")
+
+cols_to_keep = [target_col] + valid_pred
+df_log = df_log[cols_to_keep].dropna()
+
+unique_targets = df_log[target_col].nunique()
+if unique_targets != 2:
+    print(f"Error: Target variable must be binary, found {unique_targets} unique values")
+    exit()
+
+n_cases = df_log[target_col].sum()
+n_controls = len(df_log) - n_cases
+print(f"**Наблюдений:** {len(df_log)}  ")
+print(f"**Событий (1):** {int(n_cases)}  ")
+print(f"**Не-событий (0):** {int(n_controls)}  \n")
+
+if len(df_log) < 20:
+    print("Error: Insufficient data")
+    exit()
+
+def fit_logistic(pred_list):
+    if not pred_list:
+        return None, None, None
+    X = df_log[pred_list].values
+    y = df_log[target_col].values
+    X_scaled = scaler.fit_transform(X)
+    model = LogisticRegression(max_iter=1000, random_state=42)
+    model.fit(X_scaled, y)
+    return model, X_scaled, y
+
+def calculate_vif(pred_list):
+    if len(pred_list) < 2:
+        return {}
+    try:
+        from statsmodels.stats.outliers_influence import variance_inflation_factor
+        X = df_log[pred_list].dropna()
+        if X.shape[0] < 10 or X.shape[1] < 2:
+            return {}
+        vif_data = {}
+        for i, col in enumerate(X.columns):
+            try:
+                vif = float(variance_inflation_factor(X.values, i))
+                if np.isnan(vif) or np.isinf(vif):
+                    vif = 999.0
+                vif_data[str(col)] = {
+                    "value": vif,
+                    "high": bool(vif > 10),
+                    "moderate": bool(vif > 5 and vif <= 10)
+                }
+            except:
+                vif_data[str(col)] = {"value": 0.0, "high": False, "moderate": False}
+        return vif_data
+    except Exception as e:
+        output_metrics["warnings"].append(f"VIF error: {str(e)}")
+        return {}
+
+def calculate_metrics(model, X, y):
+    if model is None:
+        return {}
+    y_pred = model.predict(X)
+    y_proba = model.predict_proba(X)[:, 1]
+    fpr, tpr, _ = roc_curve(y, y_proba)
+    auc_score = auc(fpr, tpr)
+    tn, fp, fn, tp = confusion_matrix(y, y_pred).ravel()
+    accuracy = (tp + tn) / (tp + tn + fp + fn)
+    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    return {
+        "auc": auc_score,
+        "accuracy": accuracy,
+        "sensitivity": sensitivity,
+        "specificity": specificity
+    }
+
+def hosmer_lemeshow_test(model, X, y, n_groups=10):
+    try:
+        y_proba = model.predict_proba(X)[:, 1]
+        sorted_idx = np.argsort(y_proba)
+        sorted_y = y[sorted_idx]
+        sorted_proba = y_proba[sorted_idx]
+        group_size = len(y) // n_groups
+        observed, expected = [], []
+        for i in range(n_groups):
+            start = i * group_size
+            end = (i + 1) * group_size if i < n_groups - 1 else len(y)
+            group_y = sorted_y[start:end]
+            group_proba = sorted_proba[start:end]
+            observed.append(group_y.sum())
+            expected.append(group_proba.sum())
+        chi_square = 0
+        for obs, exp in zip(observed, expected):
+            if exp > 0 and exp < len(group_y):
+                chi_square += (obs - exp)**2 / (exp * (1 - exp/len(group_y)))
+        from scipy.stats import chi2
+        p_value = 1 - chi2.cdf(chi_square, n_groups - 2)
+        return {
+            "chi_square": float(chi_square),
+            "p_value": float(p_value),
+            "df": n_groups - 2,
+            "significant": bool(p_value < 0.05)
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+def get_model_summary(model, pred_list):
+    if model is None:
+        return []
+    coefs = model.coef_[0]
+    intercept = model.intercept_[0]
+    X = df_log[pred_list].values
+    X_scaled = scaler.fit_transform(X)
+    X_with_intercept = np.column_stack([np.ones(X_scaled.shape[0]), X_scaled])
+    try:
+        y_proba = model.predict_proba(X_scaled)[:, 1]
+        W = np.diag(y_proba * (1 - y_proba))
+        cov_matrix = np.linalg.inv(X_with_intercept.T @ W @ X_with_intercept)
+        se = np.sqrt(np.diag(cov_matrix))
+        all_coefs = np.concatenate([[intercept], coefs])
+        z_scores = all_coefs / se
+        from scipy import stats
+        p_values = 2 * (1 - stats.norm.cdf(np.abs(z_scores)))
+    except:
+        from scipy import stats
+        se = np.ones(len(coefs) + 1)
+        p_values = np.ones(len(coefs) + 1)
+    
+    summary = []
+    summary.append({
+        "variable": "Intercept",
+        "coef": float(intercept),
+        "or": None,
+        "ci_lower": None,
+        "ci_upper": None,
+        "p_value": float(p_values[0]) if len(p_values) > 0 else 1.0
+    })
+    for i, pred in enumerate(pred_list):
+        coef = coefs[i]
+        odds_ratio = np.exp(coef)
+        ci_lower = np.exp(coef - 1.96 * se[i+1]) if i+1 < len(se) else None
+        ci_upper = np.exp(coef + 1.96 * se[i+1]) if i+1 < len(se) else None
+        summary.append({
+            "variable": pred,
+            "coef": float(coef),
+            "or": float(odds_ratio),
+            "ci_lower": float(ci_lower) if ci_lower else None,
+            "ci_upper": float(ci_upper) if ci_upper else None,
+            "p_value": float(p_values[i+1]) if i+1 < len(p_values) else 1.0
+        })
+    return summary
+
+def print_summary_table(summary):
+    print("| Variable | β (coef) | OR | 95% CI | p-value |")
+    print("|----------|----------|-----|--------|---------|")
+    for row in summary:
+        var = row['variable']
+        coef = row['coef']
+        or_val = row['or']
+        ci_lower = row['ci_lower']
+        ci_upper = row['ci_upper']
+        pval = row['p_value']
+        sig = "**" if pval < 0.05 else ""
+        if var == "Intercept":
+            ci_str = "—"
+            or_str = "—"
+        else:
+            ci_str = f"{ci_lower:.3f}–{ci_upper:.3f}" if ci_lower else "—"
+            or_str = f"{or_val:.3f}" if or_val else "—"
+        coef_str = f"{coef:.4f}"
+        pval_str = f"{pval:.4f}{sig}" if pval != 1.0 else "-"
+        print(f"| {var} | {coef_str} | {or_str} | {ci_str} | {pval_str} |")
+
+from scipy import stats
+
+# ==================== UNIVARIATE ====================
+if regression_type == "uni":
+    print("### Моновариантный анализ\n")
+    
+    roc_data = []
+    
+    for pred in valid_pred:
+        model, X, y = fit_logistic([pred])
+        if model is None:
+            print(f"**{pred}:** Failed\n")
+            continue
+        
+        print(f"**Predictor:** `{pred}`\n")
+        summary = get_model_summary(model, [pred])
+        print_summary_table(summary)
+        metrics = calculate_metrics(model, X, y)
+        print(f"\n**AUC:** {metrics['auc']:.4f}  \n---\n")
+        
+        # Сохраняем для ROC
+        y_proba = model.predict_proba(X)[:, 1]
+        fpr, tpr, _ = roc_curve(y, y_proba)
+        roc_auc = auc(fpr, tpr)
+        roc_data.append((pred, fpr, tpr, roc_auc))
+    
+    # Один график ROC со всеми кривыми
+    if roc_data:
+        timestamp = str(int(time.time()))
+        fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+        
+        colors = plt.cm.tab10(np.linspace(0, 1, len(roc_data)))
+        
+        for i, (pred, fpr, tpr, roc_auc) in enumerate(roc_data):
+            ax.plot(fpr, tpr, color=colors[i], lw=2, label=f'{pred} (AUC = {roc_auc:.3f})')
+        
+        ax.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', alpha=0.5)
+        ax.set_xlim([0.0, 1.0])
+        ax.set_ylim([0.0, 1.05])
+        ax.set_xlabel('False Positive Rate')
+        ax.set_ylabel('True Positive Rate')
+        ax.set_title('ROC Curves - Univariate Analysis')
+        ax.legend(loc="lower right", fontsize=9)
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plot_filename = f"logistic_uni_{timestamp}"
+        save_plot(plot_filename, fig)
+        output_metrics["plots"] = [f"{plot_filename}.png"]
+        print(f"\n![Logistic Univariate](/plots/{plot_filename}.png)\n")
+
+# ==================== MULTIVARIATE ====================
+elif regression_type in ["multi", "enter"]:
+    print("### Мультивариантная модель\n")
+    
+    model, X, y = fit_logistic(valid_pred)
+    if model is None:
+        print("Error: Model fitting failed")
+        exit()
+    
+    metrics = calculate_metrics(model, X, y)
+    output_metrics.update(metrics)
+    output_metrics["vif"] = calculate_vif(valid_pred)
+    output_metrics["hosmer_lemeshow"] = hosmer_lemeshow_test(model, X, y)
+    
+    summary = get_model_summary(model, valid_pred)
+    print_summary_table(summary)
+    
+    print(f"\n**AUC:** {output_metrics['auc']:.4f}")
+    print(f"**Accuracy:** {output_metrics['accuracy']:.4f}")
+    print(f"**Sensitivity:** {output_metrics['sensitivity']:.4f}")
+    print(f"**Specificity:** {output_metrics['specificity']:.4f}")
+    
+    hl = output_metrics['hosmer_lemeshow']
+    if 'p_value' in hl:
+        print(f"\n**Hosmer-Lemeshow:** p = {hl['p_value']:.4f} {'⚠️' if hl['p_value'] < 0.05 else '✓'}")
+    
+    if len(valid_pred) > 1 and output_metrics["vif"]:
+        print("\n**VIF:**")
+        for var, res in output_metrics["vif"].items():
+            if isinstance(res, dict):
+                print(f"   `{var}`: {res.get('value', 0):.2f}")
+    
+    # ROC для одной модели
+    timestamp = str(int(time.time()))
+    fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+    
+    y_proba = model.predict_proba(X)[:, 1]
+    fpr, tpr, _ = roc_curve(y, y_proba)
+    roc_auc = auc(fpr, tpr)
+    
+    ax.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC (AUC = {roc_auc:.3f})')
+    ax.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', alpha=0.5)
+    ax.set_xlim([0.0, 1.0])
+    ax.set_ylim([0.0, 1.05])
+    ax.set_xlabel('False Positive Rate')
+    ax.set_ylabel('True Positive Rate')
+    ax.set_title('ROC Curve - Multivariate Model')
+    ax.legend(loc="lower right")
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plot_filename = f"logistic_multi_{timestamp}"
+    save_plot(plot_filename, fig)
+    output_metrics["plots"] = [f"{plot_filename}.png"]
+    print(f"\n![Logistic Multivariate](/plots/{plot_filename}.png)\n")
+
+# ==================== FORWARD ====================
+elif regression_type == "forward":
+    print("### Forward Selection\n")
+    
+    selected = []
+    remaining = valid_pred.copy()
+    step = 1
+    
+    while remaining:
+        best_pval = 1.0
+        best_pred = None
+        best_model = None
+        
+        for pred in remaining:
+            test_preds = selected + [pred]
+            model, X, y = fit_logistic(test_preds)
+            if model is None:
+                continue
+            summary = get_model_summary(model, test_preds)
+            for row in summary:
+                if row['variable'] == pred:
+                    pval = row['p_value']
+                    if pval < best_pval:
+                        best_pval = pval
+                        best_pred = pred
+                        best_model = model
+                    break
+        
+        if best_pval < 0.05 and best_pred:
+            selected.append(best_pred)
+            remaining.remove(best_pred)
+            output_metrics["model_steps"].append({
+                "step": step, "action": "added",
+                "variable": best_pred, "p_value": float(best_pval)
+            })
+            print(f"Step {step}: + {best_pred} (p={best_pval:.4f})")
+            step += 1
+        else:
+            break
+    
+    if selected:
+        print(f"\n**Final model:** {', '.join(selected)}")
+        model, X, y = fit_logistic(selected)
+        metrics = calculate_metrics(model, X, y)
+        output_metrics.update(metrics)
+        output_metrics["vif"] = calculate_vif(selected)
+        output_metrics["hosmer_lemeshow"] = hosmer_lemeshow_test(model, X, y)
+        
+        summary = get_model_summary(model, selected)
+        print_summary_table(summary)
+        print(f"\n**AUC:** {output_metrics['auc']:.4f}")
+        
+        # ROC
+        timestamp = str(int(time.time()))
+        fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+        y_proba = model.predict_proba(X)[:, 1]
+        fpr, tpr, _ = roc_curve(y, y_proba)
+        roc_auc = auc(fpr, tpr)
+        ax.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC (AUC = {roc_auc:.3f})')
+        ax.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', alpha=0.5)
+        ax.set_xlim([0.0, 1.0])
+        ax.set_ylim([0.0, 1.05])
+        ax.set_xlabel('False Positive Rate')
+        ax.set_ylabel('True Positive Rate')
+        ax.set_title('ROC Curve - Forward Selection')
+        ax.legend(loc="lower right")
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plot_filename = f"logistic_forward_{timestamp}"
+        save_plot(plot_filename, fig)
+        output_metrics["plots"] = [f"{plot_filename}.png"]
+        print(f"\n![Logistic Forward](/plots/{plot_filename}.png)\n")
+    else:
+        output_metrics["warnings"].append("No predictors selected")
+
+# ==================== BACKWARD ====================
+elif regression_type == "backward":
+    print("### Backward Elimination\n")
+    
+    current = valid_pred.copy()
+    step = 1
+    
+    while len(current) > 1:
+        model, X, y = fit_logistic(current)
+        if model is None:
+            break
+        summary = get_model_summary(model, current)
+        max_pval = 0
+        worst_pred = None
+        for row in summary:
+            if row['variable'] != "Intercept":
+                if row['p_value'] > max_pval:
+                    max_pval = row['p_value']
+                    worst_pred = row['variable']
+        if max_pval > 0.1 and worst_pred:
+            current.remove(worst_pred)
+            output_metrics["model_steps"].append({
+                "step": step, "action": "removed",
+                "variable": worst_pred, "p_value": float(max_pval)
+            })
+            print(f"Step {step}: - {worst_pred} (p={max_pval:.4f})")
+            step += 1
+        else:
+            break
+    
+    if current:
+        print(f"\n**Final model:** {', '.join(current)}")
+        model, X, y = fit_logistic(current)
+        metrics = calculate_metrics(model, X, y)
+        output_metrics.update(metrics)
+        output_metrics["vif"] = calculate_vif(current)
+        output_metrics["hosmer_lemeshow"] = hosmer_lemeshow_test(model, X, y)
+        
+        summary = get_model_summary(model, current)
+        print_summary_table(summary)
+        print(f"\n**AUC:** {output_metrics['auc']:.4f}")
+        
+        # ROC
+        timestamp = str(int(time.time()))
+        fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+        y_proba = model.predict_proba(X)[:, 1]
+        fpr, tpr, _ = roc_curve(y, y_proba)
+        roc_auc = auc(fpr, tpr)
+        ax.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC (AUC = {roc_auc:.3f})')
+        ax.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', alpha=0.5)
+        ax.set_xlim([0.0, 1.0])
+        ax.set_ylim([0.0, 1.05])
+        ax.set_xlabel('False Positive Rate')
+        ax.set_ylabel('True Positive Rate')
+        ax.set_title('ROC Curve - Backward Elimination')
+        ax.legend(loc="lower right")
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plot_filename = f"logistic_backward_{timestamp}"
+        save_plot(plot_filename, fig)
+        output_metrics["plots"] = [f"{plot_filename}.png"]
+        print(f"\n![Logistic Backward](/plots/{plot_filename}.png)\n")
+    else:
+        output_metrics["warnings"].append("All predictors removed")
+
+print("\n---")
+print("**Logistic regression complete**")
+
+# Всегда сохраняем базовые метрики
+output_metrics["n_total"] = len(df_log)
+output_metrics["n_events"] = int(n_cases)
+output_metrics["predictors"] = valid_pred
+output_metrics["target"] = target_col
+
+# Для multivariate — детальные коэффициенты
+if regression_type in ["multi", "enter"]:
+    try:
+        summary = get_model_summary(model, valid_pred)
+        if summary:
+            output_metrics["coefficients"] = [
+                {
+                    "variable": row['variable'],
+                    "coef": row['coef'],
+                    "or": row['or'],
+                    "p_value": row['p_value']
+                }
+                for row in summary if row['variable'] != 'Intercept'
+            ]
+            output_metrics["significant_predictors"] = [
+                row['variable'] for row in summary
+                if row['variable'] != 'Intercept' and row['p_value'] < 0.05
+            ]
+    except:
+        pass
+
+if regression_type == "forward" and 'selected' in dir() and selected:
+    try:
+        model, X, y = fit_logistic(selected)
+        summary = get_model_summary(model, selected)
+        if summary:
+            output_metrics["coefficients"] = [
+                {
+                    "variable": row['variable'],
+                    "coef": row['coef'],
+                    "or": row['or'],
+                    "p_value": row['p_value']
+                }
+                for row in summary if row['variable'] != 'Intercept'
+            ]
+    except:
+        pass
+
+if regression_type == "backward" and 'current' in dir() and current:
+    try:
+        model, X, y = fit_logistic(current)
+        summary = get_model_summary(model, current)
+        if summary:
+            output_metrics["coefficients"] = [
+                {
+                    "variable": row['variable'],
+                    "coef": row['coef'],
+                    "or": row['or'],
+                    "p_value": row['p_value']
+                }
+                for row in summary if row['variable'] != 'Intercept'
+            ]
+    except:
+        pass
+
+# Для univariate — сохраняем AUC каждого предиктора
+if regression_type == "uni":
+    try:
+        univariate_results = []
+        for pred in valid_pred:
+            model_uni, X_uni, y_uni = fit_logistic([pred])
+            if model_uni is not None:
+                y_proba = model_uni.predict_proba(X_uni)[:, 1]
+                auc_uni = roc_auc_score(y_uni, y_proba)
+                univariate_results.append({"predictor": pred, "auc": float(auc_uni)})
+        output_metrics["univariate_aucs"] = univariate_results
+    except:
+        pass
+
+if regression_type == "forward" and 'selected' in dir():
+    output_metrics["final_predictors"] = selected
+if regression_type == "backward" and 'current' in dir():
+    output_metrics["final_predictors"] = current
+
+output_metrics = make_json_serializable(output_metrics)
+print("\n<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False))
+print("<!-- JSON_METRICS_END -->")
