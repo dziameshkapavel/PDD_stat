@@ -1,4 +1,4 @@
-# PDD MedStat by P. Demeshko
+# PDD MedStat
 # Statistical Analysis Platform for Clinical Research
 
 A web-based statistical analysis application for survival analysis and binary outcome modeling in clinical studies. Built with FastAPI (Python) and vanilla JavaScript SPA.
