@@ -18,7 +18,6 @@ state = {"current_project_name": None, "cached_cleaning_plan": None}
 def get_project_manager() -> ProjectManager:
     pm = ProjectManager()
     name = state.get("current_project_name")
-    print(f"[DEBUG] get_project_manager: current_project_name = {name}")
     if name:
         pm.open_project(name)
     return pm
@@ -54,7 +53,6 @@ async def create_project(name: str):
         state["cached_cleaning_plan"] = None
         active_path = Path(__file__).parent.parent / "active_project.txt"
         active_path.write_text(str(project_path))
-        print(f"[DEBUG] Project created: {name}, path: {project_path}")
         return {"status": "created", "name": name, "path": str(project_path)}
     except FileExistsError:
         raise HTTPException(status_code=400, detail="Project already exists")
@@ -69,7 +67,6 @@ async def open_project(name: str):
         state["cached_cleaning_plan"] = None
         active_path = Path(__file__).parent.parent / "active_project.txt"
         active_path.write_text(str(project_path))
-        print(f"[DEBUG] Project opened: {name}")
         return {"status": "opened", "name": name, "path": str(project_path)}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -78,7 +75,6 @@ async def open_project(name: str):
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     name = state.get("current_project_name")
-    print(f"[DEBUG] Upload: current_project_name = {name}")
     if not name:
         raise HTTPException(status_code=400, detail="No active project")
     

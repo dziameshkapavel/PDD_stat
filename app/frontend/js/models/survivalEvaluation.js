@@ -31,6 +31,14 @@ export class SurvivalEvaluationModel extends BaseModel {
             });
         }
         
+        // Smooth toggle
+        const smoothBtn = card.querySelector('.smooth-btn');
+        if (smoothBtn) {
+            smoothBtn.addEventListener('click', () => {
+                smoothBtn.classList.toggle('active');
+            });
+        }
+
         // Кнопка Run
         card.querySelector('.run-btn').addEventListener('click', () => this.run(card));
         card.querySelector('.card-close-btn').addEventListener('click', () => this.removeCard(card));
@@ -72,10 +80,6 @@ export class SurvivalEvaluationModel extends BaseModel {
         }
         if (!params.pred_cols || params.pred_cols.length === 0) {
             this.ui.modals.showAlert('Select at least one prediction column');
-            return;
-        }
-        if (params.eval_times.length < 2) {
-            this.ui.modals.showAlert('Specify at least 2 evaluation time points');
             return;
         }
         
@@ -130,7 +134,7 @@ export class SurvivalEvaluationModel extends BaseModel {
             predCols = vars.predictors;
         }
         
-        const timePointsStr = timePointsInput?.value || '12,24,36,48,60';
+        const timePointsStr = timePointsInput?.value || '';
         const evalTimes = timePointsStr.split(',')
             .map(t => parseInt(t.trim()))
             .filter(t => !isNaN(t) && t > 0);
@@ -152,13 +156,13 @@ export class SurvivalEvaluationModel extends BaseModel {
             yLabel = card.querySelector('.y-label-input')?.value || 'AUC';
         }
         
+        const smooth = card.querySelector('.smooth-btn')?.classList.contains('active') || false;
+
         return {
             time_col: timeCol,
             event_col: eventCol,
             pred_cols: predCols,
             time_points: timePointsStr,
-            eval_times: evalTimes,
-            time_step: timeStep,
             stratify_col: stratifyCol,
             x_tick_step: xTickStep,
             x_label: xLabel,
@@ -166,7 +170,8 @@ export class SurvivalEvaluationModel extends BaseModel {
             y_label: yLabel,
             n_bootstrap: nBootstrap,
             run_model_comparison: runComparison,
-            run_calibration: runCalibration
+            run_calibration: runCalibration,
+            smooth: smooth
         };
     }
     
@@ -183,6 +188,7 @@ export class SurvivalEvaluationModel extends BaseModel {
                 const label = s.label || 'All';
                 html += `<div class="diagnostic-card" style="margin-bottom:12px;">`;
                 html += `<h3 class="diagnostic-card-title">${label} (n=${s.n}, events=${s.events})</h3>`;
+                html += '<div class="diagnostic-card-content">';
                 
                 const cIndices = s.c_indices || {};
                 if (Object.keys(cIndices).length > 0) {
@@ -193,13 +199,11 @@ export class SurvivalEvaluationModel extends BaseModel {
                     html += '</tbody></table>';
                 }
                 
-                const timeAuc = metrics.time_auc?.[label] || {};
+                const timeAuc = metrics.time_auc?.[s.label] || {};
                 if (Object.keys(timeAuc).length > 0) {
-                    const allTimes = new Set();
-                    for (const [, data] of Object.entries(timeAuc)) {
-                        Object.keys(data || {}).forEach(t => allTimes.add(parseInt(t)));
-                    }
-                    const sortedTimes = Array.from(allTimes).sort((a, b) => a - b);
+                    // Use user-specified time points if any, otherwise show nothing
+                    const userPoints = params.time_points ? params.time_points.split(',').map(t => parseInt(t.trim())).filter(t => !isNaN(t)) : [];
+                    const sortedTimes = userPoints.length > 0 ? userPoints.sort((a, b) => a - b) : [];
                     
                     if (sortedTimes.length > 0) {
                         html += '<table class="results-table"><thead><tr><th>Model</th>';
@@ -213,21 +217,12 @@ export class SurvivalEvaluationModel extends BaseModel {
                             html += '</tr>';
                         }
                         html += '</tbody></table>';
+                    } else {
+                        html += '<p style="color:var(--text-muted);font-size:13px;">No time points specified. Enter values (e.g., 12,24,36) in the field above.</p>';
                     }
                 }
                 
-                html += '</div>';
-            }
-        } else {
-            const cIndices = metrics.c_indices || {};
-            if (Object.keys(cIndices).length > 0 && typeof Object.values(cIndices)[0] === 'object' && 'value' in Object.values(cIndices)[0]) {
-                html += '<div class="diagnostic-card" style="margin-bottom:12px;">';
-                html += '<h3 class="diagnostic-card-title">C-index</h3>';
-                html += '<table class="results-table"><thead><tr><th>Model</th><th>C-index</th><th>95% CI</th></tr></thead><tbody>';
-                for (const [m, c] of Object.entries(cIndices)) {
-                    html += `<tr><td><strong>${m}</strong></td><td>${(c.value||0).toFixed(4)}</td><td>[${(c.ci_low||0).toFixed(4)}, ${(c.ci_high||0).toFixed(4)}]</td></tr>`;
-                }
-                html += '</tbody></table></div>';
+                html += '</div></div>';
             }
         }
         
@@ -292,56 +287,31 @@ export class SurvivalEvaluationModel extends BaseModel {
     
     _renderTimeAUC(pane, metrics, output) {
         const timeAuc = metrics.time_auc || {};
-        const models = Object.keys(timeAuc);
+        // Use user-specified time points if any, otherwise show nothing
+        const userPoints = output?.time_points ? output.time_points.split(',').map(t => parseInt(t.trim())).filter(t => !isNaN(t)) : [];
+        const sortedTimes = userPoints.length > 0 ? userPoints.sort((a, b) => a - b) : [];
         
-        if (models.length === 0) {
-            pane.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);">No time-dependent AUC data</div>';
-            return;
+        if (sortedTimes.length > 0) {
+            let html = '<div style="padding:16px;"><div class="diagnostic-card">';
+            html += '<h3 class="diagnostic-card-title">Time-dependent AUC with 95% CI</h3>';
+            html += '<div class="diagnostic-card-content" style="overflow-x:auto;">';
+            html += '<table class="results-table"><thead><tr><th>Model</th>';
+            sortedTimes.forEach(t => html += `<th>${t}mo</th>`);
+            html += '</tr></thead><tbody>';
+            
+            const models = Object.keys(timeAuc);
+            for (const m of models) {
+                html += `<tr><td><strong>${m}</strong></td>`;
+                sortedTimes.forEach(t => {
+                    html += `<td>${timeAuc[m]?.[String(t)]?.auc?.toFixed(3) || '—'}</td>`;
+                });
+                html += '</tr>';
+            }
+            html += '</tbody></table></div></div></div>';
+            pane.innerHTML = html;
+        } else {
+            pane.innerHTML = '<p style="color:var(--text-muted);font-size:13px;padding:16px;">No time points specified. Enter values (e.g., 12,24,36) in the field above.</p>';
         }
-        
-        // Collect all time points
-        const allTimes = new Set();
-        models.forEach(m => {
-            Object.keys(timeAuc[m] || {}).forEach(t => allTimes.add(parseInt(t)));
-        });
-        const sortedTimes = Array.from(allTimes).sort((a, b) => a - b);
-        
-        let html = '<div style="padding:16px;"><div class="diagnostic-card">';
-        html += '<h3 class="diagnostic-card-title">Time-dependent AUC with 95% CI</h3>';
-        html += '<div class="diagnostic-card-content" style="overflow-x:auto;">';
-        html += '<table class="results-table" style="font-size:12px;"><thead><tr>';
-        html += '<th>Model</th>';
-        sortedTimes.forEach(t => html += `<th>${t}mo</th>`);
-        html += '</tr></thead><tbody>';
-        
-        models.forEach(m => {
-            html += '<tr>';
-            html += `<td><strong>${m}</strong></td>`;
-            sortedTimes.forEach(t => {
-                const data = timeAuc[m]?.[String(t)];
-                if (data?.auc != null) {
-                    const auc = data.auc.toFixed(3);
-                    const ciLow = data.ci_low?.toFixed(3) || '—';
-                    const ciHigh = data.ci_high?.toFixed(3) || '—';
-                    
-                    let color = 'var(--text-muted)';
-                    if (data.auc > 0.75) color = 'var(--accent-green)';
-                    else if (data.auc > 0.65) color = 'var(--accent-blue)';
-                    
-                    html += `<td style="color:${color};" title="95% CI: ${ciLow}–${ciHigh}">${auc}</td>`;
-                } else {
-                    html += '<td style="color:var(--text-muted);">—</td>';
-                }
-            });
-            html += '</tr>';
-        });
-        
-        // Add CI row as tooltip info
-        html += '<tr><td colspan="' + (sortedTimes.length + 1) + '" style="font-size:11px;color:var(--text-muted);padding:4px;">';
-        html += 'Hover over values to see 95% CI. Green = AUC > 0.75, Blue = AUC > 0.65</td></tr>';
-        
-        html += '</tbody></table></div></div></div>';
-        pane.innerHTML = html;
     }
     
     _renderBrier(pane, metrics) {

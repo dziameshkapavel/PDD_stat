@@ -262,6 +262,20 @@ export class AISettings {
                     
                     localStorage.setItem('pddstat_ai_connected', 'true');
                     updateHeaderButton(true);
+                    
+                    // Обновляем список моделей в select
+                    if (result.models && result.models.length > 0) {
+                        const select = this.modal.querySelector('#ollamaModel');
+                        if (select) {
+                            select.innerHTML = result.models
+                                .map(m => `<option value="${m}">${m}</option>`)
+                                .join('');
+                            // Выбираем первый если текущий не в списке
+                            if (!result.models.includes(select.value)) {
+                                select.value = result.models[0];
+                            }
+                        }
+                    }
                 } else {
                     status.textContent = `${result.message}`;
                     status.style.color = 'var(--accent-red)';

@@ -114,6 +114,7 @@ RULES (follow strictly):
 - Return ONLY Python code. No explanations. No markdown.
 - Use df['column'] for DataFrame columns.
 - Globals available: df, pd, np, plt, save_plot(name, fig), CoxVariableSelector.
+- NEVER read files (pd.read_csv, pd.read_excel, open). Use df directly.
 - NEVER use plt.show(). Use save_plot('descriptive_name') to save plots.
 - Print results with print() for calculations.
 - BEFORE .loc or .iloc, verify values: print(df['col'].unique()).
@@ -177,14 +178,12 @@ RULES (follow strictly):
                     const pythonBlocks = result.content.match(/```python\n([\s\S]*?)```/g) || [];
                     
                     // Execute each block and wait for all
-                    (async () => {
-                        for (const block of pythonBlocks) {
-                            const code = block.replace(/```python\n?/, '').replace(/```/, '').trim();
-                            if (code) {
-                                await this._executeCode(code, container);
-                            }
+                    for (const block of pythonBlocks) {
+                        const code = block.replace(/```python\n?/, '').replace(/```/, '').trim();
+                        if (code) {
+                            await this._executeCode(code, container);
                         }
-                    })();
+                    }
                 }
             } else {
                 this._addMessage(container, 'assistant', `Error: ${result.error || 'Unknown error'}`);
@@ -213,7 +212,7 @@ RULES (follow strictly):
             formatted = text.replace(/!\[([^\]]*)\]\(\/plots\/([^)]+)\)/g, 
                 '<img src="/plots/$2" style="max-width:100%;border-radius:8px;border:1px solid var(--border-primary);margin:8px 0;" />');
         } else if (this.coderMode && role === 'assistant') {
-            formatted = `<pre style="background:var(--bg-tertiary);padding:12px;border-radius:6px;overflow-x:auto;font-size:12px;margin:0;"><code>${this._escapeHtml(text)}</code></pre>`;
+            formatted = `<pre style="background:var(--bg-tertiary);padding:12px;border-radius:6px;overflow-x:auto;font-size:12px;margin:0;"><code>${text}</code></pre>`;
         } else {
             formatted = this._renderMarkdown(text);
         }
@@ -238,7 +237,9 @@ RULES (follow strictly):
             if (execData.success) {
                 const output = (execData.output || '').trim();
                 if (output) {
-                    this._addMessage(container, 'system', `> ${output}`);
+                    const coderResult = `[CODER OUTPUT — use these exact numbers]\n${output}`;
+                    this._addMessage(container, 'system', coderResult);
+                    this.messages.push({ role: 'user', content: `[SYSTEM] The following is the output from the last executed code. Use only these numbers in your analysis:\n${output}` });
                 } else {
                     this._addMessage(container, 'system', `> [Code executed]`);
                 }

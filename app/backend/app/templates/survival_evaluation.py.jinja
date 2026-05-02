@@ -19,7 +19,7 @@ event_col = "{{ event_col }}"
 stratify_col = "{{ stratify_col|default('') }}"
 
 time_step = {{ time_step|default(6)|int }}
-time_points_raw = "{{ time_points|default('12,24,36,48,60') }}"
+time_points_raw = "{{ time_points|default('') }}"
 time_points = [int(t.strip()) for t in time_points_raw.split(',') if t.strip().isdigit()]
 
 n_bootstrap = {{ n_bootstrap|default(1000)|int }}
@@ -30,15 +30,10 @@ x_label = "{{ x_label|default('Time, months') }}"
 y_tick_step = {{ y_tick_step|default(0.1)|float }}
 y_label = "{{ y_label|default('AUC') }}"
 
+smooth = "{{ smooth }}" == "True"
+
 # ========== LABELS ==========
-var_labels = {}
-try:
-    labels_path = Path(project_path) / "state" / "variable_labels.json"
-    if labels_path.exists():
-        with open(labels_path, 'r', encoding='utf-8') as f:
-            var_labels = json.load(f)
-except:
-    pass
+var_labels = var_labels if 'var_labels' in dir() else {}
 
 def get_label(col_name, value):
     """Get user-defined label for a value, or return formatted value"""
@@ -171,9 +166,11 @@ for s in strata:
     local_y_event = stratum_df[event_col].values.astype(bool)
     local_y_surv = Surv.from_arrays(event=local_y_event, time=local_y_time)
     
-    local_times = [t for t in time_points if t <= local_y_time.max()]
+    _min_t = max(6, int(local_y_time.min()))
+    _max_t = int(local_y_time.max())
+    local_times = list(range(_min_t, _max_t + 6, 6))
     if not local_times:
-        local_times = [int(local_y_time.max())]
+        local_times = [_max_t]
     
     c_indices = {}
     auc_data = {}
@@ -206,18 +203,22 @@ for s in strata:
         print(f"| {m} | {c['value']:.4f} | [{c['ci_low']:.4f}, {c['ci_high']:.4f}] |")
     print()
     
-    if local_times:
+    times_to_show = time_points
+    if times_to_show:
         print("| Time | " + " | ".join([f"`{p}`" for p in valid_preds]) + " |")
         print("|------|" + "|".join(["-------" for _ in valid_preds]) + "|")
-        for t in local_times:
-            row = f"| {t}mo |"
-            for m in valid_preds:
-                if t in auc_data.get(m, {}):
-                    row += f" {auc_data[m][t]['auc']:.3f} |"
-                else:
-                    row += " — |"
-            print(row)
+        for t in times_to_show:
+            if t in local_times:
+                row = f"| {t}mo |"
+                for m in valid_preds:
+                    if m in auc_data and t in auc_data[m]:
+                        row += f" {auc_data[m][t]['auc']:.3f} |"
+                    else:
+                        row += " — |"
+                print(row)
         print()
+    else:
+        print("*No time points specified. Enter values (e.g., 12,24,36) in the field above.*\n")
     
     # Store for plot
     for m, auc_d in auc_data.items():
@@ -282,10 +283,41 @@ if all_auc_plot_data:
         
         if plot_t_vals:
             lbl = f"{info['label']} - {info['model']}" if stratify_col else info['model']
-            ax.plot(plot_t_vals, auc_vals, 'o-', color=colors[i % len(colors)], lw=2, label=lbl, markersize=6)
-            for tx, vy in zip(plot_t_vals, auc_vals):
-                ax.annotate(f'{vy:.3f}', (tx, vy), textcoords="offset points", xytext=(0, 10),
-                           ha='center', fontsize=8, color=colors[i % len(colors)])
+            color = colors[i % len(colors)]
+            
+            # Fill area under curve
+            ax.fill_between(plot_t_vals, 0.5, auc_vals, color=color, alpha=0.08)
+            
+            # Smooth or points
+            if smooth and len(plot_t_vals) >= 4:
+                from scipy.interpolate import make_interp_spline
+                try:
+                    x_new = np.linspace(min(plot_t_vals), max(plot_t_vals), 200)
+                    spl = make_interp_spline(plot_t_vals, auc_vals, k=min(3, len(plot_t_vals) - 1))
+                    y_new = spl(x_new)
+                    ax.plot(x_new, y_new, '-', color=color, lw=2, label=lbl)
+                except:
+                    ax.plot(plot_t_vals, auc_vals, 'o-', color=color, lw=2, label=lbl, markersize=6)
+            else:
+                ax.plot(plot_t_vals, auc_vals, 'o-', color=color, lw=2, label=lbl, markersize=6)
+            
+            # Annotate user-specified time points
+            if time_points:
+                for tx in time_points:
+                    vy = None
+                    if smooth and len(plot_t_vals) >= 4:
+                        try:
+                            vy = float(spl(tx))
+                        except:
+                            vy = auc_d[tx]['auc'] if tx in auc_d else None
+                    else:
+                        vy = auc_d[tx]['auc'] if tx in auc_d else None
+                    
+                    if vy is not None:
+                        ax.annotate(f'{vy:.3f}', xy=(tx, vy), xytext=(0, 10),
+                                   textcoords="offset points", ha='center', fontsize=9, color=color, fontweight='bold')
+                        ax.plot(tx, vy, 'o', color=color, markersize=8)
+            
             max_time_for_ticks = max(max_time_for_ticks, max(plot_t_vals))
     
     ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5)

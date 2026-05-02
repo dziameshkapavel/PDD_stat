@@ -103,6 +103,7 @@ def build_system_prompt(config: Dict, loader) -> str:
     prompt += "\n- When stating model quality, ALWAYS anchor C-index/AUC to the scale explicitly. Example: \"C-index 0.755 indicates acceptable discrimination, approaching good (threshold 0.8).\" Not just \"good discrimination\"."
     prompt += "\n- Format: 'variable (HR=X.XX, p=0.XXX)' or 'variable (OR=X.XX, p=0.XXX)'."
     prompt += "\n- Do NOT just list variable names without numbers."
+    prompt += "\n- When you see [CODER OUTPUT] in the conversation, those are the EXACT results from executed code. Use ONLY those numbers. Do NOT modify, round differently, or invent new values."
     
     # Проект
     context = load_context(loader)

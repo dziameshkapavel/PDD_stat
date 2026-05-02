@@ -30,6 +30,7 @@
                     <div class="dropdown-item" data-template="descriptive">Descriptive Statistics</div>
                     <div class="dropdown-item" data-template="violin">Violin Plots</div>
                     <div class="dropdown-item" data-template="anova">ANOVA / Kruskal-Wallis</div>
+                    <div class="dropdown-item" data-template="chartbuilder">Chart Builder</div>
                 </div>
             </div>
             
@@ -869,7 +870,7 @@
             <div class="form-group">
                 <label class="form-label">Evaluation time points (months)</label>
                 <input type="text" class="form-input time-points-input" 
-                       value="12,24,36,48,60">
+                       value="" placeholder="Optional: 12,24,48" style="width:100%;">
             </div>
             
             <div class="form-group">
@@ -877,11 +878,12 @@
                 <input type="text" class="form-input stratify-input" data-field="stratify" 
                        placeholder="Select variable to stratify..." readonly>
             </div>
-            <div class="form-group">
-                <label class="form-label">Plot type</label>
-                <div class="button-group">
-                    <button class="btn-secondary chart-axes-btn" title="Customize axes">Chart Axes</button>
-                </div>
+                <div class="form-group">
+                    <label class="form-label">Plot type</label>
+                    <div class="button-group">
+                        <button class="btn-secondary smooth-btn" title="Smooth curves">Smooth</button>
+                        <button class="btn-secondary chart-axes-btn" title="Customize axes">Chart Axes</button>
+                    </div>
                 <div class="chart-axes-row" style="display:none;margin-top:8px;gap:12px;align-items:center;flex-wrap:wrap;">
                     <div style="display:flex;align-items:center;gap:4px;">
                         <span style="font-size:11px;">X step:</span>
@@ -921,8 +923,77 @@
             <div style="clear:both;"></div>
         </div>
         <div class="card-results-container"></div>
-    </div>
-</template>
+        </div>
+    </template>
+    <template id="chartBuilderCardTemplate">
+        <div class="analysis-card" data-template="chartbuilder">
+            <div class="card-header">
+                <span class="card-title">Chart Builder</span>
+                <div class="card-actions"><button class="card-close-btn">✕</button></div>
+            </div>
+            <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Chart type</label>
+                    <select class="form-input chart-type-select" style="width:100%;">
+                        <option value="histogram">Histogram</option>
+                        <option value="box">Box Plot</option>
+                        <option value="scatter">Scatter Plot</option>
+                        <option value="bar">Bar Chart (mean ± SD)</option>
+                        <option value="density">Density Plot</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">X variable</label>
+                    <input type="text" class="form-input x-input" data-field="x" placeholder="Select variable..." readonly>
+                </div>
+                <div class="form-group y-group">
+                    <label class="form-label">Y variable</label>
+                    <input type="text" class="form-input y-input" data-field="y" placeholder="Select variable..." readonly>
+                </div>
+                <div class="form-group group-group">
+                    <label class="form-label">Group / Color by (optional)</label>
+                    <input type="text" class="form-input group-input" data-field="group" placeholder="Select variable..." readonly>
+                </div>
+                <div class="form-group hist-params" style="display:none;">
+                    <label class="form-label">Number of bins</label>
+                    <input type="number" class="form-input bins-input" value="20" min="5" max="100" style="width:100%;">
+                    <label style="display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer;">
+                        <input type="checkbox" class="kde-check" style="width:16px;height:16px;">
+                        <span>Show KDE curve</span>
+                    </label>
+                </div>
+                <div class="form-group scatter-params" style="display:none;">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" class="regline-check" style="width:16px;height:16px;">
+                        <span>Show regression line</span>
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Plot options</label>
+                    <div class="button-group">
+                        <button class="btn-secondary chart-axes-btn" title="Customize axes">Chart Axes</button>
+                    </div>
+                    <div class="chart-axes-row" style="display:none;margin-top:8px;gap:12px;align-items:center;flex-wrap:wrap;">
+                        <div style="display:flex;align-items:center;gap:4px;">
+                            <span style="font-size:11px;">Title:</span>
+                            <input type="text" class="form-input title-input" value="" style="width:180px;padding:4px 6px;font-size:12px;" placeholder="Chart title">
+                        </div>
+                        <div style="display:flex;align-items:center;gap:4px;">
+                            <span style="font-size:11px;">X label:</span>
+                            <input type="text" class="form-input x-label-input" value="" style="width:120px;padding:4px 6px;font-size:12px;" placeholder="X axis">
+                        </div>
+                        <div style="display:flex;align-items:center;gap:4px;">
+                            <span style="font-size:11px;">Y label:</span>
+                            <input type="text" class="form-input y-label-input" value="" style="width:120px;padding:4px 6px;font-size:12px;" placeholder="Y axis">
+                        </div>
+                    </div>
+                </div>
+                <button class="run-btn">▶ Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
     <script type="module" src="js/app.js"></script>
 </body>
 </html>

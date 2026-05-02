@@ -29,6 +29,7 @@ import { AgreementCategoricalModel } from './models/agreementCategorical.js';
 import { ExternalValidationModel } from './models/externalValidation.js';
 import { IndividualPredictionModel } from './models/individualPrediction.js';
 import { SurvivalEvaluationModel } from './models/survivalEvaluation.js';
+import { ChartBuilderModel } from './models/chartBuilder.js';
 import { ChainPanel } from './ui/chain.js';
 
 class App {
@@ -89,6 +90,7 @@ class App {
         ModelFactory.register('extval', ExternalValidationModel);
         ModelFactory.register('indpred', IndividualPredictionModel);
         ModelFactory.register('surveval', SurvivalEvaluationModel);
+        ModelFactory.register('chartbuilder', ChartBuilderModel);
     }
     
     async init() {
