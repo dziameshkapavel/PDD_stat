@@ -212,7 +212,21 @@ export class SurvivalEvaluationModel extends BaseModel {
                         for (const [m, data] of Object.entries(timeAuc)) {
                             html += `<tr><td><strong>${m}</strong></td>`;
                             sortedTimes.forEach(t => {
-                                html += `<td>${data?.[String(t)]?.auc?.toFixed(3) || '—'}</td>`;
+                                const cell = data?.[String(t)];
+                                if (cell) {
+                                    const auc = cell.auc?.toFixed(3) || '—';
+                                    const ciLow = cell.ci_low?.toFixed(3) || '';
+                                    const ciHigh = cell.ci_high?.toFixed(3) || '';
+                                    const p = cell.p_value;
+                                    const pStr = (p != null) ? ` p=${Number(p).toFixed(4)}` : '';
+                                    if (ciLow && ciHigh) {
+                                        html += `<td>${auc}<br><span style="font-size:10px;color:var(--text-muted);">[${ciLow}-${ciHigh}]${pStr}</span></td>`;
+                                    } else {
+                                        html += `<td>${auc}${pStr}</td>`;
+                                    }
+                                } else {
+                                    html += `<td>—</td>`;
+                                }
                             });
                             html += '</tr>';
                         }

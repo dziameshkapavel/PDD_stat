@@ -163,17 +163,22 @@ def calc_time_auc_bootstrap(y_surv_local, risk, times, y_ev, y_tm, n_iter=500):
         
         if len(boot_aucs) >= 50:
             boot_aucs = np.array(boot_aucs)
+            mean_auc = float(boot_aucs.mean())
+            se_auc = float(boot_aucs.std())
+            z = (mean_auc - 0.5) / se_auc if se_auc > 0 else 0
+            p_val = float(2 * (1 - stats.norm.cdf(abs(z))))
             results[t] = {
-                'auc': float(boot_aucs.mean()),
+                'auc': mean_auc,
                 'ci_low': float(np.percentile(boot_aucs, 2.5)),
-                'ci_high': float(np.percentile(boot_aucs, 97.5))
+                'ci_high': float(np.percentile(boot_aucs, 97.5)),
+                'p_value': p_val
             }
         else:
             # Fallback: single estimate
             try:
                 auc_val = cumulative_dynamic_auc(y_surv_local, y_surv_local, risk, [t])
                 val = float(auc_val[0][0]) if isinstance(auc_val, tuple) else float(auc_val[0])
-                results[t] = {'auc': val, 'ci_low': val, 'ci_high': val}
+                results[t] = {'auc': val, 'ci_low': val, 'ci_high': val, 'p_value': None}
             except:
                 continue
     
@@ -240,14 +245,18 @@ for s in strata:
     times_to_show = time_points
     if times_to_show:
         print("| Time | " + " | ".join([f"`{p}`" for p in valid_preds]) + " |")
-        print("|------|" + "|".join(["-------" for _ in valid_preds]) + "|")
+        print("|------|" + "|".join(["---------------" for _ in valid_preds]) + "|")
         for t in times_to_show:
             if t in local_times:
                 row = f"| {t}mo |"
                 for m in valid_preds:
                     if m in auc_data and t in auc_data[m]:
                         a = auc_data[m][t]
-                        row += f" {a['auc']:.3f} ({a['ci_low']:.3f}-{a['ci_high']:.3f}) |"
+                        p = a.get('p_value')
+                        if p is not None:
+                            row += f" {a['auc']:.3f} [{a['ci_low']:.3f}-{a['ci_high']:.3f}] p={p:.4f} |"
+                        else:
+                            row += f" {a['auc']:.3f} [{a['ci_low']:.3f}-{a['ci_high']:.3f}] |"
                     else:
                         row += " — |"
                 print(row)
