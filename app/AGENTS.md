@@ -2,21 +2,20 @@
 
 ## Run
 ```bash
-cd backend && python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+cd app/backend && python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
-Or: double-click `start_backend.command` (auto-opens browser at `http://127.0.0.1:8000`)
+Or: double-click `start_backend.command` in repo root (opens browser at `http://127.0.0.1:8000`)
 
-Install deps: `pip install -r backend/requirements.txt`
+Install deps: `pip install -r app/backend/requirements.txt`
 
 ## Architecture
 - **Frontend**: vanilla JS SPA (ES modules) served by FastAPI at root
-- **Backend**: FastAPI in `/backend/app/` — three routers: `projects`, `analysis`, `ai`
-- **Projects**: `/Users/pdd/STAT_new/projects/{name}/` — each contains `data/`, `state/`, `plots/`, `logs/`, `models/`, and a `.lock` file
-- **Shared plots**: `/Users/pdd/STAT_new/plots/` — mounted at `/plots/` URL
-- **Active project**: stored in `/Users/pdd/STAT_new/backend/active_project.txt`
+- **Backend**: FastAPI in `app/backend/app/` — three routers: `projects`, `analysis`, `ai`
+- **Projects**: `projects/{name}/` — each contains `data/`, `state/`, `plots/`, `logs/`, `models/`, and a `.lock` file
+- **Active project**: stored in `app/backend/app/active_project.txt`
 
 ## No tests, lint, or CI
-This repo has no test suite, linter, type checker, or CI pipeline. No pre-commit config. Verify changes manually by running the server and testing in the browser.
+No test suite, linter, type checker, or CI pipeline. No pre-commit config. Verify changes manually by running the server and testing in the browser.
 
 ## Data Flow
 1. Upload xlsx → `raw.parquet` + audit + cleaning plan
@@ -37,20 +36,19 @@ This repo has no test suite, linter, type checker, or CI pipeline. No pre-commit
 | POST | `/api/ai/chat` | AI chat (Ollama or Groq) |
 | POST | `/api/ai/config` | Configure AI provider |
 
-## Templates (`backend/app/templates/`)
+## Templates (`app/backend/app/templates/`)
 Jinja2 `.py.jinja` files rendered then executed in sandbox.
 - **Survival**: `cox_ph`, `kaplan_meier`, `random_survival_forest`, `survival_evaluation`
 - **Classification**: `logistic`, `roc_analysis`, `model_evaluation_binary`
 - **Other**: `random_forest`, `lasso_regression`, `categorical`, `numeric_compare`, `correlation_analysis`, `descriptive_stats`, `violin_plot`, `spline_analysis`, `anova`, `diagnostic_accuracy`, `external_validation`, `individual_prediction`, `agreement_categorical`
 
 ## Sandbox Globals
-`df`, `pd`, `np`, `plt`, `save_plot(name)`, `CoxVariableSelector`
+`df`, `pd`, `np`, `plt`, `save_plot(name)`, `CoxVariableSelector`, `get_label()`, `var_labels`
 
 ## Critical Gotchas
-- **API base hardcoded** at `js/core/api.js:2` and `js/core/state.js:37,49` → `http://127.0.0.1:8000/api`
-- **Plots dir hardcoded** at `analysis.py:395,456` and `executor.py:100` → `/Users/pdd/STAT_new/plots`
+- **API base hardcoded** at `app/frontend/js/core/api.js:2` → `http://127.0.0.1:8000/api`
 - **Metrics extraction**: templates output `<!-- JSON_METRICS_START -->...<!-- JSON_METRICS_END -->`, parsed by `modeling_orchestrator.py:33`
-- **Plots**: `save_plot()` writes to project `/plots/` AND copies to `/Users/pdd/STAT_new/plots/`
+- **Plots**: `save_plot()` writes to project `plots/` dir only (no shared plots dir)
 - **Sandbox df persistence**: `Executor.execute_code()` auto-saves modified `df` to `state/project_data.parquet`
 - **Project state**: module-level `state` dict in `api/projects.py:15` — no auth, stateless per request; reads active project from `active_project.txt`
 - **AI config per-project**: stored in `projects/{name}/state/ai_config.json`

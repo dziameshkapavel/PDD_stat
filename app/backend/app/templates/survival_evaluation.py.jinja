@@ -122,27 +122,61 @@ def bootstrap_cindex(y_ev, y_tm, risk, n_iter=1000):
     boot_c = np.array(boot_c)
     return float(base_c), float(np.percentile(boot_c, 2.5)), float(np.percentile(boot_c, 97.5))
 
-def calc_time_auc(y_surv_local, risk, times, y_ev, y_tm):
-    ev_idx = np.where(y_ev)[0]
-    ne_idx = np.where(~y_ev)[0]
-    if len(ev_idx) < 5 or len(ne_idx) < 5:
-        return {}
-    
-    n_ev_train = len(ev_idx) // 2
-    n_ne_train = len(ne_idx) // 2
-    train_idx = np.concatenate([ev_idx[:n_ev_train], ne_idx[:n_ne_train]])
-    test_idx = np.concatenate([ev_idx[n_ev_train:], ne_idx[n_ne_train:]])
-    
+def calc_time_auc_bootstrap(y_surv_local, risk, times, y_ev, y_tm, n_iter=500):
+    """Calculate time-dependent AUC with bootstrap out-of-bag"""
+    n = len(y_ev)
     results = {}
+    
     for t in times:
         if t <= 0 or t > y_tm.max():
             continue
-        try:
-            auc_val = cumulative_dynamic_auc(y_surv_local[train_idx], y_surv_local[test_idx], risk[test_idx], [t])
-            base_auc = float(auc_val[0][0]) if isinstance(auc_val, tuple) else float(auc_val[0])
-            results[t] = {'auc': base_auc}
-        except:
-            continue
+        
+        boot_aucs = []
+        np.random.seed(42)
+        
+        for _ in range(n_iter):
+            # Bootstrap sample
+            idx_train = np.random.choice(n, n, replace=True)
+            # Out-of-bag = not selected in bootstrap
+            oob_mask = np.ones(n, dtype=bool)
+            for i in idx_train:
+                oob_mask[i] = False
+            
+            if oob_mask.sum() < 10:
+                continue
+            if y_ev[oob_mask].sum() < 2:
+                continue
+            
+            try:
+                # Train on bootstrap, test on OOB
+                auc_val = cumulative_dynamic_auc(
+                    y_surv_local[idx_train],   # train
+                    y_surv_local[oob_mask],     # test (OOB)
+                    risk[oob_mask],             # risk on test
+                    [t]
+                )
+                val = float(auc_val[0][0]) if isinstance(auc_val, tuple) else float(auc_val[0])
+                if 0.01 < val < 0.99:
+                    boot_aucs.append(val)
+            except:
+                continue
+        
+        if len(boot_aucs) >= 50:
+            boot_aucs = np.array(boot_aucs)
+            results[t] = {
+                'auc': float(boot_aucs.mean()),
+                'ci_low': float(np.percentile(boot_aucs, 2.5)),
+                'ci_high': float(np.percentile(boot_aucs, 97.5))
+            }
+        else:
+            # Fallback: single estimate
+            try:
+                auc_val = cumulative_dynamic_auc(y_surv_local, y_surv_local, risk, [t])
+                val = float(auc_val[0][0]) if isinstance(auc_val, tuple) else float(auc_val[0])
+                results[t] = {'auc': val, 'ci_low': val, 'ci_high': val}
+            except:
+                continue
+    
     return results
 
 # ========== ANALYSIS ==========
@@ -185,7 +219,7 @@ for s in strata:
             ci_low, ci_high = c_val, c_val
         
         c_indices[pred_col] = {'value': c_val, 'ci_low': ci_low, 'ci_high': ci_high}
-        auc_data[pred_col] = calc_time_auc(local_y_surv, risk, local_times, local_y_event, local_y_time)
+        auc_data[pred_col] = calc_time_auc_bootstrap(local_y_surv, risk, local_times, local_y_event, local_y_time, min(500, n_bootstrap))
     
     results_by_stratum.append({
         'label': label,
@@ -212,7 +246,8 @@ for s in strata:
                 row = f"| {t}mo |"
                 for m in valid_preds:
                     if m in auc_data and t in auc_data[m]:
-                        row += f" {auc_data[m][t]['auc']:.3f} |"
+                        a = auc_data[m][t]
+                        row += f" {a['auc']:.3f} ({a['ci_low']:.3f}-{a['ci_high']:.3f}) |"
                     else:
                         row += " — |"
                 print(row)
