@@ -33,6 +33,8 @@ export class ModelEvalBinaryModel extends BaseModel {
         const bootstrapInput = card.querySelector('.bootstrap-input');
         const dcaCheck = card.querySelector('.dca-check');
         const calibCheck = card.querySelector('.calib-check');
+        const autoInvertCheck = card.querySelector('.auto-invert-check');
+        const seedInput = card.querySelector('.bootstrap-seed-input');
         
         let preds = [];
         if (vars.predictors instanceof Set) {
@@ -46,7 +48,9 @@ export class ModelEvalBinaryModel extends BaseModel {
             pred_cols: preds,
             n_bootstrap: bootstrapInput ? parseInt(bootstrapInput.value) || 1000 : 1000,
             run_dca: dcaCheck ? dcaCheck.checked : true,
-            run_calibration: calibCheck ? calibCheck.checked : true
+            run_calibration: calibCheck ? calibCheck.checked : true,
+            auto_invert: autoInvertCheck ? autoInvertCheck.checked : false,
+            bootstrap_seed: seedInput ? parseInt(seedInput.value) || 42 : 42
         };
     }
     

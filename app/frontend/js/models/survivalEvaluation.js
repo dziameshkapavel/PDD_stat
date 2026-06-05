@@ -120,6 +120,7 @@ export class SurvivalEvaluationModel extends BaseModel {
         const timePointsInput = card.querySelector('.time-points-input');
         const xStepInput = card.querySelector('.x-step-input');
         const bootstrapInput = card.querySelector('.bootstrap-input');
+        const bootstrapSeedInput = card.querySelector('.bootstrap-seed-input');
         const comparisonCheck = card.querySelector('.comparison-check');
         
         const timeCol = timeInput?.value?.trim() || vars.time || '';
@@ -169,6 +170,7 @@ export class SurvivalEvaluationModel extends BaseModel {
             y_tick_step: yTickStep,
             y_label: yLabel,
             n_bootstrap: nBootstrap,
+            bootstrap_seed: bootstrapSeedInput ? parseInt(bootstrapSeedInput.value) || 42 : 42,
             run_model_comparison: runComparison,
             run_calibration: runCalibration,
             smooth: smooth

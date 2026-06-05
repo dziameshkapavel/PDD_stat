@@ -14,12 +14,10 @@ model_path = "{{ model_path|default('') }}"
 patient_data = {{ patient_data|default({})|tojson }}
 
 if not model_path or not Path(model_path).exists():
-    print("Error: Model file not found")
-    exit()
+    raise ValueError("Model file not found")
 
 if not patient_data:
-    print("Error: No patient data provided")
-    exit()
+    raise ValueError("No patient data provided")
 
 import joblib
 bundle = joblib.load(model_path)
@@ -32,8 +30,7 @@ else:
     features = []
 
 if model is None:
-    print("Error: No model found")
-    exit()
+    raise ValueError("No model found in bundle")
 
 print(f"## Individual Prediction\n")
 print(f"**Model:** {type(model).__name__}")
@@ -53,36 +50,43 @@ try:
     y_proba = model.predict_proba(X_patient)[0]
     y_pred = model.predict(X_patient)[0]
 except Exception as e:
-    print(f"Error: {e}")
-    exit()
+    raise ValueError(f"Prediction failed: {e}")
 
 print(f"\n### Result\n")
 print(f"**Prediction:** Class {y_pred}")
 print(f"**Probability:** {y_proba[1]*100:.1f}% (class 1), {y_proba[0]*100:.1f}% (class 0)")
 
 # SHAP Waterfall
+plot_name = None
 try:
     import shap
-    
+
     timestamp = str(int(time.time()))
     plt.close('all')
-    
-    explainer = shap.TreeExplainer(model)
-    shap_values = explainer.shap_values(X_patient)
-    
+
+    try:
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X_patient)
+    except:
+        try:
+            explainer = shap.KernelExplainer(model.predict_proba, X_patient)
+            shap_values = explainer.shap_values(X_patient)
+        except:
+            raise ValueError("Both TreeExplainer and KernelExplainer failed")
+
     if isinstance(shap_values, list):
         shap_vals = shap_values[1] if len(shap_values) > 1 else shap_values[0]
     else:
         shap_vals = shap_values
-    
+
     shap_vals = np.array(shap_vals).flatten()
-    
+
     fig, ax = plt.subplots(figsize=(10, 6))
     idx = np.argsort(np.abs(shap_vals))
     sorted_features = [features[i] for i in idx]
     sorted_shap = shap_vals[idx]
     base_value = float(y_proba[1]) - float(sorted_shap.sum())
-    
+
     colors = ['#d62728' if v < 0 else '#1f77b4' for v in sorted_shap]
     ax.barh(range(len(features)), sorted_shap, color=colors, height=0.6)
     ax.set_yticks(range(len(features)))
@@ -91,12 +95,12 @@ try:
     ax.set_xlabel('SHAP value')
     ax.set_title(f'SHAP Waterfall (base={base_value:.2f}, final={y_proba[1]:.2f})')
     ax.grid(True, alpha=0.3, axis='x')
-    
+
     plt.tight_layout()
     plot_name = f"shap_waterfall_{timestamp}"
     save_plot(plot_name, fig)
     print(f"\n![SHAP Waterfall](/plots/{plot_name}.png)\n")
-    
+
 except Exception as e:
     print(f"\n*SHAP not available: {e}*\n")
 
@@ -104,7 +108,7 @@ output_metrics = {
     "model_type": "individual_prediction",
     "prediction": int(y_pred),
     "probability": float(y_proba[1]),
-    "plots": [f"{plot_name}.png"] if 'plot_name' in dir() else []
+    "plots": [f"{plot_name}.png"] if plot_name else []
 }
 
 def make_serializable(obj):

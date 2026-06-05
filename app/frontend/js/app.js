@@ -26,7 +26,6 @@ import { ViolinPlotModel } from './models/violinPlot.js';
 import { DiagnosticAccuracyModel } from './models/diagnosticAccuracy.js';
 import { ANOVAModel } from './models/anova.js';
 import { AgreementCategoricalModel } from './models/agreementCategorical.js';
-import { ExternalValidationModel } from './models/externalValidation.js';
 import { IndividualPredictionModel } from './models/individualPrediction.js';
 import { SurvivalEvaluationModel } from './models/survivalEvaluation.js';
 import { ChartBuilderModel } from './models/chartBuilder.js';
@@ -87,7 +86,6 @@ class App {
         ModelFactory.register('diagacc', DiagnosticAccuracyModel);
         ModelFactory.register('anova', ANOVAModel);
         ModelFactory.register('agreement', AgreementCategoricalModel);
-        ModelFactory.register('extval', ExternalValidationModel);
         ModelFactory.register('indpred', IndividualPredictionModel);
         ModelFactory.register('surveval', SurvivalEvaluationModel);
         ModelFactory.register('chartbuilder', ChartBuilderModel);

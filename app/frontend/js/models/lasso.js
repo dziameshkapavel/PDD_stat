@@ -21,9 +21,18 @@ export class LassoModel extends BaseModel {
         
         this.ui.panels.addCard(card);
         this.setupFieldListeners(card);
+        this.setupCustomListeners(card);
         
         card.querySelector('.run-btn').addEventListener('click', () => this.run(card));
         card.querySelector('.card-close-btn').addEventListener('click', () => this.removeCard(card));
+        
+        const autoCheck = card.querySelector('.auto-c-check');
+        const cInputRow = card.querySelector('.c-value-row');
+        if (autoCheck && cInputRow) {
+            const toggleCInput = () => cInputRow.style.display = autoCheck.checked ? 'none' : 'flex';
+            autoCheck.addEventListener('change', toggleCInput);
+            toggleCInput();
+        }
         
         return card;
     }
@@ -36,9 +45,9 @@ export class LassoModel extends BaseModel {
             return;
         }
         
-        const title = params.auto_select_alpha ? 
-            'LASSO Regression (auto α)' : 
-            `LASSO Regression (α=${params.alpha})`;
+        const title = params.auto_select_C ? 
+            'LASSO Regression (auto C)' : 
+            `LASSO Regression (C=${params.C_value})`;
         
         const block = this.createResultsBlock(card, title);
         block.querySelector('.results-stats')?.remove();
@@ -67,15 +76,130 @@ export class LassoModel extends BaseModel {
         }
     }
     
+    setupCustomListeners(card) {
+        card.covariateTypes = {};
+        this.state.on('card:variables:updated', (data) => {
+            if (data.cardId === card.id) {
+                this.updateReferenceGroups(card);
+            }
+        });
+    }
+    
+    updateReferenceGroups(card) {
+        const vars = this.state.getCardVariables(card.id);
+        const covariates = vars.covariates ? Array.from(vars.covariates) : [];
+        const variablesList = this.state.getVariableList();
+        
+        card.covariateTypes = card.covariateTypes || {};
+        
+        const typesWrapper = card.querySelector('.covariate-types-wrapper');
+        const typesContainer = card.querySelector('.covariate-types-container');
+        const refWrapper = card.querySelector('.reference-groups-wrapper');
+        const refContainer = card.querySelector('.reference-groups-container');
+        if (!typesWrapper || !typesContainer || !refWrapper || !refContainer) return;
+        
+        // Save current reference selections
+        const currentSelections = {};
+        refContainer.querySelectorAll('.ref-group-item').forEach(item => {
+            const vName = item.dataset.var;
+            const sel = item.querySelector('.ref-group-select');
+            if (sel) currentSelections[vName] = sel.value;
+        });
+        
+        typesContainer.innerHTML = '';
+        refContainer.innerHTML = '';
+        let hasCategorical = false;
+        
+        if (covariates.length === 0) {
+            typesWrapper.classList.add('hidden');
+            refWrapper.classList.add('hidden');
+            return;
+        }
+        
+        covariates.forEach(covName => {
+            const varInfo = variablesList.find(v => v.name === covName);
+            if (!varInfo) return;
+            
+            if (!card.covariateTypes[covName]) {
+                card.covariateTypes[covName] = (varInfo.type === 'categorical' || varInfo.type === 'binary') ? 'categorical' : 'numeric';
+            }
+            
+            const currentType = card.covariateTypes[covName];
+            
+            // Type toggle button
+            const tagBtn = document.createElement('button');
+            tagBtn.className = currentType === 'categorical' ? 'btn-primary' : 'btn-secondary';
+            tagBtn.textContent = `${covName} (${currentType === 'categorical' ? 'Cat' : 'Cont'})`;
+            tagBtn.style.cssText = 'padding: 4px 10px; font-size: 12px; border-radius: 20px; font-weight: 500; cursor: pointer; transition: all 0.2s ease; border: 1px solid var(--border-primary); margin-bottom: 2px;';
+            tagBtn.type = 'button';
+            tagBtn.onclick = (e) => {
+                e.preventDefault();
+                card.covariateTypes[covName] = currentType === 'categorical' ? 'numeric' : 'categorical';
+                this.updateReferenceGroups(card);
+            };
+            typesContainer.appendChild(tagBtn);
+            
+            // Reference group selector if categorical
+            if (currentType === 'categorical') {
+                hasCategorical = true;
+                const uniqueValues = varInfo.unique_values || ['0', '1'];
+                
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'ref-group-item';
+                itemDiv.dataset.var = covName;
+                itemDiv.style.cssText = 'display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom: 4px;';
+                
+                const label = document.createElement('span');
+                label.style.cssText = 'font-size: 13px; color: var(--text-primary); font-weight: 500;';
+                label.textContent = `${covName}:`;
+                
+                const select = document.createElement('select');
+                select.className = 'form-input ref-group-select';
+                select.style.cssText = 'width:150px; padding: 4px 8px; font-size:12px; height: auto; margin-bottom: 0;';
+                
+                uniqueValues.forEach(val => {
+                    const opt = document.createElement('option');
+                    opt.value = val;
+                    opt.textContent = val;
+                    if (currentSelections[covName] === String(val)) {
+                        opt.selected = true;
+                    }
+                    select.appendChild(opt);
+                });
+                
+                itemDiv.appendChild(label);
+                itemDiv.appendChild(select);
+                refContainer.appendChild(itemDiv);
+            }
+        });
+        
+        typesWrapper.classList.remove('hidden');
+        refWrapper.classList.toggle('hidden', !hasCategorical);
+    }
+    
     _getParameters(card) {
         const vars = this.state.getCardVariables(card.id);
         const autoCheck = card.querySelector('.auto-c-check');
+        const cInput = card.querySelector('.c-value-input');
+        const covariate_types = card.covariateTypes || {};
+        
+        // Collect reference groups
+        const reference_groups = {};
+        card.querySelectorAll('.ref-group-item').forEach(item => {
+            const varName = item.dataset.var;
+            const select = item.querySelector('.ref-group-select');
+            if (select) {
+                reference_groups[varName] = select.value;
+            }
+        });
         
         return {
             target_col: vars.target || '',
             covariates: vars.covariates ? Array.from(vars.covariates) : [],
             auto_select_C: autoCheck ? autoCheck.checked : true,
-            C_value: 1.0
+            C_value: cInput ? parseFloat(cInput.value) || 1.0 : 1.0,
+            covariate_types,
+            reference_groups
         };
     }
     

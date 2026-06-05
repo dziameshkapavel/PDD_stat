@@ -23,11 +23,9 @@ col1 = "{{ col1 }}"
 col2 = "{{ col2 }}"
 
 if col1 not in df.columns:
-    print(f"Error: Column '{col1}' not found")
-    exit()
+    raise ValueError(f"Column '{col1}' not found")
 if col2 not in df.columns:
-    print(f"Error: Column '{col2}' not found")
-    exit()
+    raise ValueError(f"Column '{col2}' not found")
 
 print(f"**Columns:** `{col1}` vs `{col2}`\n")
 
@@ -55,7 +53,7 @@ if all_expected_ge5:
     print("### Chi-Square Test\n")
     print(f"**Test selected:** {test_name}")
     print(f"**Reason:** {test_reason}")
-    print(f"**Chi² = {chi2:.3f}**, df = {dof}, **p = {p_value:.4f}**")
+    print(f"**Chi² = {chi2:.3f}**, df = {dof}, **p = {fmt_p(p_value)}**")
     
     if p_value < 0.001:
         sig = "***"
@@ -66,7 +64,7 @@ if all_expected_ge5:
     else:
         sig = ""
     
-    print(f"\n**Result:** p {sig}= {p_value:.4f}")
+    print(f"\n**Result:** p {sig}= {fmt_p(p_value)}")
     if p_value < 0.05:
         print("**Conclusion:** Statistically significant association between variables.")
     else:
@@ -84,7 +82,7 @@ elif n_rows == 2 and n_cols == 2:
     print("### Fisher's Exact Test\n")
     print(f"**Test selected:** {test_name}")
     print(f"**Reason:** {test_reason}")
-    print(f"**Odds Ratio = {odds_ratio:.3f}**, **p = {p_value:.4f}**")
+    print(f"**Odds Ratio = {odds_ratio:.3f}**, **p = {fmt_p(p_value)}**")
     
     if p_value < 0.001:
         sig = "***"
@@ -95,7 +93,7 @@ elif n_rows == 2 and n_cols == 2:
     else:
         sig = ""
     
-    print(f"\n**Result:** p {sig}= {p_value:.4f}")
+    print(f"\n**Result:** p {sig}= {fmt_p(p_value)}")
     if p_value < 0.05:
         print("**Conclusion:** Statistically significant association between variables.")
         print(f"\n**Odds Ratio interpretation:**")
@@ -137,7 +135,7 @@ else:
     print(f"**Reason:** {test_reason}")
     print(f"**Iterations:** {n_iterations:,}")
     print(f"**Chi² = {chi2:.3f}**, df = {dof}")
-    print(f"**Monte Carlo p = {mc_p_value:.4f}**")
+    print(f"**Monte Carlo p = {fmt_p(mc_p_value)}**")
     
     if mc_p_value < 0.001:
         sig = "***"
@@ -148,7 +146,7 @@ else:
     else:
         sig = ""
     
-    print(f"\n**Result:** p {sig}= {mc_p_value:.4f} (Monte Carlo, {n_iterations:,} iterations)")
+    print(f"\n**Result:** p {sig}= {fmt_p(mc_p_value)} (Monte Carlo, {n_iterations:,} iterations)")
     if mc_p_value < 0.05:
         print("**Conclusion:** Statistically significant association between variables.")
     else:

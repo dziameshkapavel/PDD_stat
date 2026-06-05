@@ -23,42 +23,49 @@ except:
 print("## Inter-rater Agreement\n")
 
 raters = {{ raters|default([])|tojson }}
-scale_type = "{{ scale_type|default('nominal') }}"  # "nominal" or "ordinal"
-weight_type = "{{ weight_type|default('linear') }}"  # "linear" or "quadratic"
+scale_type = "{{ scale_type|default('nominal') }}"
+weight_type = "{{ weight_type|default('linear') }}"
 
 if len(raters) < 2:
-    print("Error: Need at least 2 raters")
-    exit()
+    raise ValueError("Need at least 2 raters")
 
 valid_raters = [c for c in raters if c in df.columns]
 if len(valid_raters) < 2:
-    print(f"Error: Need at least 2 valid columns. Found: {valid_raters}")
-    exit()
+    raise ValueError(f"Need at least 2 valid columns. Found: {valid_raters}")
 
 print(f"**Raters:** {', '.join([f'`{r}`' for r in valid_raters])}")
 print(f"**Number of raters:** {len(valid_raters)}")
 print(f"**Scale type:** {'Ordinal (Weighted Kappa, ' + weight_type + ' weights)' if scale_type == 'ordinal' else 'Nominal (Cohen/Fleiss Kappa)'}\n")
 
-# Prepare data
+n_before = len(df)
 df_agr = df[valid_raters].dropna()
+n_after = len(df_agr)
+if n_after < n_before:
+    print(f"⚠️ Removed {n_before - n_after} rows ({((n_before - n_after)/n_before*100):.1f}%) with missing data")
+
 n_subjects = len(df_agr)
 print(f"**Subjects with complete ratings:** {n_subjects}\n")
 
 if n_subjects < 10:
-    print("Error: Need at least 10 subjects for meaningful agreement analysis")
-    exit()
+    raise ValueError("Need at least 10 subjects for meaningful agreement analysis")
+
+def interpret_kappa(k):
+    if k < 0: return "Poor (worse than chance)"
+    if k < 0.20: return "Slight"
+    if k < 0.40: return "Fair"
+    if k < 0.60: return "Moderate"
+    if k < 0.80: return "Substantial"
+    return "Almost perfect"
 
 # ========== COHEN'S KAPPA (2 raters) ==========
 if len(valid_raters) == 2:
     from sklearn.metrics import cohen_kappa_score, confusion_matrix
-    
+
     r1 = df_agr[valid_raters[0]].astype(str).values
     r2 = df_agr[valid_raters[1]].astype(str).values
-    
-    # Get all unique categories
+
     all_cats = sorted(set(list(r1) + list(r2)))
-    
-    # Cross-tabulation
+
     print("### Cross-tabulation\n")
     ct = confusion_matrix(r1, r2, labels=all_cats)
     ct_df = pd.DataFrame(ct, index=all_cats, columns=all_cats)
@@ -66,82 +73,65 @@ if len(valid_raters) == 2:
     ct_df.columns.name = valid_raters[1]
     print(ct_df.to_markdown())
     print()
-    
-    # Percent agreement
-    agreement = np.trace(ct) / np.sum(ct)
-    print(f"**Percent agreement:** {agreement*100:.1f}%\n")
-    
+
+    percent_agreement = np.trace(ct) / np.sum(ct)
+    print(f"**Percent agreement:** {percent_agreement*100:.1f}%\n")
+
     if scale_type == 'ordinal':
-        # Weighted Kappa
         print(f"### Weighted Kappa ({weight_type} weights)\n")
-        
+
         if weight_type == 'linear':
             weights = np.zeros((len(all_cats), len(all_cats)))
             for i in range(len(all_cats)):
                 for j in range(len(all_cats)):
                     max_diff = len(all_cats) - 1
                     weights[i, j] = 1 - abs(i - j) / max_diff if max_diff > 0 else 1
-        else:  # quadratic
+        else:
             weights = np.zeros((len(all_cats), len(all_cats)))
             for i in range(len(all_cats)):
                 for j in range(len(all_cats)):
                     max_diff = len(all_cats) - 1
                     weights[i, j] = 1 - ((i - j) / max_diff)**2 if max_diff > 0 else 1
-        
-        # Manual weighted kappa
+
         observed = ct / np.sum(ct)
         expected = np.outer(np.sum(observed, axis=1), np.sum(observed, axis=0))
         weighted_observed = np.sum(weights * observed)
         weighted_expected = np.sum(weights * expected)
         kappa = (weighted_observed - weighted_expected) / (1 - weighted_expected) if (1 - weighted_expected) != 0 else 0
-        
-        # Standard error
+
         n = np.sum(ct)
-        se = np.sqrt((weighted_observed * (1 - weighted_observed)) / (n * (1 - weighted_expected)**2)) if n > 0 else 0
+        se = np.sqrt((weighted_observed * (1 - weighted_observed)) / (n * (1 - weighted_expected)**2)) if n > 0 and (1 - weighted_expected) > 0 else 0
         ci_low = max(-1, kappa - 1.96 * se)
         ci_high = min(1, kappa + 1.96 * se)
         z = kappa / se if se > 0 else 0
         p_val = 2 * (1 - norm.cdf(abs(z)))
-        
+
     else:
-        # Cohen's Kappa
         print("### Cohen's Kappa\n")
         kappa = cohen_kappa_score(r1, r2)
         n = len(r1)
-        p_o = agreement
-        # Expected agreement
+        p_o = percent_agreement
         p_e = sum((np.sum(ct, axis=1)[i] / n) * (np.sum(ct, axis=0)[i] / n) for i in range(len(all_cats)))
         se = np.sqrt(p_o * (1 - p_o) / (n * (1 - p_e)**2)) if n > 0 and p_e < 1 else 0
         ci_low = max(-1, kappa - 1.96 * se)
         ci_high = min(1, kappa + 1.96 * se)
         z = kappa / se if se > 0 else 0
         p_val = 2 * (1 - norm.cdf(abs(z)))
-    
-    # Interpretation
-    def interpret_kappa(k):
-        if k < 0: return "Poor (worse than chance)"
-        if k < 0.20: return "Slight"
-        if k < 0.40: return "Fair"
-        if k < 0.60: return "Moderate"
-        if k < 0.80: return "Substantial"
-        return "Almost perfect"
-    
+
     interpretation = interpret_kappa(kappa)
-    
+
     print(f"κ = {kappa:.4f}")
     print(f"95% CI: {ci_low:.4f} – {ci_high:.4f}")
-    print(f"z = {z:.2f}, p = {p_val:.4f}")
+    print(f"z = {z:.2f}, p = {fmt_p(p_val)}")
     print(f"**Interpretation:** {interpretation}\n")
 
 # ========== FLEISS' KAPPA (3+ raters) ==========
 else:
     print("### Fleiss' Kappa\n")
-    
-    # Build matrix: subjects x categories
+
     all_cats = sorted(set(df_agr.values.flatten().astype(str)))
     n_cats = len(all_cats)
-    
-    # Count ratings per category per subject
+
     ratings_matrix = np.zeros((n_subjects, n_cats))
     for i in range(n_subjects):
         for j in range(len(valid_raters)):
@@ -149,34 +139,34 @@ else:
             cat_idx = all_cats.index(val) if val in all_cats else -1
             if cat_idx >= 0:
                 ratings_matrix[i, cat_idx] += 1
-    
+
     n_raters = len(valid_raters)
-    
-    # Fleiss' Kappa calculation
+
     p_j = np.sum(ratings_matrix, axis=0) / (n_subjects * n_raters)
     P_i = (np.sum(ratings_matrix**2, axis=1) - n_raters) / (n_raters * (n_raters - 1))
     P_bar = np.mean(P_i)
     P_e_bar = np.sum(p_j**2)
-    
+
     kappa = (P_bar - P_e_bar) / (1 - P_e_bar) if (1 - P_e_bar) != 0 else 0
-    
-    # Standard error
-    se = np.sqrt(2 / (n_subjects * n_raters * (n_raters - 1)) * (P_e_bar - (2*n_raters - 3)*P_e_bar**2 + 2*(n_raters - 2)*np.sum(p_j**3)) / (1 - P_e_bar)**2) if n_subjects > 0 else 0
+
+    # Standard error for Fleiss' Kappa
+    term = P_e_bar - (2*n_raters - 3)*P_e_bar**2 + 2*(n_raters - 2)*np.sum(p_j**3)
+    term = max(term, 1e-10)
+    se = np.sqrt(2 / (n_subjects * n_raters * (n_raters - 1)) * term / (1 - P_e_bar)**2) if n_subjects > 0 and (1 - P_e_bar) > 0 else 0
     se = min(se, 0.5)
     ci_low = max(-1, kappa - 1.96 * se)
     ci_high = min(1, kappa + 1.96 * se)
     z = kappa / se if se > 0 else 0
     p_val = 2 * (1 - norm.cdf(abs(z)))
-    
+
     interpretation = interpret_kappa(kappa)
-    
+
     print(f"κ = {kappa:.4f}")
     print(f"95% CI: {ci_low:.4f} – {ci_high:.4f}")
-    print(f"z = {z:.2f}, p = {p_val:.4f}")
+    print(f"z = {z:.2f}, p = {fmt_p(p_val)}")
     print(f"**Interpretation:** {interpretation}")
-    print(f"\n**Overall agreement:** {P_bar*100:.1f}%\n")
-    
-    # Per-category Kappa
+    print(f"\n**Average pairwise agreement:** {P_bar*100:.1f}%\n")
+
     print("### Per-Category Kappa\n")
     print("| Category | κ |")
     print("|----------|----|")
@@ -190,24 +180,29 @@ else:
 if len(valid_raters) == 2:
     import time
     timestamp = str(int(time.time()))
-    
+
     fig, ax = plt.subplots(figsize=(8, 7))
     sns.heatmap(ct_df, annot=True, fmt='d', cmap='Blues', ax=ax, cbar_kws={'label': 'Count'})
     ax.set_xlabel(valid_raters[1])
     ax.set_ylabel(valid_raters[0])
     ax.set_title(f'Agreement: {valid_raters[0]} vs {valid_raters[1]}')
     plt.tight_layout()
-    
+
     plot_name = f"agreement_{timestamp}"
     save_plot(plot_name, fig)
     print(f"![Agreement Heatmap](/plots/{plot_name}.png)\n")
 
 # ========== SUMMARY ==========
 print("---")
-print(f"**Agreement analysis complete**")
-print(f"\n**Summary:** {valid_raters[0]} vs {valid_raters[1]} — κ = {kappa:.4f} ({interpretation})" if len(valid_raters) == 2 else f"**Summary:** Fleiss' κ = {kappa:.4f} ({interpretation})")
+if len(valid_raters) == 2:
+    print(f"**Agreement analysis complete**")
+    print(f"\n**Summary:** {valid_raters[0]} vs {valid_raters[1]} — κ = {kappa:.4f} ({interpretation})")
+else:
+    print(f"**Agreement analysis complete**")
+    print(f"\n**Summary:** Fleiss' κ = {kappa:.4f} ({interpretation})")
 
 # ========== JSON METRICS ==========
+pct_agr = float(percent_agreement * 100) if len(valid_raters) == 2 else float(P_bar * 100)
 output_metrics = {
     "model_type": "agreement_categorical",
     "raters": valid_raters,
@@ -220,7 +215,7 @@ output_metrics = {
     "ci_high": float(ci_high),
     "p_value": float(p_val),
     "interpretation": interpretation,
-    "percent_agreement": float(agreement * 100) if len(valid_raters) == 2 else float(P_bar * 100)
+    "percent_agreement": pct_agr
 }
 
 def make_serializable(obj):

@@ -23,6 +23,8 @@ export class LogisticModel extends BaseModel {
         this.ui.panels.addCard(card);
         this.setupFieldListeners(card);
         this.setupTypeButtons(card);
+        this.setupValidationButtons(card);
+        this.setupCustomListeners(card);
         
         const runBtn = card.querySelector('.run-btn');
         const closeBtn = card.querySelector('.card-close-btn');
@@ -42,7 +44,7 @@ export class LogisticModel extends BaseModel {
     async run(card) {
         console.log('Running Logistic analysis...');
         const params = this._getParameters(card);
-        this.lastParams = params;
+        card.lastParams = params;
         
         console.log('Parameters:', params);
         
@@ -56,9 +58,10 @@ export class LogisticModel extends BaseModel {
             return;
         }
         
+        const valLabel = params.validation === 'split' ? ' [train/test]' : params.validation === 'cv' ? ' [CV]' : '';
         const title = `Logistic regression (${params.regression_type === 'uni' ? 'univariate' : 
                       params.regression_type === 'forward' ? 'forward selection' :
-                      params.regression_type === 'backward' ? 'backward elimination' : 'multivariate'})`;
+                      params.regression_type === 'backward' ? 'backward elimination' : 'multivariate'})${valLabel}`;
         
         const block = this.createResultsBlock(card, title);
         
@@ -122,6 +125,114 @@ export class LogisticModel extends BaseModel {
         }
     }
     
+    setupValidationButtons(card) {
+        const validationBtns = card.querySelectorAll('.validation-btn');
+        validationBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                validationBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+    }
+
+    setupCustomListeners(card) {
+        card.covariateTypes = {};
+        this.state.on('card:variables:updated', (data) => {
+            if (data.cardId === card.id) {
+                this.updateReferenceGroups(card);
+            }
+        });
+    }
+    
+    updateReferenceGroups(card) {
+        const vars = this.state.getCardVariables(card.id);
+        const predictors = vars.predictors ? Array.from(vars.predictors) : [];
+        const variablesList = this.state.getVariableList();
+        
+        card.covariateTypes = card.covariateTypes || {};
+        
+        const typesWrapper = card.querySelector('.covariate-types-wrapper');
+        const typesContainer = card.querySelector('.covariate-types-container');
+        const refWrapper = card.querySelector('.reference-groups-wrapper');
+        const refContainer = card.querySelector('.reference-groups-container');
+        if (!typesWrapper || !typesContainer || !refWrapper || !refContainer) return;
+        
+        const currentSelections = {};
+        refContainer.querySelectorAll('.ref-group-item').forEach(item => {
+            const vName = item.dataset.var;
+            const sel = item.querySelector('.ref-group-select');
+            if (sel) currentSelections[vName] = sel.value;
+        });
+        
+        typesContainer.innerHTML = '';
+        refContainer.innerHTML = '';
+        let hasCategorical = false;
+        
+        if (predictors.length === 0) {
+            typesWrapper.classList.add('hidden');
+            refWrapper.classList.add('hidden');
+            return;
+        }
+        
+        predictors.forEach(predName => {
+            const varInfo = variablesList.find(v => v.name === predName);
+            if (!varInfo) return;
+            
+            if (!card.covariateTypes[predName]) {
+                card.covariateTypes[predName] = (varInfo.type === 'categorical' || varInfo.type === 'binary') ? 'categorical' : 'numeric';
+            }
+            
+            const currentType = card.covariateTypes[predName];
+            
+            const tagBtn = document.createElement('button');
+            tagBtn.className = currentType === 'categorical' ? 'btn-primary' : 'btn-secondary';
+            tagBtn.textContent = `${predName} (${currentType === 'categorical' ? 'Cat' : 'Cont'})`;
+            tagBtn.style.cssText = 'padding: 4px 10px; font-size: 12px; border-radius: 20px; font-weight: 500; cursor: pointer; transition: all 0.2s ease; border: 1px solid var(--border-primary); margin-bottom: 2px;';
+            tagBtn.type = 'button';
+            tagBtn.onclick = (e) => {
+                e.preventDefault();
+                card.covariateTypes[predName] = currentType === 'categorical' ? 'numeric' : 'categorical';
+                this.updateReferenceGroups(card);
+            };
+            typesContainer.appendChild(tagBtn);
+            
+            if (currentType === 'categorical') {
+                hasCategorical = true;
+                const uniqueValues = varInfo.unique_values || ['0', '1'];
+                
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'ref-group-item';
+                itemDiv.dataset.var = predName;
+                itemDiv.style.cssText = 'display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom: 4px;';
+                
+                const label = document.createElement('span');
+                label.style.cssText = 'font-size: 13px; color: var(--text-primary); font-weight: 500;';
+                label.textContent = `${predName}:`;
+                
+                const select = document.createElement('select');
+                select.className = 'form-input ref-group-select';
+                select.style.cssText = 'width:150px; padding: 4px 8px; font-size:12px; height: auto; margin-bottom: 0;';
+                
+                uniqueValues.forEach(val => {
+                    const opt = document.createElement('option');
+                    opt.value = val;
+                    opt.textContent = val;
+                    if (currentSelections[predName] === String(val)) {
+                        opt.selected = true;
+                    }
+                    select.appendChild(opt);
+                });
+                
+                itemDiv.appendChild(label);
+                itemDiv.appendChild(select);
+                refContainer.appendChild(itemDiv);
+            }
+        });
+        
+        typesWrapper.classList.remove('hidden');
+        refWrapper.classList.toggle('hidden', !hasCategorical);
+    }
+    
     _getParameters(card) {
         const vars = this.state.getCardVariables(card.id);
         
@@ -136,18 +247,35 @@ export class LogisticModel extends BaseModel {
             regressionType = 'multi';
         }
         
+        const validationBtn = card.querySelector('.validation-btn.active');
+        const validation = validationBtn ? validationBtn.dataset.validation : 'none';
+        
         const predictors = vars.predictors ? Array.from(vars.predictors) : [];
+        const covariate_types = card.covariateTypes || {};
+        
+        const reference_groups = {};
+        card.querySelectorAll('.ref-group-item').forEach(item => {
+            const varName = item.dataset.var;
+            const select = item.querySelector('.ref-group-select');
+            if (select) {
+                reference_groups[varName] = select.value;
+            }
+        });
         
         console.log('Logistic parameters:', {
             target: vars.target,
             predictors: predictors,
-            regression_type: regressionType
+            regression_type: regressionType,
+            validation: validation
         });
         
         return {
             target_col: vars.target || '',
             predictors: predictors,
-            regression_type: regressionType
+            regression_type: regressionType,
+            validation: validation,
+            covariate_types,
+            reference_groups
         };
     }
     
@@ -302,7 +430,7 @@ export class LogisticModel extends BaseModel {
     }
     
     async savePredictions(card) {
-        if (!this.lastParams) {
+        if (!card.lastParams) {
             this.ui.modals.showAlert('No model parameters available. Run analysis first.');
             return;
         }
@@ -310,7 +438,7 @@ export class LogisticModel extends BaseModel {
         const columnName = prompt('Enter name for predicted probability column:', 'logistic_prob');
         if (!columnName) return;
         
-        const saveBtn = document.querySelector('.save-risk-btn');
+        const saveBtn = card.querySelector('.save-risk-btn');
         if (saveBtn) {
             saveBtn.textContent = 'Saving...';
             saveBtn.disabled = true;
@@ -325,7 +453,7 @@ export class LogisticModel extends BaseModel {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     template: this.templateName,
-                    params: this.lastParams,
+                    params: card.lastParams,
                     column_name: columnName
                 })
             });
@@ -375,6 +503,13 @@ export class LogisticModel extends BaseModel {
     
     _renderDiagnostics(metrics) {
         let html = '<div style="padding: 16px; display: flex; flex-direction: column; gap: 16px;">';
+        
+        if (metrics.equation_html) {
+            html += `<div class="equation-box" style="background: var(--bg-secondary); border: 1px solid var(--border-primary); padding: 16px; border-radius: var(--radius-md); text-align: center; margin-bottom: 0; font-family: 'Outfit', 'Inter', monospace; font-size: 14px; box-shadow: var(--shadow-sm);">`;
+            html += `<div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 6px; font-weight: 600;">Model Equation</div>`;
+            html += `<div style="color: var(--text-primary); font-weight: 500; font-size: 15px; word-break: break-all;">${metrics.equation_html}</div>`;
+            html += `</div>`;
+        }
         
         html += `<div class="diagnostic-card">`;
         html += `<h3 class="diagnostic-card-title">Model Performance</h3>`;

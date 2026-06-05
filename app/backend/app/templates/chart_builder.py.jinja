@@ -40,6 +40,10 @@ if x_col not in df.columns:
     raise ValueError(f"Column '{x_col}' not found")
 
 df_plot = df[[x_col] + ([y_col] if y_col and y_col in df.columns else []) + ([group_col] if group_col and group_col in df.columns else [])].dropna()
+n_after = len(df_plot)
+if n_after < len(df):
+    print(f"⚠️ Removed {len(df) - n_after} rows ({((len(df) - n_after)/len(df)*100):.1f}%) with missing data")
+
 
 # Axis labels
 x_lbl = x_label or get_label(x_col)
@@ -51,6 +55,8 @@ timestamp = str(int(time.time()))
 fig, ax = plt.subplots(figsize=(10, 6))
 
 if chart_type == 'histogram':
+    if x_col not in df_plot.columns or not pd.api.types.is_numeric_dtype(df_plot[x_col]):
+        raise ValueError(f"Column '{x_col}' must be numeric for histogram")
     data = df_plot[x_col].dropna()
     ax.hist(data, bins=bins, color='steelblue', edgecolor='white', alpha=0.8)
     if show_kde:
@@ -60,6 +66,8 @@ if chart_type == 'histogram':
     ax.set_ylabel(y_lbl)
 
 elif chart_type == 'box':
+    if x_col not in df_plot.columns or not pd.api.types.is_numeric_dtype(df_plot[x_col]):
+        raise ValueError(f"Column '{x_col}' must be numeric for box plot")
     if group_col and group_col in df_plot.columns:
         order = sorted(df_plot[group_col].dropna().unique())
         labels = [get_label(group_col, v) for v in order]

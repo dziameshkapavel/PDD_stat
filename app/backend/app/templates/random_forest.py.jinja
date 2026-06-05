@@ -32,10 +32,9 @@ shap_metrics = None
 print("## Random Forest\n")
 
 if target not in df.columns:
-    print(f"Error: Target column '{target}' not found")
-    exit()
+    raise ValueError(f"Target column '{target}' not found")
 
-print(f"**Целевая переменная:** `{target}`  ")
+print(f"**Target variable:** `{target}`  ")
 
 # Ковариаты - все числовые колонки кроме исключений
 user_excl_raw = "{{ exclusions }}"
@@ -60,18 +59,17 @@ all_exclude = set(auto_exclude + user_exclusions)
 
 all_numeric = [c for c in df.columns if c != target and pd.api.types.is_numeric_dtype(df[c]) and c not in all_exclude]
 
-print(f"**Ковариаты:** все числовые ({len(all_numeric)} шт.)")
+print(f"**Covariates:** all numeric ({len(all_numeric)})")
 if all_exclude:
     excl_list = list(all_exclude)[:8]
-    print(f"**Исключены:** {', '.join(excl_list)}{'...' if len(all_exclude) > 8 else ''}")
-print(f"**Топ признаков для показа:** {top_n if top_n > 0 else 'все'}")
-print(f"**SHAP анализ:** {'Да' if calculate_shap else 'Нет'}")
+    print(f"**Excluded:** {', '.join(excl_list)}{'...' if len(all_exclude) > 8 else ''}")
+print(f"**Top features to display:** {top_n if top_n > 0 else 'all'}")
+print(f"**SHAP analysis:** {'Yes' if calculate_shap else 'No'}")
 print()
 
 valid_cov = all_numeric
 if len(valid_cov) == 0:
-    print("Error: No valid predictors")
-    exit()
+    raise ValueError("No valid predictors")
 
 X = df[valid_cov].copy()
 y = df[target].copy()
@@ -85,23 +83,23 @@ y = y.loc[mask]
 if y.dtype == 'object' or y.dtype.name == 'category':
     le = LabelEncoder()
     y = le.fit_transform(y)
-    print(f"**Целевая закодирована:** {le.classes_.tolist()}  ")
+    print(f"**Target encoded:** {le.classes_.tolist()}  ")
 
 is_binary = y.nunique() == 2
-print(f"**Наблюдений:** {len(X)}  ")
-print(f"**Признаков:** {X.shape[1]}  ")
-print(f"**Тип задачи:** {'бинарная' if is_binary else 'мультиклассовая'}  \n")
+print(f"**Observations:** {len(X)}  ")
+print(f"**Features:** {X.shape[1]}  ")
+print(f"**Task type:** {'binary' if is_binary else 'multiclass'}  \n")
 
 # Разделение
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.25, random_state=42, stratify=y if is_binary else None
 )
 
-print(f"**Обучающая выборка:** {len(X_train)}  ")
-print(f"**Тестовая выборка:** {len(X_test)}  \n")
+print(f"**Training set:** {len(X_train)}  ")
+print(f"**Test set:** {len(X_test)}  \n")
 
 # Обучение
-print("Обучение модели Random Forest...\n")
+print("Training Random Forest model...\n")
 rf = RandomForestClassifier(
     n_estimators=200,
     max_depth=10,
@@ -114,7 +112,7 @@ rf = RandomForestClassifier(
 rf.fit(X_train, y_train)
 
 # Метрики
-print("### Метрики качества\n")
+print("### Performance Metrics\n")
 print(f"| Metric | Value |")
 print(f"|--------|-------|")
 print(f"| OOB Score | {rf.oob_score_:.4f} |")
@@ -135,7 +133,7 @@ if is_binary:
 importances = pd.Series(rf.feature_importances_, index=X.columns).sort_values(ascending=False)
 top_features = importances.head(top_n) if top_n > 0 else importances
 
-print(f"\n### Топ-{len(top_features)} важных признаков (Random Forest)\n")
+print(f"\n### Top-{len(top_features)} important features (Random Forest)\n")
 print("| # | Variable | Importance |")
 print("|---|----------|------------|")
 for i, (feat, imp) in enumerate(top_features.items(), 1):
@@ -153,7 +151,7 @@ ax.set_title(f'Random Forest: Feature Importance (Top {len(top_features)})')
 ax.grid(True, alpha=0.3, axis='x')
 plt.tight_layout()
 save_plot(f"rf_importance_{timestamp}")
-print(f"\n![Важность признаков](/plots/rf_importance_{timestamp}.png)\n")
+print(f"\n![Feature Importance](/plots/rf_importance_{timestamp}.png)\n")
 
 # SHAP анализ
 if calculate_shap:
@@ -219,7 +217,7 @@ if calculate_shap:
             for _, row in shap_df.iterrows()
         ][:10]
         
-        print(f"\n### Топ-{len(shap_df)} SHAP признаков\n")
+        print(f"\n### Top-{len(shap_df)} SHAP features\n")
         print("| # | Feature | SHAP Importance |")
         print("|---|---------|-----------------|")
         for i, (_, row) in enumerate(shap_df.iterrows(), 1):

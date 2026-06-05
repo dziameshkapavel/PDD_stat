@@ -70,7 +70,6 @@
                 <button class="header-btn dropdown-toggle" data-menu="prediction">Prediction ▾</button>
                 <div class="dropdown-menu" id="predictionMenu">
                     <div class="dropdown-item" data-template="indpred">Individual Prediction</div>
-                    <div class="dropdown-item" data-template="extval">External Validation</div>
                 </div>
             </div>
             
@@ -234,21 +233,41 @@
                     <label class="form-label">Select covariates</label>
                     <input type="text" class="form-input covariates-input" placeholder="Select covariates..." data-field="covariates" readonly>
                 </div>
+                <div class="form-group covariate-types-wrapper hidden" style="margin-top: 12px; margin-bottom: 20px;">
+                    <label class="form-label">Covariate Variable Types (Click to toggle)</label>
+                    <div class="covariate-types-container" style="display: flex; flex-wrap: wrap; gap: 8px; background: var(--bg-secondary); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--border-primary);"></div>
+                </div>
+                <div class="form-group reference-groups-wrapper hidden" style="margin-top: 12px; margin-bottom: 20px;">
+                    <label class="form-label">Reference Groups (Categorical Covariates)</label>
+                    <div class="reference-groups-container" style="display: flex; flex-direction: column; gap: 8px; background: var(--bg-secondary); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--border-primary);"></div>
+                </div>
                 <div class="form-row">
-                    <div class="form-group" style="flex:1;">
+                    <div class="form-group" style="flex:1; margin-bottom: 20px;">
                         <label class="form-label">Analysis type</label>
                         <div class="button-group">
                             <button class="btn-secondary analysis-type active" data-type="univariate">Univariate</button>
                             <button class="btn-secondary analysis-type" data-type="multivariate">Multivariate</button>
                         </div>
                     </div>
-                    <div class="form-group method-group hidden" style="flex:1;">
+                    <div class="form-group method-group hidden" style="flex:1; margin-bottom: 20px;">
                         <label class="form-label">Method</label>
                         <div class="button-group">
                             <button class="btn-secondary method-btn" data-method="enter">Enter</button>
                             <button class="btn-secondary method-btn" data-method="forward">Forward</button>
                             <button class="btn-secondary method-btn" data-method="backward">Backward</button>
                         </div>
+                    </div>
+                    <div class="form-group stepwise-p-group hidden" style="flex:1; margin-bottom: 20px;">
+                        <label class="form-label stepwise-p-label">P-value threshold</label>
+                        <input type="number" class="stepwise-p-input" value="0.05" step="0.01" min="0.001" max="0.99" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid var(--border-primary); background: var(--bg-secondary); color: var(--text-primary);">
+                    </div>
+                </div>
+                <div class="form-row" style="margin-bottom: 20px;">
+                    <div class="form-group" style="flex:1; margin-bottom: 0;">
+                        <label class="form-label">Adjust Survival Curves by Covariate</label>
+                        <select class="plot-adjust-select" style="width: 100%; height: 44px; padding: 10px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-primary); background: var(--bg-secondary); color: var(--text-primary);">
+                            <option value="">-- Baseline Only --</option>
+                        </select>
                     </div>
                 </div>
                 <button class="run-btn">▶ Run</button>
@@ -299,6 +318,14 @@
                     <label class="form-label">Select predictors</label>
                     <input type="text" class="form-input predictors-input" placeholder="Select predictors..." data-field="predictors" readonly>
                 </div>
+                <div class="form-group covariate-types-wrapper hidden" style="margin-top: 12px; margin-bottom: 20px;">
+                    <label class="form-label">Covariate Variable Types (Click to toggle)</label>
+                    <div class="covariate-types-container" style="display: flex; flex-wrap: wrap; gap: 8px; background: var(--bg-secondary); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--border-primary);"></div>
+                </div>
+                <div class="form-group reference-groups-wrapper hidden" style="margin-top: 12px; margin-bottom: 20px;">
+                    <label class="form-label">Reference Groups (Categorical Covariates)</label>
+                    <div class="reference-groups-container" style="display: flex; flex-direction: column; gap: 8px; background: var(--bg-secondary); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--border-primary);"></div>
+                </div>
                 <div class="form-row">
                     <div class="form-group" style="flex:1;">
                         <label class="form-label">Analysis type</label>
@@ -313,6 +340,16 @@
                             <button class="btn-secondary method-btn" data-method="enter">Enter</button>
                             <button class="btn-secondary method-btn" data-method="forward">Forward</button>
                             <button class="btn-secondary method-btn" data-method="backward">Backward</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1;">
+                        <label class="form-label">Validation</label>
+                        <div class="button-group">
+                            <button class="btn-secondary validation-btn active" data-validation="none">None</button>
+                            <button class="btn-secondary validation-btn" data-validation="split">Train/Test</button>
+                            <button class="btn-secondary validation-btn" data-validation="cv">Cross-val</button>
                         </div>
                     </div>
                 </div>
@@ -632,15 +669,27 @@
                 <label class="form-label">Covariates (leave empty for all numeric)</label>
                 <input type="text" class="form-input covariates-input" placeholder="Select covariates..." data-field="covariates" readonly>
             </div>
+            <div class="form-group covariate-types-wrapper hidden" style="margin-top: 12px; margin-bottom: 20px;">
+                <label class="form-label">Covariate Variable Types (Click to toggle)</label>
+                <div class="covariate-types-container" style="display: flex; flex-wrap: wrap; gap: 8px; background: var(--bg-secondary); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--border-primary);"></div>
+            </div>
+            <div class="form-group reference-groups-wrapper hidden" style="margin-top: 12px; margin-bottom: 20px;">
+                <label class="form-label">Reference Groups (Categorical Covariates)</label>
+                <div class="reference-groups-container" style="display: flex; flex-direction: column; gap: 8px; background: var(--bg-secondary); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--border-primary);"></div>
+            </div>
             <div class="form-group">
                 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
                     <input type="checkbox" class="auto-c-check" checked style="width:16px;height:16px;">
                     <span>Auto-select C (cross-validation)</span>
                 </label>
             </div>
-            <button class="run-btn">▶ Run</button>
-            <div style="clear:both;"></div>
-        </div>
+            <div class="form-group c-value-row" style="display:none;">
+                <label class="form-label">C (inverse of λ, lower = stronger regularization)</label>
+                <input type="number" class="form-input c-value-input" value="0.1" step="0.01" min="0.001" max="100" style="width:100%;">
+                </div>
+                <button class="run-btn">▶ Run</button>
+                <div style="clear:both;"></div>
+            </div>
         <div class="card-results-container"></div>
     </div>
 </template>

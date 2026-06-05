@@ -35,7 +35,12 @@ print(f"**Group by:** `{group_col}`")
 print(f"**Box plot:** {'Yes' if show_box else 'No'}")
 print(f"**Data points:** {'Yes' if show_points else 'No'}\n")
 
+n_before = len(df)
 df_plot = df[[value_col, group_col]].dropna()
+n_after = len(df_plot)
+if n_after < n_before:
+    print(f"⚠️ Removed {n_before - n_after} rows ({((n_before - n_after)/n_before*100):.1f}%) with missing data")
+
 groups = sorted(df_plot[group_col].unique())
 n_total = len(df_plot)
 
@@ -54,10 +59,10 @@ if len(groups) == 2:
     d1 = df_plot[df_plot[group_col] == g1][value_col]
     d2 = df_plot[df_plot[group_col] == g2][value_col]
     u_stat, u_p = stats.mannwhitneyu(d1, d2, alternative='two-sided')
-    print(f"\n**Mann-Whitney U test:** p = {u_p:.4f}{' **' if u_p < 0.05 else ''}")
+    print(f"\n**Mann-Whitney U test:** p = {fmt_p(u_p)}{' **' if u_p < 0.05 else ''}")
 elif len(groups) > 2:
     h_stat, h_p = stats.kruskal(*[df_plot[df_plot[group_col] == g][value_col] for g in groups])
-    print(f"\n**Kruskal-Wallis H test:** p = {h_p:.4f}{' **' if h_p < 0.05 else ''}")
+    print(f"\n**Kruskal-Wallis H test:** p = {fmt_p(h_p)}{' **' if h_p < 0.05 else ''}")
 
 # График
 fig, ax = plt.subplots(figsize=(max(6, len(groups)*1.5), 6))

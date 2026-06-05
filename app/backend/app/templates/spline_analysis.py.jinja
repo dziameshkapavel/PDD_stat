@@ -42,8 +42,7 @@ elif is_binary:
     model_type = "Logistic"
     outcome_str = f"Binary: {target_col}"
 else:
-    print("Error: Specify either binary target OR time+event columns")
-    exit()
+    raise ValueError("Specify either binary target OR time+event columns")
 
 print(f"**Variable:** `{variable}`")
 print(f"**Model:** {model_type}")
@@ -52,8 +51,7 @@ print(f"**Knot type:** {knot_type}")
 print(f"**Adjusted for:** {', '.join([f'`{c}`' for c in covariates]) if covariates else 'None (univariate)'}")
 
 if variable not in df.columns:
-    print(f"Error: Variable '{variable}' not found")
-    exit()
+    raise ValueError(f"Variable '{variable}' not found")
 
 # Подготовка данных
 cols = [variable]
@@ -63,11 +61,20 @@ if is_survival:
     cols.append(event_col)
 else:
     cols.append(target_col)
-cols.extend(covariates)
+valid_covariates = [c for c in covariates if c in df.columns]
+bad_covs = [c for c in covariates if c not in df.columns]
+if bad_covs:
+    raise ValueError(f"Covariates not found: {bad_covs}")
+cols.extend(valid_covariates)
+n_before = len(df)
 df_model = df[cols].copy().dropna().reset_index(drop=True)
+n_after = len(df_model)
+if n_after < n_before:
+    print(f"⚠️ Removed {n_before - n_after} rows ({((n_before - n_after)/n_before*100):.1f}%) with missing data")
+
 
 # Кодируем категориальные ковариаты
-for col in covariates:
+for col in valid_covariates:
     if col in df_model.columns and df_model[col].dtype == 'object':
         le = LabelEncoder()
         df_model[col] = le.fit_transform(df_model[col].astype(str))
@@ -81,8 +88,7 @@ if is_survival:
 print()
 
 if n_total < 20:
-    print("Error: Insufficient data")
-    exit()
+    raise ValueError("Insufficient data")
 
 # Определяем узел (узлы)
 x = df_model[variable].values.ravel()
@@ -131,7 +137,7 @@ if is_survival:
     base_ci_low = float(summary.loc[variable, 'exp(coef) lower 95%'])
     base_ci_high = float(summary.loc[variable, 'exp(coef) upper 95%'])
     
-    print(f"| Below first knot | — | {base_hr:.3f} | {base_ci_low:.3f}-{base_ci_high:.3f} | {base_p:.4f} |")
+    print(f"| Below first knot | — | {base_hr:.3f} | {base_ci_low:.3f}-{base_ci_high:.3f} | {fmt_p(base_p)} |")
     
     for i, k in enumerate(knots):
         col = f'spline_{i+1}'
@@ -141,7 +147,7 @@ if is_survival:
             ci_low = float(summary.loc[col, 'exp(coef) lower 95%'])
             ci_high = float(summary.loc[col, 'exp(coef) upper 95%'])
             combined_hr = base_hr * hr
-            print(f"| Above {knot_labels[i]} | {k:.1f} | {combined_hr:.3f} | {base_ci_low*ci_low:.3f}-{base_ci_high*ci_high:.3f} | {p:.4f} |")
+            print(f"| Above {knot_labels[i]} | {k:.1f} | {combined_hr:.3f} | {base_ci_low*ci_low:.3f}-{base_ci_high*ci_high:.3f} | {fmt_p(p)} |")
     
     # Тест нелинейности
     if len(knots) > 0:
@@ -152,7 +158,7 @@ if is_survival:
             
             from lifelines.statistics import logrank_test
             nonlin_p = float(summary.loc[spline_cols[0], 'p']) if spline_cols[0] in summary.index else 1.0
-            print(f"\n**Non-linearity test:** p = {nonlin_p:.4f}{' **' if nonlin_p < 0.05 else ''}")
+            print(f"\n**Non-linearity test:** p = {fmt_p(nonlin_p)}{' **' if nonlin_p < 0.05 else ''}")
             if nonlin_p < 0.05:
                 print("**Conclusion:** Significant non-linear association detected.")
             else:
@@ -244,7 +250,7 @@ else:
     
     base_or = float(np.exp(coefs[0]))
     base_p = float(p_values[0])
-    print(f"| Below first knot | — | {base_or:.3f} | — | {base_p:.4f} |")
+    print(f"| Below first knot | — | {base_or:.3f} | — | {fmt_p(base_p)} |")
     
     for i, k in enumerate(knots):
         col_idx = i + 1
@@ -252,12 +258,12 @@ else:
             or_val = float(np.exp(coefs[col_idx]))
             p_val = float(p_values[col_idx])
             combined_or = base_or * or_val
-            print(f"| Above {knot_labels[i]} | {k:.1f} | {combined_or:.3f} | — | {p_val:.4f} |")
+            print(f"| Above {knot_labels[i]} | {k:.1f} | {combined_or:.3f} | — | {fmt_p(p_val)} |")
     
     # Тест нелинейности
     if len(knots) > 0 and len(coefs) > 1:
         nonlin_p = float(p_values[1])
-        print(f"\n**Non-linearity test:** p = {nonlin_p:.4f}{' **' if nonlin_p < 0.05 else ''}")
+        print(f"\n**Non-linearity test:** p = {fmt_p(nonlin_p)}{' **' if nonlin_p < 0.05 else ''}")
         if nonlin_p < 0.05:
             print("**Conclusion:** Significant non-linear association detected.")
         else:

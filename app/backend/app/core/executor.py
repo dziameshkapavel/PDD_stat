@@ -68,6 +68,13 @@ class Executor:
         
         var_labels_dict = labels
         
+        def fmt_p(p, epsilon=0.0001):
+            if p is None or (isinstance(p, float) and np.isnan(p)) or (hasattr(p, 'dtype') and np.isnan(p)):
+                return "—"
+            if p < epsilon:
+                return f"<{epsilon}"
+            return f"{p:.4f}"
+
         self.namespace = {
             'df': self.df,
             'pd': pd,
@@ -78,6 +85,7 @@ class Executor:
             'get_label': get_label,
             'var_labels': var_labels_dict,
             'project_path': str(self.project_path),
+            'fmt_p': fmt_p,
         }
 
     def _save_plot(self, name: str, fig=None) -> str:

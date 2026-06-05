@@ -35,16 +35,18 @@ show_ci_str = "{{ show_ci|default('true') }}"
 show_ci = show_ci_str.lower() in ['true', '1', 'yes', 'on'] or show_ci_str == 'True' or show_ci_str == 'TRUE'
 
 x_tick_step = {{ x_tick_step|default(6)|int }}
+if x_tick_step <= 0:
+    x_tick_step = 6
 x_label = "{{ x_label|default('Time, months') }}"
 y_tick_step = {{ y_tick_step|default(0.1)|float }}
+if y_tick_step <= 0:
+    y_tick_step = 0.1
 y_label = "{{ y_label|default('Survival Probability') }}"
 
 if time_col not in df.columns:
-    print(f"Error: Time column '{time_col}' not found")
-    exit()
+    raise ValueError(f"Time column '{time_col}' not found")
 if event_col not in df.columns:
-    print(f"Error: Event column '{event_col}' not found")
-    exit()
+    raise ValueError(f"Event column '{event_col}' not found")
 
 print(f"**Time:** `{time_col}`")
 print(f"**Event:** `{event_col}`")
@@ -63,7 +65,12 @@ if stratify_col and stratify_col in df.columns and str(stratify_col).strip():
 else:
     stratify_col = ''
 
+n_before = len(df)
 df_km = df[cols].copy().dropna()
+n_after = len(df_km)
+if n_after < n_before:
+    print(f"⚠️ Removed {n_before - n_after} rows ({((n_before - n_after)/n_before*100):.1f}%) with missing data")
+
 total_n = len(df_km)
 total_events = int(df_km[event_col].sum())
 
@@ -83,11 +90,9 @@ output_metrics = {
 }
 
 if total_n == 0:
-    print("Error: No data")
-    exit()
+    raise ValueError("No data")
 if total_events == 0:
-    print("Error: No events")
-    exit()
+    raise ValueError("No events")
 
 
 def finalize_plot(fig, ax, title_prefix, suffix, plot_type, timestamp):
@@ -207,11 +212,15 @@ if stratify_col:
                     stratum_metrics["logrank_overall"] = p_overall
                     
                     sig_mark = " **" if p_overall < 0.05 else ""
-                    print(f"  **Log-Rank:** p = {p_overall:.4f}{sig_mark}")
+                    print(f"  **Log-Rank:** p = {fmt_p(p_overall)}{sig_mark}")
                 except Exception as ex:
                     print(f"  Log-Rank error: {ex}")
                 
                 # Pairwise
+                n_comp = len(list(combinations(unique_groups, 2)))
+                if n_comp > 1:
+                    print(f"  *{n_comp} pairwise comparisons. Multiple comparisons inflate Type I error.*\n")
+                
                 for g1, g2 in combinations(unique_groups, 2):
                     try:
                         g1_data = stratum_df[stratum_df[group_col].astype(str) == g1]
@@ -388,11 +397,15 @@ else:
                 output_metrics["logrank_overall"] = p_overall
                 
                 sig_mark = " **" if p_overall < 0.05 else ""
-                print(f"**Overall:** p = {p_overall:.4f}{sig_mark}\n")
+                print(f"**Overall:** p = {fmt_p(p_overall)}{sig_mark}\n")
             except Exception as ex:
                 print(f"Overall log-rank error: {ex}")
             
             # Pairwise
+            n_comp = len(list(combinations(unique_groups, 2)))
+            if n_comp > 1:
+                print(f"\n*{n_comp} pairwise comparisons. Multiple comparisons inflate Type I error.*\n")
+            
             for g1, g2 in combinations(unique_groups, 2):
                 try:
                     g1_data = df_km[df_km[group_col].astype(str) == g1]
@@ -412,7 +425,7 @@ else:
                     })
                     
                     sig = "**" if p_val < 0.05 else ""
-                    print(f"  {g1} vs {g2}: p = {p_val:.4f} {sig}")
+                    print(f"  {g1} vs {g2}: p = {fmt_p(p_val)} {sig}")
                 except Exception as ex:
                     print(f"  {g1} vs {g2}: error - {ex}")
         
@@ -421,7 +434,9 @@ else:
             print("|------------|---------|-------------|")
             for pw in output_metrics["logrank_pairwise"]:
                 sig_icon = "Yes **" if pw["significant"] else "No"
-                print(f"| {pw['group1']} vs {pw['group2']} | {pw['p_value']:.4f} | {sig_icon} |")
+                print(f"| {pw['group1']} vs {pw['group2']} | {fmt_p(pw['p_value'])} | {sig_icon} |")
+            if n_comp > 1:
+                print(f"\n*Bonferroni-corrected α = {0.05/n_comp:.4f}. Consider adjusted p-values for confirmatory inference.*")
         
         # Number at Risk & S(t)
         if plot_type == 'survival' and total_n > 0:

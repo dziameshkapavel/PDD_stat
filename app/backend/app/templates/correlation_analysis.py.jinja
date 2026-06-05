@@ -67,6 +67,10 @@ print(f"![Correlation Matrix](/plots/{plot_name}.png)\n")
 # Таблица сильных корреляций
 print(f"### Strong Correlations (|r| > {threshold})\n")
 
+n_total_pairs = len(valid_vars) * (len(valid_vars) - 1) // 2
+alpha_corrected = 0.05 / n_total_pairs if n_total_pairs > 0 else 0.05
+print(f"*{n_total_pairs} pairwise comparisons. Bonferroni-corrected α = {alpha_corrected:.6f}*\n")
+
 pairs = []
 for i in range(len(valid_vars)):
     for j in range(i+1, len(valid_vars)):
@@ -82,17 +86,17 @@ for i in range(len(valid_vars)):
 pairs.sort(key=lambda x: abs(x[2]), reverse=True)
 
 if pairs:
-    print("| Variable 1 | Variable 2 | r | p-value | Significant |")
-    print("|------------|------------|-----|---------|-------------|")
+    print("| Variable 1 | Variable 2 | r | p-value | Corrected p | Significant (Bonferroni) |")
+    print("|------------|------------|-----|---------|-------------|-------------------------|")
     for v1, v2, r, p in pairs:
-        sig = "Yes **" if p < 0.05 else "No"
-        print(f"| {v1} | {v2} | {r:.3f} | {p:.4f} | {sig} |")
+        p_corr = min(p * n_total_pairs, 1.0)
+        sig = "Yes **" if p_corr < 0.05 else "No"
+        print(f"| {v1} | {v2} | {r:.3f} | {fmt_p(p)} | {fmt_p(p_corr)} | {sig} |")
     print()
 else:
     print("*No strong correlations found above threshold.*\n")
 
 n_strong = len(pairs)
-n_total_pairs = len(valid_vars) * (len(valid_vars) - 1) // 2
 print(f"**Summary:** {n_strong}/{n_total_pairs} pairs exceed |r| > {threshold}")
 
 if pairs:

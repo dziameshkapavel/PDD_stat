@@ -356,23 +356,19 @@ async _appendShapPlots(block) {
             if (toggleBtn) toggleBtn.insertAdjacentElement('afterend', saveModelBtn);
             saveModelBtn.insertAdjacentElement('afterend', saveBtn);
         }
-        
-        if (titleSpan) {
-            titleSpan.insertAdjacentElement('afterend', toggleBtn);
-            toggleBtn.insertAdjacentElement('afterend', saveBtn);
-        }
     }
     
     async savePredictions(card) {
-        if (!this.lastParams) {
-            this.ui.modals.showAlert('Run analysis first.');
+        const params = this._getParameters(card);
+        if (!params.target_col) {
+            this.ui.modals.showAlert('Specify target variable first');
             return;
         }
         
         const columnName = prompt('Enter column name:', 'rf_prob');
         if (!columnName) return;
         
-        const saveBtn = document.querySelector('.save-proba-btn');
+        const saveBtn = card.querySelector('.save-proba-btn');
         if (saveBtn) {
             saveBtn.textContent = 'Saving...';
             saveBtn.disabled = true;
@@ -384,7 +380,7 @@ async _appendShapPlots(block) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     template: this.templateName,
-                    params: this.lastParams,
+                    params: params,
                     column_name: columnName
                 })
             });

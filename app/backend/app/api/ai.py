@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 import json
 import numpy as np
+import traceback
 
 from app.api.projects import get_loader
 from app.core.ai_clients import AIClientFactory
@@ -137,12 +138,13 @@ def build_system_prompt(config: Dict, loader) -> str:
             title = item.get('title', tpl)
             metrics = item.get('metrics', {})
             ts = item.get('timestamp', '')[:16].replace('T', ' ')
+            output_preview = item.get('output_preview', '')
 
             parts = []
 
             # ВСЕ числовые метрики автоматически
             for k, v in metrics.items():
-                if k in ('model_type', 'plots', 'summary', 'auto_select_C', 'target', 'warnings'):
+                if k in ('model_type', 'plots', 'summary', 'auto_select_C', 'target'):
                     continue
                 if isinstance(v, (int, float)) and v is not None:
                     if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
@@ -178,21 +180,21 @@ def build_system_prompt(config: Dict, loader) -> str:
                     if steps_desc:
                         parts.append(f"steps: {'; '.join(steps_desc)}")
 
-                # Special handling for diagnostic_accuracy results
+                # Special handling for diagnostic_accuracy / ROC results
                 elif k == 'results' and isinstance(v, list):
                     for res in v[:5]:
-                        test_name = res.get('test', '?')
+                        test_name = res.get('test') or res.get('predictor', '?')
                         sens = res.get('sensitivity', 0)
                         spec = res.get('specificity', 0)
-                        auc_val = res.get('accuracy', 0)
-                        parts.append(f"{test_name}(Se={sens:.2f},Sp={spec:.2f},Acc={auc_val:.2f})")
+                        auc_val = res.get('accuracy') or res.get('auc', 0)
+                        parts.append(f"{test_name}(Se={sens:.2f},Sp={spec:.2f},AUC={auc_val:.3f})")
 
-                # Special handling for pairwise_tests
+                # Special handling for pairwise_tests (diagnostic_accuracy + kaplan_meier)
                 elif k == 'pairwise_tests' and isinstance(v, list):
                     for pt in v[:5]:
-                        t1 = pt.get('test1', '?')
-                        t2 = pt.get('test2', '?')
-                        sp = pt.get('sens_p', 1)
+                        t1 = pt.get('test1') or pt.get('group1', '?')
+                        t2 = pt.get('test2') or pt.get('group2', '?')
+                        sp = pt.get('sens_p') or pt.get('p_value', 1)
                         pp = pt.get('spec_p', 1)
                         parts.append(f"{t1}vs{t2}(sens_p={sp:.4f},spec_p={pp:.4f})")
 
@@ -316,8 +318,15 @@ def build_system_prompt(config: Dict, loader) -> str:
                         if names:
                             parts.append(f"{k}=[{', '.join(names)}]")
 
-                elif isinstance(v, str) and len(v) < 50 and v:
-                    parts.append(f"{k}={v}")
+                elif isinstance(v, str):
+                    if len(v) < 50:
+                        parts.append(f"{k}={v}")
+                    elif v.startswith('<') and '>' in v:
+                        plain = v.replace('<br>', ' ').replace('<sub>', '').replace('</sub>', '')
+                        import re
+                        plain = re.sub(r'<[^>]+>', '', plain)
+                        if len(plain) < 100:
+                            parts.append(f"{k}={plain}")
 
                 elif isinstance(v, dict) and k == 'metrics_by_model':
                     for model_name, mm in v.items():
@@ -360,33 +369,134 @@ def build_system_prompt(config: Dict, loader) -> str:
                 elif isinstance(v, list) and len(v) > 0 and isinstance(v[0], (str, int, float)):
                     parts.append(f"{k}=[{', '.join([str(x)[:20] for x in v[:5]])}]")
 
-                # survival_evaluation: c_indices
+                # survival_evaluation: c_indices (general or stratified)
                 elif k == 'c_indices' and isinstance(v, dict):
                     c_parts = []
-                    for model, cinfo in v.items():
-                        if isinstance(cinfo, dict):
-                            c_val = cinfo.get('value', 0)
-                            c_parts.append(f"{model}(C={c_val:.4f})")
+                    for stratum_label, model_dict in v.items():
+                        if isinstance(model_dict, dict) and any(isinstance(mv, dict) and 'value' in mv for mv in model_dict.values()):
+                            for model, cinfo in model_dict.items():
+                                if isinstance(cinfo, dict):
+                                    c_val = cinfo.get('value', 0)
+                                    c_parts.append(f"{stratum_label}/{model}(C={c_val:.4f})")
+                        elif isinstance(model_dict, dict) and 'value' in model_dict:
+                            c_val = model_dict.get('value', 0)
+                            c_parts.append(f"{stratum_label}(C={c_val:.4f})")
                     if c_parts:
                         parts.append(f"C-index: {'; '.join(c_parts)}")
 
                 # survival_evaluation: time_auc
                 elif k == 'time_auc' and isinstance(v, dict):
                     auc_parts = []
-                    for model, tdata in v.items():
-                        if isinstance(tdata, dict):
-                            t_items = sorted(tdata.items(), key=lambda x: int(x[0]))
-                            auc_str = ', '.join([f"{t}mo={info.get('auc',0):.3f}" for t, info in t_items[:5]])
-                            auc_parts.append(f"{model}: {auc_str}")
+                    for stratum_label, model_dict in v.items():
+                        if isinstance(model_dict, dict):
+                            for model, tdata in model_dict.items():
+                                if isinstance(tdata, dict):
+                                    try:
+                                        t_items = sorted([(k2, v2) for k2, v2 in tdata.items() if isinstance(k2, str) and k2.isdigit()], key=lambda x: int(x[0]))
+                                    except:
+                                        t_items = list(tdata.items())[:5]
+                                    auc_str = ', '.join([f"{t}mo={info.get('auc',0):.3f}" for t, info in t_items[:5]])
+                                    auc_parts.append(f"{model}: {auc_str}")
                     if auc_parts:
-                        parts.append(f"Time-AUC: {'; '.join(auc_parts[:2])}")
+                        parts.append(f"Time-AUC: {'; '.join(auc_parts[:3])}")
+
+                # ========== NEW handlers for previously lost metrics ==========
+
+                # schoenfeld_test (cox_ph): {var: {p_value, test_statistic, violated}}
+                elif k == 'schoenfeld_test' and isinstance(v, dict):
+                    sch_parts = []
+                    for var_name, res in v.items():
+                        pv = res.get('p_value', 1)
+                        viol = res.get('violated', False)
+                        if var_name == 'GLOBAL':
+                            sch_parts.append(f"global(PH_p={pv:.4f}{'**' if viol else ''})")
+                        else:
+                            sch_parts.append(f"{var_name}(PH_p={pv:.4f}{'**' if viol else ''})")
+                    if sch_parts:
+                        parts.append(f"Schoenfeld: {'; '.join(sch_parts[:8])}")
+
+                # hosmer_lemeshow (logistic): {chi_square, p_value, df, significant}
+                elif k == 'hosmer_lemeshow' and isinstance(v, dict):
+                    if 'error' not in v:
+                        chi2 = v.get('chi_square', 0)
+                        pv = v.get('p_value', 1)
+                        df = v.get('df', 0)
+                        parts.append(f"HL(χ²={chi2:.2f}, df={df}, p={pv:.4f})")
+
+                # vif (cox_ph, logistic): {var: {value, high, moderate}}
+                elif k == 'vif' and isinstance(v, dict):
+                    vif_parts = []
+                    for var_name, vinfo in v.items():
+                        val = vinfo.get('value', 0)
+                        high = vinfo.get('high', False)
+                        vif_parts.append(f"{var_name}(VIF={val:.1f}{'**' if high else ''})")
+                    if vif_parts:
+                        parts.append(f"VIF: {'; '.join(vif_parts[:8])}")
+
+                # warnings: list of strings — re-enabled for AI
+                elif k == 'warnings' and isinstance(v, list) and v:
+                    parts.append(f"warnings: {'; '.join(str(w)[:80] for w in v[:5])}")
+
+                # feature_importance (random_survival_forest): {feature: importance}
+                elif k == 'feature_importance' and isinstance(v, dict):
+                    sorted_feats = sorted(v.items(), key=lambda x: x[1], reverse=True)[:8]
+                    fi_parts = [f"{name}({imp:.4f})" for name, imp in sorted_feats]
+                    if fi_parts:
+                        parts.append(f"importance: {'; '.join(fi_parts)}")
+
+                # univariate_aucs (logistic): [{predictor, auc}, ...]
+                elif k == 'univariate_aucs' and isinstance(v, list):
+                    ua_parts = []
+                    for u in v[:8]:
+                        pred = u.get('predictor', '?')
+                        auc_val = u.get('auc', 0)
+                        ua_parts.append(f"{pred}(AUC={auc_val:.3f})")
+                    if ua_parts:
+                        parts.append(f"uni_AUC: {'; '.join(ua_parts)}")
+
+                # best_vs_others (roc_analysis): list of strings
+                elif k == 'best_vs_others' and isinstance(v, list):
+                    for bvo in v[:3]:
+                        if isinstance(bvo, str):
+                            parts.append(bvo)
+
+                # calibration (model_eval_binary): {model: {brier_score}}
+                elif k == 'calibration' and isinstance(v, dict):
+                    cal_parts = []
+                    for model_name, cal_info in v.items():
+                        brier = cal_info.get('brier_score')
+                        if brier is not None:
+                            cal_parts.append(f"{model_name}(Brier={brier:.4f})")
+                    if cal_parts:
+                        parts.append(f"calibration: {'; '.join(cal_parts[:5])}")
+
+                # Generic nested dict handler — shows top-level key/value pairs
+                elif isinstance(v, dict):
+                    flat_parts = []
+                    for subk, subv in v.items():
+                        if isinstance(subv, (int, float)):
+                            if isinstance(subv, float) and (np.isnan(subv) or np.isinf(subv)):
+                                continue
+                            flat_parts.append(f"{subk}={subv:.4f}" if isinstance(subv, float) else f"{subk}={subv}")
+                    if flat_parts:
+                        parts.append(f"{k}=[{', '.join(flat_parts[:6])}]")
 
             analysis_id = f"[{ts}]"
 
             if parts:
-                base_prompt += f"\n{analysis_id} {title}: {'; '.join(parts[:25])}"
+                base_prompt += f"\n{analysis_id} {title}: {'; '.join(parts[:30])}"
             else:
                 base_prompt += f"\n{analysis_id} {title}"
+
+            # Inject output_preview for templates with few metrics
+            tpl = item.get('template', '')
+            if len(parts) <= 2 and output_preview:
+                short_preview = output_preview[:600]
+                lines = short_preview.split('\n')
+                filtered = [l for l in lines if not l.startswith('<!') and not l.startswith('<!--') and len(l) > 10]
+                preview = '\n'.join(filtered[:10])
+                if preview.strip():
+                    base_prompt += f"\n  Output: {preview[:500]}"
 
     return base_prompt
 
@@ -451,23 +561,39 @@ async def test_connection(req: dict):
 async def chat(req: ChatRequest):
     loader = get_loader()
     config = load_config(loader)
-    model = req.model or config.get('last_used_model', 'llama3:8b')
+    model = (req.model or config.get('last_used_model') or 'llama3:8b').strip()
+    if not model:
+        model = 'llama3:8b'
     temperature = req.temperature or config.get('temperature', 0.7)
     max_tokens = req.max_tokens or config.get('max_tokens', 2000)
-    system_prompt = build_system_prompt(config, loader)
+    try:
+        system_prompt = build_system_prompt(config, loader)
+    except Exception as e:
+        system_prompt = "You are PDD_STAT Assistant, a biostatistics AI. Be concise and accurate."
     
     if req.coder_mode:
         coder_prompt = "\n\n## CRITICAL: CODER MODE ENABLED\nYou MUST calculate all values using Python code in ```python blocks. Never just state numbers - always execute code first. Example:\nUser: median of age\nResponse:\n```python\nprint(df['age'].median())\n```"
         system_prompt += coder_prompt
     
     full_messages = [{"role": "system", "content": system_prompt}] + req.messages
+    
+    # Sanitize messages: ensure all content values are strings
+    sanitized = []
+    for msg in full_messages:
+        sanitized.append({
+            "role": str(msg.get("role", "user")),
+            "content": str(msg.get("content", ""))
+        })
+    
     try:
         client = AIClientFactory.create(config)
-        result = await client.chat(model=model, messages=full_messages,
+        result = await client.chat(model=model, messages=sanitized,
                                    temperature=temperature, max_tokens=max_tokens)
         return result
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        tb = traceback.format_exc()
+        error_msg = str(e)
+        return {"success": False, "error": f"{error_msg}\n{tb}"}
 
 @router.get("/context")
 async def get_context():

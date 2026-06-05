@@ -28,8 +28,7 @@ else:
     valid_vars = [v for v in variables if v in df.columns and pd.api.types.is_numeric_dtype(df[v])]
 
 if not valid_vars:
-    print("Error: No numeric variables found")
-    exit()
+    raise ValueError("No numeric variables found")
 
 print(f"**Variables:** {', '.join([f'`{v}`' for v in valid_vars])} ({len(valid_vars)})")
 print(f"**Observations:** {len(df)}\n")
@@ -82,7 +81,7 @@ for col in valid_vars:
     try:
         w_stat, p_val = stats.shapiro(data)
         normal = "Yes" if p_val > 0.05 else "No"
-        print(f"| `{col}` | {n} | {w_stat:.4f} | {p_val:.4f} | {normal} |")
+        print(f"| `{col}` | {n} | {w_stat:.4f} | {fmt_p(p_val)} | {normal} |")
     except:
         pass
 

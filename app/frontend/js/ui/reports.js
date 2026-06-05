@@ -75,6 +75,8 @@ export class ReportsPanel {
                 
                 <button class="btn-primary" id="generateReportBtn" style="width:100%;">Generate DOCX</button>
                 
+                <button class="btn-primary" id="generateAIReportBtn" style="width:100%;margin-top:8px;background:var(--accent-green);">Generate AI Report</button>
+                
                 <div id="reportStatus" style="font-size:13px;color:var(--text-muted);text-align:center;"></div>
             </div>
         `;
@@ -101,6 +103,7 @@ export class ReportsPanel {
         });
         
         this.container.querySelector('#generateReportBtn').addEventListener('click', () => this._generateReport());
+        this.container.querySelector('#generateAIReportBtn').addEventListener('click', () => this._generateAIReport());
     }
     
     async _loadHistory() {
@@ -189,6 +192,78 @@ export class ReportsPanel {
             
             if (result.status === 'generated') {
                 statusDiv.innerHTML = `Report generated: <a href="${API_BASE}/analysis/report/download/${result.filename}" style="color:var(--accent-blue);">${result.filename}</a>`;
+                statusDiv.style.color = 'var(--accent-green)';
+            }
+        } catch (e) {
+            statusDiv.textContent = `Error: ${e.message}`;
+            statusDiv.style.color = 'var(--accent-red)';
+        } finally {
+            generateBtn.disabled = false;
+        }
+    }
+    
+    async _generateAIReport() {
+        const language = prompt('Set report language:', 'English');
+        if (language === null) return;
+        const lang = language.trim() || 'English';
+        
+        const modeRadio = this.container.querySelector('.report-mode:checked');
+        const mode = modeRadio ? modeRadio.value : 'all';
+        
+        const selectedIds = [];
+        if (mode === 'selected') {
+            this.container.querySelectorAll('.analysis-check:checked').forEach(cb => {
+                selectedIds.push(cb.value);
+            });
+        }
+        
+        const title = this.container.querySelector('.report-title')?.value || 'Analysis Report';
+        
+        const statusDiv = this.container.querySelector('#reportStatus');
+        const generateBtn = this.container.querySelector('#generateAIReportBtn');
+        
+        statusDiv.textContent = 'Checking AI configuration...';
+        statusDiv.style.color = 'var(--text-muted)';
+        generateBtn.disabled = true;
+        
+        try {
+            const configResp = await fetch(`${API_BASE}/ai/config`);
+            if (!configResp.ok) throw new Error('Failed to check AI configuration');
+            const configData = await configResp.json();
+            const cfg = configData.config || {};
+            const provider = cfg.provider || '';
+            if (provider === 'groq' && (!cfg.groq || !cfg.groq.api_key)) {
+                throw new Error('AI not configured. Configure AI in Chat Settings (Groq API key missing).');
+            }
+            if (provider === 'ollama' && (!cfg.ollama || !cfg.ollama.url)) {
+                throw new Error('AI not configured. Configure AI in Chat Settings (Ollama URL missing).');
+            }
+            if (!provider) {
+                throw new Error('AI not configured. Please configure AI in Chat Settings.');
+            }
+            
+            statusDiv.textContent = 'Report is being generated...';
+            
+            const response = await fetch(`${API_BASE}/analysis/report/ai-generate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: title,
+                    analyses: mode,
+                    selected_ids: selectedIds,
+                    language: lang
+                })
+            });
+            
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.detail || `HTTP ${response.status}: ${await response.text().catch(() => '')}`);
+            }
+            
+            const result = await response.json();
+            
+            if (result.status === 'generated') {
+                statusDiv.innerHTML = `AI Report generated: <a href="${API_BASE}/analysis/report/download/${result.filename}" style="color:var(--accent-blue);">${result.filename}</a>`;
                 statusDiv.style.color = 'var(--accent-green)';
             }
         } catch (e) {

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+import traceback
 
 app = FastAPI(title="PDD_STAT API", version="1.0.0")
 
@@ -13,6 +14,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"success": False, "error": str(exc)[:500], "traceback": traceback.format_exc()[:2000]}
+    )
 
 # Путь к фронтенду (на уровень выше backend/)
 frontend_path = Path(__file__).parent.parent.parent / "frontend"

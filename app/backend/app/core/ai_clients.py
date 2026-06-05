@@ -154,9 +154,12 @@ class GroqClient:
                 )
                 if response.status_code == 200:
                     data = response.json()
+                    content = data['choices'][0]['message'].get('content', '')
+                    if content is None:
+                        content = ''
                     return {
                         "success": True,
-                        "content": data['choices'][0]['message']['content'],
+                        "content": content,
                         "model": model,
                         "usage": data.get('usage', {})
                     }

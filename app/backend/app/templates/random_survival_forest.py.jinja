@@ -71,10 +71,10 @@ output_metrics = {
     "plots": []
 }
 
-print(f"**Время:** `{time_col}`")
-print(f"**Событие:** `{event_col}`")
-print(f"**Топ признаков:** {top_n if top_n > 0 else 'все'}")
-print(f"**SHAP анализ:** {'Да' if calculate_shap else 'Нет'}\n")
+print(f"**Time:** `{time_col}`")
+print(f"**Event:** `{event_col}`")
+print(f"**Top features:** {top_n if top_n > 0 else 'all'}")
+print(f"**SHAP analysis:** {'Yes' if calculate_shap else 'No'}\n")
 
 # Проверки
 if time_col not in df.columns:
@@ -87,7 +87,7 @@ if not covariates:
     print("Error: No covariates specified")
     raise ValueError("No covariates specified")
 
-print(f"**Ковариаты:** {', '.join(valid_cov)}  \n")
+print(f"**Covariates:** {', '.join(valid_cov)}  \n")
 
 # Подготовка данных
 df_rsf = df.copy()
@@ -108,21 +108,24 @@ if encoding_map:
 
 # Оставляем только нужные колонки и удаляем пропуски
 cols_to_keep = [time_col, event_col] + valid_cov
+n_before = len(df_rsf)
 df_rsf = df_rsf[cols_to_keep].dropna()
+n_after = len(df_rsf)
+if n_after < n_before:
+    print(f"⚠️ Removed {n_before - n_after} rows ({((n_before - n_after)/n_before*100):.1f}%) with missing data")
+
 n_events = int(df_rsf[event_col].sum())
 n_total = len(df_rsf)
 output_metrics["n_total"] = n_total
 output_metrics["n_events"] = n_events
 
-print(f"**Наблюдений:** {n_total}")
-print(f"**Событий:** {n_events} ({n_events/n_total*100:.1f}%)\n")
+print(f"**Observations:** {n_total}")
+print(f"**Events:** {n_events} ({n_events/n_total*100:.1f}%)\n")
 
 if len(df_rsf) < 20:
-    print("Error: Insufficient data (need at least 20 observations)")
-    exit()
+    raise ValueError("Insufficient data (need at least 20 observations)")
 if n_events < 5:
-    print("Error: Insufficient events (need at least 5)")
-    exit()
+    raise ValueError("Insufficient events (need at least 5)")
 
 # Подготовка X и y для survival
 X = df_rsf[valid_cov].copy()
@@ -134,8 +137,8 @@ X_train, X_test, time_train, time_test, event_train, event_test = train_test_spl
     X, y_time, y_event, test_size=0.25, random_state=42, stratify=y_event
 )
 
-print(f"**Обучающая выборка:** {len(X_train)} (событий: {event_train.sum()})")
-print(f"**Тестовая выборка:** {len(X_test)} (событий: {event_test.sum()})\n")
+print(f"**Training set:** {len(X_train)} (events: {event_train.sum()})")
+print(f"**Test set:** {len(X_test)} (events: {event_test.sum()})\n")
 
 # Обучение Random Survival Forest
 try:
@@ -147,7 +150,7 @@ try:
     y_train_surv = Surv.from_arrays(event=event_train, time=time_train)
     y_test_surv = Surv.from_arrays(event=event_test, time=time_test)
     
-    print("Обучение Random Survival Forest...\n")
+    print("Training Random Survival Forest...\n")
     
     rsf = RandomSurvivalForest(
         n_estimators=200,
@@ -172,7 +175,7 @@ try:
     output_metrics["c_index"] = float(c_index_test)
     output_metrics["oob_score"] = float(oob_score) if oob_score else None
     
-    print("### Метрики качества\n")
+    print("### Performance Metrics\n")
     print("| Metric | Value |")
     print("|--------|-------|")
     print(f"| C-index (train) | {c_index_train:.4f} |")
@@ -195,7 +198,7 @@ try:
             for _, row in importance_df.head(20).iterrows()
         }
         
-        print(f"### Топ-{len(top_features)} важных признаков\n")
+        print(f"### Top-{len(top_features)} important features\n")
         print("| # | Variable | Importance |")
         print("|---|----------|------------|")
         for i, (_, row) in enumerate(top_features.iterrows(), 1):
@@ -231,7 +234,7 @@ try:
         try:
             import shap
             print("### SHAP Analysis\n")
-            print("Вычисление SHAP значений...\n")
+            print("Computing SHAP values...\n")
             
             # Выбираем подвыборку для ускорения
             if len(X_test) > 100:
@@ -269,7 +272,7 @@ try:
                 'SHAP Importance': shap_importance
             }).sort_values('SHAP Importance', ascending=False).head(top_n if top_n > 0 else 15)
             
-            print(f"### Топ-{len(shap_df)} SHAP признаков\n")
+            print(f"### Top-{len(shap_df)} SHAP features\n")
             print("| # | Feature | SHAP Importance |")
             print("|---|---------|-----------------|")
             for i, row in enumerate(shap_df.itertuples(), 1):

@@ -28,8 +28,13 @@ def format_group_label(g):
     if group_col in var_labels:
         val_labels = var_labels[group_col].get('value_labels', {})
         g_str = str(g)
-        g_float_str = str(float(g)) if not isinstance(g, float) else g_str
-        g_int_str = str(int(float(g))) if float(g) == int(float(g)) else None
+        try:
+            g_float = float(g)
+            g_float_str = str(g_float)
+            g_int_str = str(int(g_float)) if g_float == int(g_float) else None
+        except (ValueError, TypeError):
+            g_float_str = g_str
+            g_int_str = None
         
         for key, label in val_labels.items():
             if key == g_str or key == g_float_str:
@@ -52,13 +57,16 @@ value_col = "{{ value_col }}"
 group_col = "{{ group_col }}"
 
 if value_col not in df.columns:
-    print(f"Error: Value column '{value_col}' not found")
-    exit()
+    raise ValueError(f"Value column '{value_col}' not found")
 if group_col not in df.columns:
-    print(f"Error: Group column '{group_col}' not found")
-    exit()
+    raise ValueError(f"Group column '{group_col}' not found")
 
+n_before = len(df)
 df_clean = df[[value_col, group_col]].dropna()
+n_after = len(df_clean)
+if n_after < n_before:
+    print(f"⚠️ Removed {n_before - n_after} rows ({((n_before - n_after)/n_before*100):.1f}%) with missing data")
+
 n_total = len(df_clean)
 
 groups = df_clean[group_col].unique()
@@ -66,8 +74,7 @@ groups = sorted(groups, key=lambda x: str(x))
 n_groups = len(groups)
 
 if n_groups < 2:
-    print("Error: Need at least 2 groups")
-    exit()
+    raise ValueError("Need at least 2 groups")
 
 print(f"**Value:** `{value_col}`")
 print(f"**Group by:** `{group_col}` ({n_groups} groups)")
@@ -107,7 +114,7 @@ for g in groups:
         is_normal = p >= 0.05
         if not is_normal:
             all_normal = False
-        print(f"| {g} | {w:.4f} | {p:.4f} | {'Yes' if is_normal else 'No'} |")
+        print(f"| {g} | {w:.4f} | {fmt_p(p)} | {'Yes' if is_normal else 'No'} |")
 print()
 
 # ========== HOMOGENEITY ==========
@@ -116,7 +123,7 @@ if n_groups >= 2:
     arrays = [data_by_group[g] for g in groups]
     try:
         lev_stat, lev_p = levene(*arrays)
-        print(f"Levene's test: W = {lev_stat:.4f}, p = {lev_p:.4f}")
+        print(f"Levene's test: W = {lev_stat:.4f}, p = {fmt_p(lev_p)}")
         equal_var = lev_p >= 0.05
     except:
         equal_var = False
@@ -159,7 +166,7 @@ if all_normal and equal_var and n_groups >= 2:
     print("### One-way ANOVA\n")
     f_stat, anova_p = f_oneway(*arrays)
     print(f"F({n_groups-1}, {n_total-n_groups}) = {f_stat:.4f}")
-    print(f"**p = {anova_p:.4f}**")
+    print(f"**p = {fmt_p(anova_p)}**")
     
     # Effect size: eta-squared
     grand_mean = np.mean(df_clean[value_col].values)
@@ -192,7 +199,7 @@ if all_normal and equal_var and n_groups >= 2:
                 diff = float(row[2])
                 p_val = float(row[3])
                 sig = "Yes **" if row[4] else "No"
-                print(f"| {comp} | {diff:.2f} | {p_val:.4f} | {sig} |")
+                print(f"| {comp} | {diff:.2f} | {fmt_p(p_val)} | {sig} |")
                 output_metrics["posthoc"].append({
                     "group1": str(row[0]),
                     "group2": str(row[1]),
@@ -209,7 +216,7 @@ else:
     print(f"*Reason: {'Non-normal distribution' if not all_normal else 'Unequal variances'}*\n")
     h_stat, kw_p = kruskal(*arrays)
     print(f"H = {h_stat:.4f}")
-    print(f"**p = {kw_p:.4f}**")
+    print(f"**p = {fmt_p(kw_p)}**")
     
     # Effect size: epsilon-squared
     epsilon_sq = h_stat / (n_total - 1) if n_total > 1 else 0
@@ -238,7 +245,7 @@ else:
         for g1, g2 in combinations(groups, 2):
             u_stat, u_p = stats.mannwhitneyu(data_by_group[g1], data_by_group[g2], alternative='two-sided')
             sig = u_p < bonferroni_alpha
-            print(f"| {g1} vs {g2} | {u_p:.4f} | {'Yes **' if sig else 'No'} |")
+            print(f"| {g1} vs {g2} | {fmt_p(u_p)} | {'Yes **' if sig else 'No'} |")
             output_metrics["posthoc"].append({
                 "group1": str(g1),
                 "group2": str(g2),
@@ -255,7 +262,7 @@ if n_groups >= 3:
         group_order = {g: i for i, g in enumerate(groups)}
         ordered_groups = df_clean[group_col].map(group_order).values
         jt_stat, jt_p = stats.jonckheere(ordered_groups, df_clean[value_col].values)
-        print(f"JT = {jt_stat:.4f}, p = {jt_p:.4f}")
+        print(f"JT = {jt_stat:.4f}, p = {fmt_p(jt_p)}")
         if jt_p < 0.05:
             print("**Significant monotonic trend detected**")
         output_metrics["trend_test"] = {
@@ -311,9 +318,9 @@ print("**Analysis complete**")
 test_name = output_metrics.get("test_name", "?")
 p_val = output_metrics.get("p_value", 1.0)
 if p_val < 0.05:
-    print(f"\n**Conclusion:** {test_name} shows significant differences between groups (p = {p_val:.4f}).")
+    print(f"\n**Conclusion:** {test_name} shows significant differences between groups (p = {fmt_p(p_val)}).")
 else:
-    print(f"\n**Conclusion:** {test_name} shows no significant differences between groups (p = {p_val:.4f}).")
+    print(f"\n**Conclusion:** {test_name} shows no significant differences between groups (p = {fmt_p(p_val)}).")
 
 # ========== JSON METRICS ==========
 def make_serializable(obj):
@@ -324,8 +331,10 @@ def make_serializable(obj):
     elif isinstance(obj, (np.integer, np.int64)):
         return int(obj)
     elif isinstance(obj, (np.floating, np.float64)):
-        if np.isnan(obj): return None
+        if np.isnan(obj) or np.isinf(obj): return None
         return float(obj)
+    elif isinstance(obj, float):
+        return None if (np.isnan(obj) or np.isinf(obj)) else obj
     elif isinstance(obj, np.bool_):
         return bool(obj)
     elif obj is None:

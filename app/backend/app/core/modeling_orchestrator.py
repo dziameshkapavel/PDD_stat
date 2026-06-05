@@ -99,7 +99,7 @@ class ModelingOrchestrator:
             # Извлекаем метрики и таблицу
             output = exec_result["output"]
             metrics = self._extract_json_metrics(output)
-            table = self._extract_table_from_output(output)
+            table = metrics.get("table") if isinstance(metrics, dict) and "table" in metrics else self._extract_table_from_output(output)
             
             # Формируем структурированный ответ
             return {

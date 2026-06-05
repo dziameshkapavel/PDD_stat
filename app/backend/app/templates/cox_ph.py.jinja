@@ -4,30 +4,25 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from lifelines import CoxPHFitter, NelsonAalenFitter
-from sklearn.preprocessing import LabelEncoder
+from lifelines import CoxPHFitter
+from scipy.stats import chi2
 import json
 import time
 from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
 
-var_labels = {}
-try:
-    labels_path = Path(project_path) / "state" / "variable_labels.json"
-    if labels_path.exists():
-        with open(labels_path, 'r', encoding='utf-8') as f:
-            var_labels = json.load(f)
-except:
-    pass
-
 time_col = "{{ time_col }}"
 event_col = "{{ event_col }}"
 covariates = {{ covariates|default([])|tojson }}
 regression_type = "{{ regression_type|default('multi') }}"
+reference_groups = {{ reference_groups|default({})|tojson }}
+covariate_types = {{ covariate_types|default({})|tojson }}
+p_enter = {{ p_enter|default(0.05) }}
+p_remove = {{ p_remove|default(0.10) }}
+plot_adjust_var = "{{ plot_adjust_var|default('') }}"
 
 def make_json_serializable(obj):
-    """Рекурсивно конвертирует объекты в JSON-сериализуемые типы"""
     if isinstance(obj, dict):
         return {str(k): make_json_serializable(v) for k, v in obj.items()}
     elif isinstance(obj, (list, tuple)):
@@ -57,186 +52,198 @@ output_metrics = {
     "model_type": "cox_ph",
     "regression_type": regression_type,
     "c_index": None,
+    "aic": None,
+    "bic": None,
+    "log_likelihood": None,
+    "global_p_value": None,
+    "equation_html": None,
     "schoenfeld_test": {},
     "vif": {},
     "warnings": [],
-    "model_steps": []
+    "model_steps": [],
+    "table": []
 }
 
-print(f"## Регрессия Кокса (Proportional Hazards)\n")
-print(f"**Тип анализа:** ", end="")
-if regression_type == "uni":
-    print("Моновариантная (каждый предиктор отдельно)")
-elif regression_type in ["multi", "enter"]:
-    print("Мультивариантная (все предикторы вместе)")
-elif regression_type == "forward":
-    print("Forward selection (прямой пошаговый отбор)")
-elif regression_type == "backward":
-    print("Backward elimination (обратный пошаговый отбор)")
-else:
-    print(regression_type)
-print()
+print(f"## Cox Regression (Proportional Hazards)\n")
 
 # Проверки
 if time_col not in df.columns:
-    print(f"Error: Time column '{time_col}' not found. Available columns: {', '.join(df.columns)}")
     raise ValueError(f"Time column '{time_col}' not found")
 if event_col not in df.columns:
-    print(f"Error: Event column '{event_col}' not found. Available columns: {', '.join(df.columns)}")
     raise ValueError(f"Event column '{event_col}' not found")
 if not covariates:
-    print("Error: No covariates specified")
     raise ValueError("No covariates specified")
 
 valid_cov = [c for c in covariates if c in df.columns and c != time_col and c != event_col]
 if len(valid_cov) == 0:
-    print("Error: No valid covariates")
     raise ValueError("No valid covariates")
 
-print(f"**Время:** `{time_col}`  ")
-print(f"**Событие:** `{event_col}`  ")
-print(f"**Ковариаты:** {', '.join(valid_cov)}  \n")
+print(f"**Time:** `{time_col}`  ")
+print(f"**Event:** `{event_col}`  ")
+print(f"**Covariates:** {', '.join(valid_cov)}  \n")
 
-# Подготовка данных
-df_cox = df.copy()
-encoding_map = {}
+# Подготовка данных с dummy-кодированием
+n_before = len(df)
+df_work = df[[time_col, event_col] + valid_cov].dropna()
+n_after = len(df_work)
+if n_after < n_before:
+    print(f"⚠️ Removed {n_before - n_after} rows ({((n_before - n_after)/n_before*100):.1f}%) with missing data")
 
-for col in valid_cov:
-    if col in df_cox.columns and (df_cox[col].dtype == 'object' or df_cox[col].dtype.name == 'category'):
-        df_cox[col] = df_cox[col].fillna('__MISSING__')
-        le = LabelEncoder()
-        df_cox[col] = le.fit_transform(df_cox[col].astype(str))
-        encoding_map[col] = {int(k): str(v) for k, v in dict(zip(range(len(le.classes_)), le.classes_)).items()}
+n_events = int(df_work[event_col].sum())
+print(f"**Observations (complete cases):** {len(df_work)}  ")
+print(f"**Events:** {n_events}  \n")
+
+if len(df_work) < 10:
+    raise ValueError("Insufficient data")
+
+n_covariates_effective = len([c for c in valid_cov if c not in [time_col, event_col]])
+if n_covariates_effective > 0 and n_events / n_covariates_effective < 10:
+    print(f"⚠️ **Warning:** Low events per variable ({n_events} events / {n_covariates_effective} covariates = {n_events/n_covariates_effective:.1f}).")
+    print("   At least 10 events per variable recommended for reliable estimates.\n")
+    output_metrics["warnings"].append(f"Low EPV: {n_events} events / {n_covariates_effective} covariates")
+
+def prepare_dummies(df_in, covariates_list, ref_groups, cov_types):
+    df_out = df_in.copy()
+    encoding_map = {}
+    dummy_to_info = {}
+    encoded_covariates = []
+    
+    for col in covariates_list:
+        # Определение типа переменной (приоритет пользовательским настройкам из GUI)
+        if col in cov_types:
+            is_cat = (cov_types[col] == 'categorical')
+        else:
+            is_cat = (df_out[col].dtype == 'object' or 
+                      df_out[col].dtype.name == 'category' or 
+                      isinstance(df_out[col].dtype, pd.CategoricalDtype))
+        
+        if is_cat:
+            df_out[col] = df_out[col].astype(str).fillna('__MISSING__')
+            categories = sorted(list(df_out[col].unique()))
+            
+            ref = ref_groups.get(col)
+            if ref not in categories:
+                ref = categories[0] if categories else '__MISSING__'
+            
+            encoding_map[col] = {
+                'categories': categories,
+                'reference': ref,
+                'dummy_cols': []
+            }
+            
+            for cat in categories:
+                if cat == ref:
+                    continue
+                dummy_name = f"{col}_{cat}"
+                df_out[dummy_name] = (df_out[col] == cat).astype(int)
+                encoding_map[col]['dummy_cols'].append(dummy_name)
+                encoded_covariates.append(dummy_name)
+                dummy_to_info[dummy_name] = {
+                    'original': col,
+                    'category': cat,
+                    'reference': ref
+                }
+        else:
+            # Принудительно кастим к float для непрерывных ковариат
+            df_out[col] = pd.to_numeric(df_out[col], errors='coerce')
+            encoded_covariates.append(col)
+            
+    return df_out, encoded_covariates, encoding_map, dummy_to_info
+
+df_cox, encoded_covs, encoding_map, dummy_to_info = prepare_dummies(df_work, valid_cov, reference_groups, covariate_types)
 
 if encoding_map:
-    print(f"**Categorical variables encoded:**")
-    for col, mapping in encoding_map.items():
-        print(f"   `{col}`: {mapping}")
+    print(f"**Categorical variables (dummy-coded):**")
+    for col, info in encoding_map.items():
+        print(f"   * `{col}`: Reference group = `{info['reference']}`, Compared = {info['categories']}")
     print()
 
-# Оставляем только нужные колонки и удаляем пропуски
-cols_to_keep = [time_col, event_col] + valid_cov
-df_cox = df_cox[cols_to_keep].dropna()
-n_events = int(df_cox[event_col].sum())
-print(f"**Наблюдений:** {len(df_cox)}  ")
-print(f"**Событий:** {n_events}  \n")
-
-if len(df_cox) < 10:
-    print("Error: Insufficient data")
-    exit()
-
-def fit_cox(cov_list):
-    if not cov_list:
-        return None
-    df_temp = df_cox[[time_col, event_col] + cov_list].dropna()
-    if len(df_temp) < 10:
+def fit_cox(covariates_to_fit):
+    if not covariates_to_fit:
         return None
     cph = CoxPHFitter()
     try:
-        cph.fit(df_temp, duration_col=time_col, event_col=event_col)
+        cph.fit(df_cox[[time_col, event_col] + covariates_to_fit], duration_col=time_col, event_col=event_col)
         return cph
     except Exception as e:
         output_metrics["warnings"].append(f"Model fitting failed: {str(e)}")
         return None
 
-def get_summary_table(cph):
+def build_table_data(cph):
     if cph is None:
-        return pd.DataFrame()
+        return []
+    
     summary = cph.summary.copy()
     summary.index.name = 'Variable'
     summary = summary.reset_index()
-    for idx, row in summary.iterrows():
-        var = row['Variable']
-        if var in encoding_map:
-            try:
-                baseline = encoding_map[var].get(0, 'Baseline')
-                hr_val = row.get('exp(coef)', 0)
-                current_val = int(round(hr_val)) if pd.notna(hr_val) else 0
-                if current_val in encoding_map[var]:
-                    current_name = encoding_map[var][current_val]
-                    if current_val == 0:
-                        summary.loc[idx, 'Variable'] = f"{var} [{current_name}]"
-                        summary.loc[idx, 'exp(coef)'] = 1.0
-                        summary.loc[idx, 'exp(coef) lower 95%'] = 1.0
-                        summary.loc[idx, 'exp(coef) upper 95%'] = 1.0
-                        summary.loc[idx, 'p'] = 1.0
-                    else:
-                        summary.loc[idx, 'Variable'] = f"{var} [{current_name} vs {baseline}]"
-            except:
-                pass
-    return summary
-
-def run_schoenfeld_test_single(cph, covariate):
-    """Запуск теста Шонфельда для одной переменной"""
-    try:
-        from lifelines.statistics import proportional_hazard_test
-        
-        # Создаём временную модель с одной переменной
-        df_single = df_cox[[time_col, event_col, covariate]].dropna()
-        if len(df_single) < 10:
-            return {"p_value": 1.0, "test_statistic": 0.0, "violated": False}
-        
-        cph_single = CoxPHFitter()
-        cph_single.fit(df_single, duration_col=time_col, event_col=event_col)
-        
-        # Запускаем тест
-        results = proportional_hazard_test(cph_single, df_single, p_value_threshold=0.05, show_plots=False)
-        
-        p_value = 1.0
-        test_stat = 0.0
-        
-        # Обрабатываем разные форматы результата
-        if hasattr(results, 'results'):
-            # Старая версия
-            for var, result in results.results.items():
-                p_value = float(result.p_value)
-                test_stat = float(result.test_statistic)
-                break
-        elif isinstance(results, list) and len(results) > 0:
-            # Новая версия - список
-            result = results[0]
-            if hasattr(result, 'p_value'):
-                p_value = float(result.p_value)
-                test_stat = float(result.test_statistic) if hasattr(result, 'test_statistic') else 0.0
-        elif isinstance(results, dict):
-            # Словарь
-            for var, val in results.items():
-                if isinstance(val, (int, float)):
-                    p_value = float(val)
-                elif hasattr(val, 'p_value'):
-                    p_value = float(val.p_value)
-                break
-        
-        return {
-            "p_value": p_value,
-            "test_statistic": test_stat,
-            "violated": bool(p_value < 0.05)
-        }
-    except Exception as e:
-        return {"p_value": 1.0, "test_statistic": 0.0, "violated": False, "error": str(e)}
-
-def calculate_schoenfeld_all(cph, covariates_list):
-    """Рассчитывает тест Шонфельда для всех ковариат по отдельности"""
-    results = {}
     
-    for cov in covariates_list:
-        result = run_schoenfeld_test_single(cph, cov)
-        results[str(cov)] = result
+    rows = []
+    inserted_references = set()
     
-    return results
+    for _, row in summary.iterrows():
+        var_name = row['Variable']
+        
+        if var_name in dummy_to_info:
+            info = dummy_to_info[var_name]
+            orig_col = info['original']
+            cat_name = info['category']
+            ref_name = info['reference']
+            
+            if orig_col not in inserted_references:
+                rows.append({
+                    "variable": f"{orig_col} [{ref_name}] (reference)",
+                    "beta": 0.0,
+                    "se": None,
+                    "z": None,
+                    "hr": 1.0,
+                    "ci": "—",
+                    "ci_lower": 1.0,
+                    "ci_upper": 1.0,
+                    "p_value": None,
+                    "is_reference": True
+                })
+                inserted_references.add(orig_col)
+            
+            ci_low = float(row['exp(coef) lower 95%'])
+            ci_high = float(row['exp(coef) upper 95%'])
+            rows.append({
+                "variable": f"{orig_col} [{cat_name} vs {ref_name}]",
+                "beta": float(row['coef']),
+                "se": float(row['se(coef)']),
+                "z": float(row['z']),
+                "hr": float(row['exp(coef)']),
+                "ci": f"{ci_low:.3f}–{ci_high:.3f}",
+                "ci_lower": ci_low,
+                "ci_upper": ci_high,
+                "p_value": float(row['p']) if pd.notna(row['p']) else None,
+                "is_reference": False
+            })
+        else:
+            ci_low = float(row['exp(coef) lower 95%'])
+            ci_high = float(row['exp(coef) upper 95%'])
+            rows.append({
+                "variable": var_name,
+                "beta": float(row['coef']),
+                "se": float(row['se(coef)']),
+                "z": float(row['z']),
+                "hr": float(row['exp(coef)']),
+                "ci": f"{ci_low:.3f}–{ci_high:.3f}",
+                "ci_lower": ci_low,
+                "ci_upper": ci_high,
+                "p_value": float(row['p']) if pd.notna(row['p']) else None,
+                "is_reference": False
+            })
+            
+    return rows
 
-def calculate_vif(cov_list):
-    """Расчет VIF для мультиколлинеарности"""
-    if len(cov_list) < 2:
+def calculate_vif(covariates_list):
+    if len(covariates_list) < 2:
         return {}
-    
     try:
         from statsmodels.stats.outliers_influence import variance_inflation_factor
-        
-        X = df_cox[cov_list].dropna()
+        X = df_cox[covariates_list].dropna()
         if X.shape[0] < 10 or X.shape[1] < 2:
             return {}
-        
         vif_data = {}
         for i, col in enumerate(X.columns):
             try:
@@ -248,412 +255,445 @@ def calculate_vif(cov_list):
                     "high": bool(vif > 10),
                     "moderate": bool(vif > 5 and vif <= 10)
                 }
-            except Exception:
-                vif_data[str(col)] = {
-                    "value": 0.0,
-                    "high": False,
-                    "moderate": False
-                }
+            except:
+                vif_data[str(col)] = {"value": 0.0, "high": False, "moderate": False}
         return vif_data
     except Exception as e:
-        output_metrics["warnings"].append(f"VIF calculation error: {str(e)}")
+        output_metrics["warnings"].append(f"VIF error: {str(e)}")
         return {}
+
+def run_schoenfeld_multivariate(cph, covariates_list):
+    try:
+        from lifelines.statistics import proportional_hazard_test
+        results = proportional_hazard_test(cph, df_cox[[time_col, event_col] + covariates_list], p_value_threshold=0.05)
+        
+        schoenfeld = {}
+        for i, var in enumerate(results.name):
+            p_val = float(results.p_value[i])
+            schoenfeld[str(var)] = {
+                "p_value": p_val,
+                "test_statistic": float(results.test_statistic[i]),
+                "violated": bool(p_val < 0.05)
+            }
+        schoenfeld["GLOBAL"] = {
+            "p_value": float(results.p_value[-1]) if len(results.p_value) > 0 else 1.0,
+            "test_statistic": float(results.test_statistic[-1]) if len(results.test_statistic) > 0 else 0.0,
+            "violated": bool((float(results.p_value[-1]) if len(results.p_value) > 0 else 1.0) < 0.05)
+        }
+        return schoenfeld
+    except Exception as e:
+        output_metrics["warnings"].append(f"Schoenfeld test error: {str(e)}")
+        return {}
+
+def build_equation(cph):
+    if cph is None or not hasattr(cph, 'params_'):
+        return None
+    try:
+        terms = []
+        for coef_name, coef_val in cph.params_.items():
+            display_name = coef_name
+            if coef_name in dummy_to_info:
+                info = dummy_to_info[coef_name]
+                display_name = f"{info['original']}[{info['category']}]"
+            
+            sign = "+" if coef_val >= 0 else "-"
+            abs_val = abs(coef_val)
+            terms.append(f"{sign} {abs_val:.4f} &times; {display_name}")
+        
+        equation_terms = " ".join(terms)
+        if equation_terms.startswith("+"):
+            equation_terms = equation_terms[1:].strip()
+        elif equation_terms.startswith("-"):
+            equation_terms = "-" + equation_terms[1:].strip()
+            
+        return f"h(t) = h<sub>0</sub>(t) &times; exp( {equation_terms} )"
+    except Exception as e:
+        return f"Error building formula: {str(e)}"
 
 # ==================== MONOVARIATE ====================
 if regression_type == "uni":
-    print("### Моновариантный анализ (каждый предиктор отдельно)\n")
-    for cov in valid_cov:
-        cph = fit_cox([cov])
+    print("### Univariate Analysis (each predictor separately)\n")
+    combined_table = []
+    
+    for orig_var in valid_cov:
+        if orig_var in encoding_map:
+            covs_to_test = encoding_map[orig_var]['dummy_cols']
+        else:
+            covs_to_test = [orig_var]
+            
+        cph = fit_cox(covs_to_test)
         if cph is None:
-            print(f"**Predictor:** `{cov}` - Failed to fit model\n")
+            print(f"**Predictor:** `{orig_var}` - Model fitting error\n")
             continue
             
-        print(f"**Predictor:** `{cov}`\n")
-        summary = get_summary_table(cph)
+        print(f"**Predictor:** `{orig_var}` (C-index: {cph.concordance_index_:.4f})\n")
+        table_rows = build_table_data(cph)
+        combined_table.extend(table_rows)
         
-        if summary.empty:
-            print("No results available\n")
-            continue
-            
         print("| Variable | HR | 95% CI | p-value |")
-        print("|----------|-----|--------|--------|")
-        print("| (baseline) | 1.000 | — | — |")
-        
-        for _, row in summary.iterrows():
-            var = row['Variable']
-            hr = row.get('exp(coef)', 1.0)
-            ci_low = row.get('exp(coef) lower 95%', 1.0)
-            ci_high = row.get('exp(coef) upper 95%', 1.0)
-            pval = row.get('p', 1.0)
-            
-            sig = "**" if pval < 0.05 else ("*" if pval < 0.1 else "")
-            ci_str = f"{ci_low:.3f}–{ci_high:.3f}"
-            hr_str = f"{hr:.3f}"
-            pval_str = f"{pval:.4f}{sig}" if pval != "-" else "-"
-            
-            print(f"| {var} | {hr_str} | {ci_str} | {pval_str} |")
-            
-        c_index = cph.concordance_index_
-        print(f"\n**C-index:** {c_index:.4f}")
+        print("|------------|-----|--------|--------|")
+        for row in table_rows:
+            sig = "**" if (row['p_value'] is not None and row['p_value'] < 0.05) else ""
+            p_str = f"{fmt_p(row['p_value'])}{sig}" if row['p_value'] is not None else "—"
+            print(f"| {row['variable']} | {row['hr']:.3f} | {row['ci']} | {p_str} |")
         print("\n---\n")
+        
+    output_metrics["table"] = combined_table
+    output_metrics["n_predictors_tested"] = len(valid_cov)
 
 # ==================== MULTIVARIATE ====================
 elif regression_type in ["multi", "enter"]:
-    print("### Мультивариантная модель (все предикторы)\n")
-    cph = fit_cox(valid_cov)
+    print("### Multivariate Model (all predictors)\n")
+    cph = fit_cox(encoded_covs)
     if cph is None:
-        print("Error: Model fitting failed")
-        exit()
+        raise ValueError("Model fitting failed")
     
-    # Метрики
     output_metrics["c_index"] = float(cph.concordance_index_)
-    output_metrics["schoenfeld_test"] = calculate_schoenfeld_all(cph, valid_cov)
-    output_metrics["vif"] = calculate_vif(valid_cov)
+    output_metrics["aic"] = float(cph.AIC_partial_)
+    output_metrics["bic"] = -2 * float(cph.log_likelihood_) + len(cph.params_) * np.log(len(df_work))
+    output_metrics["log_likelihood"] = float(cph.log_likelihood_)
+    output_metrics["global_p_value"] = float(cph.log_likelihood_ratio_test().p_value)
+    output_metrics["equation_html"] = build_equation(cph)
     
-    # Таблица результатов
-    summary = get_summary_table(cph)
-    print("| Variable | HR | 95% CI | p-value |")
-    print("|----------|-----|--------|--------|")
-    print("| (baseline) | 1.000 | — | — |")
-    for _, row in summary.iterrows():
-        var = row['Variable']
-        hr = row.get('exp(coef)', 1.0)
-        ci_low = row.get('exp(coef) lower 95%', 1.0)
-        ci_high = row.get('exp(coef) upper 95%', 1.0)
-        pval = row.get('p', 1.0)
-        sig = "**" if pval < 0.05 else ""
-        ci_str = f"{ci_low:.3f}–{ci_high:.3f}" if ci_low != 1.0 else "(ref)"
-        hr_str = f"{hr:.3f}"
-        pval_str = "-" if pval == "-" else f"{pval:.4f}{sig}"
-        print(f"| {var} | {hr_str} | {ci_str} | {pval_str} |")
+    output_metrics["schoenfeld_test"] = run_schoenfeld_multivariate(cph, encoded_covs)
+    output_metrics["vif"] = calculate_vif(encoded_covs)
+    output_metrics["table"] = build_table_data(cph)
     
-    # Вывод диагностики
-    print(f"\n**C-index:** {output_metrics['c_index']:.4f}")
+    print("| Variable | beta (coef) | SE | z | HR | 95% CI | p-value |")
+    print("|------------|-------------|----|---|----|--------|--------|")
+    for row in output_metrics["table"]:
+        beta_str = f"{row['beta']:.3f}" if row['beta'] is not None else "0.000"
+        se_str = f"{row['se']:.3f}" if row['se'] is not None else "—"
+        z_str = f"{row['z']:.2f}" if row['z'] is not None else "—"
+        sig = "**" if (row['p_value'] is not None and row['p_value'] < 0.05) else ""
+        p_str = f"{fmt_p(row['p_value'])}{sig}" if row['p_value'] is not None else "—"
+        print(f"| {row['variable']} | {beta_str} | {se_str} | {z_str} | {row['hr']:.3f} | {row['ci']} | {p_str} |")
     
-    if output_metrics["schoenfeld_test"]:
-        print("\n**Proportional Hazards Assumption (Schoenfeld):**")
-        for var, result in output_metrics["schoenfeld_test"].items():
-            if isinstance(result, dict):
-                p_val = result.get("p_value", 1.0)
-                violated = result.get("violated", False)
-                if violated:
-                    print(f"   ⚠️ `{var}`: p = {p_val:.4f} (violated)")
-                else:
-                    print(f"   ✓ `{var}`: p = {p_val:.4f}")
+    print(f"\n**Model metrics:**  ")
+    print(f"   * **C-index:** {output_metrics['c_index']:.4f}  ")
+    print(f"   * **AIC (Akaike Info Criterion):** {output_metrics['aic']:.2f}  ")
+    print(f"   * **BIC (Bayesian Info Criterion):** {output_metrics['bic']:.2f}  ")
+    print(f"   * **Log-Likelihood:** {output_metrics['log_likelihood']:.2f}  ")
+    print(f"   * **Likelihood Ratio Test p-value:** {fmt_p(output_metrics['global_p_value'])}{'**' if output_metrics['global_p_value'] < 0.05 else ''}  ")
+
+# ==================== STEPWISE SELECTION ====================
+elif regression_type in ["forward", "backward"]:
+    print(f"### Stepwise Selection ({'Forward selection' if regression_type == 'forward' else 'Backward elimination'})\n")
+    print("⚠️ **Note:** Stepwise selection uses p-values for variable selection.")
+    print("   P-values in the final model **do not account for the selection process** and may be inflated.")
+    print("   C-index computed on training data and is **optimistic**.")
+    print("   Consider LASSO (L1-regularization) or Random Survival Forest.\n")
     
-    if len(valid_cov) > 1 and output_metrics["vif"]:
-        print("\n**Multicollinearity (VIF):**")
-        for var, result in output_metrics["vif"].items():
-            if isinstance(result, dict):
-                vif_val = result.get("value", 0)
-                is_high = result.get("high", False)
-                is_moderate = result.get("moderate", False)
-                if is_high:
-                    print(f"   ⚠️ `{var}`: VIF = {vif_val:.2f} (high)")
-                elif is_moderate:
-                    print(f"   ⚠️ `{var}`: VIF = {vif_val:.2f} (moderate)")
-                else:
-                    print(f"   ✓ `{var}`: VIF = {vif_val:.2f}")
+    def get_model_info(vars_list):
+        if not vars_list:
+            return None
+        covs = []
+        for v in vars_list:
+            if v in encoding_map:
+                covs.extend(encoding_map[v]['dummy_cols'])
+            else:
+                covs.append(v)
+        cph = fit_cox(covs)
+        return cph
+
+    first_var = valid_cov[0]
+    first_cph = get_model_info([first_var])
+    if first_cph:
+        null_ll = first_cph.log_likelihood_ - 0.5 * first_cph.log_likelihood_ratio_test().test_statistic
+    else:
+        null_ll = -9999.0
+        
+    step_num = 1
+    selected_vars = []
     
-    # Графики
+    if regression_type == "forward":
+        remaining_vars = valid_cov.copy()
+        
+        while remaining_vars:
+            best_p = 1.0
+            best_var = None
+            best_cph = None
+            
+            if not selected_vars:
+                base_ll = null_ll
+                base_df = 0
+            else:
+                base_model = get_model_info(selected_vars)
+                base_ll = base_model.log_likelihood_ if base_model else null_ll
+                base_df = len(base_model.params_) if base_model else 0
+                
+            for var in remaining_vars:
+                test_model = get_model_info(selected_vars + [var])
+                if test_model is None:
+                    continue
+                
+                test_ll = test_model.log_likelihood_
+                test_df = len(test_model.params_)
+                
+                lrt_stat = 2 * (test_ll - base_ll)
+                df_diff = test_df - base_df
+                
+                if df_diff > 0:
+                    p_val = chi2.sf(lrt_stat, df=df_diff)
+                    if p_val < best_p:
+                        best_p = p_val
+                        best_var = var
+                        best_cph = test_model
+            
+            if best_p < p_enter and best_var:
+                selected_vars.append(best_var)
+                remaining_vars.remove(best_var)
+                
+                step_info = {
+                    "step": step_num,
+                    "action": "added",
+                    "variable": str(best_var),
+                    "p_value": float(best_p)
+                }
+                output_metrics["model_steps"].append(step_info)
+                print(f"+ `{best_var}` added (p = {fmt_p(best_p)})")
+                step_num += 1
+            else:
+                break
+                
+    else: # backward
+        selected_vars = valid_cov.copy()
+        
+        while len(selected_vars) > 1:
+            worst_p = -1.0
+            worst_var = None
+            
+            full_model = get_model_info(selected_vars)
+            if full_model is None:
+                break
+            full_ll = full_model.log_likelihood_
+            full_df = len(full_model.params_)
+            
+            for var in selected_vars:
+                reduced_vars = [v for v in selected_vars if v != var]
+                reduced_model = get_model_info(reduced_vars)
+                
+                reduced_ll = reduced_model.log_likelihood_ if reduced_model else null_ll
+                reduced_df = len(reduced_model.params_) if reduced_model else 0
+                
+                lrt_stat = 2 * (full_ll - reduced_ll)
+                df_diff = full_df - reduced_df
+                
+                if df_diff > 0:
+                    p_val = chi2.sf(lrt_stat, df=df_diff)
+                    if p_val > worst_p:
+                        worst_p = p_val
+                        worst_var = var
+            
+            if worst_p > p_remove and worst_var:
+                selected_vars.remove(worst_var)
+                
+                step_info = {
+                    "step": step_num,
+                    "action": "removed",
+                    "variable": str(worst_var),
+                    "p_value": float(worst_p)
+                }
+                output_metrics["model_steps"].append(step_info)
+                print(f"- `{worst_var}` removed (p = {fmt_p(worst_p)})")
+                step_num += 1
+            else:
+                break
+                
+    if selected_vars:
+        final_covs = []
+        for v in selected_vars:
+            if v in encoding_map:
+                final_covs.extend(encoding_map[v]['dummy_cols'])
+            else:
+                final_covs.append(v)
+                
+        final_cph = fit_cox(final_covs)
+        if final_cph:
+            output_metrics["c_index"] = float(final_cph.concordance_index_)
+            output_metrics["aic"] = float(final_cph.AIC_partial_)
+            output_metrics["bic"] = -2 * float(final_cph.log_likelihood_) + len(final_cph.params_) * np.log(len(df_work))
+            output_metrics["log_likelihood"] = float(final_cph.log_likelihood_)
+            output_metrics["global_p_value"] = float(final_cph.log_likelihood_ratio_test().p_value)
+            output_metrics["equation_html"] = build_equation(final_cph)
+            
+            output_metrics["schoenfeld_test"] = run_schoenfeld_multivariate(final_cph, final_covs)
+            output_metrics["vif"] = calculate_vif(final_covs)
+            output_metrics["table"] = build_table_data(final_cph)
+            
+            print(f"\n**Final model ({len(selected_vars)} predictors):**\n")
+            print("| Variable | beta (coef) | SE | z | HR | 95% CI | p-value |")
+            print("|------------|-------------|----|---|----|--------|--------|")
+            for row in output_metrics["table"]:
+                beta_str = f"{row['beta']:.3f}" if row['beta'] is not None else "0.000"
+                se_str = f"{row['se']:.3f}" if row['se'] is not None else "—"
+                z_str = f"{row['z']:.2f}" if row['z'] is not None else "—"
+                sig = "**" if (row['p_value'] is not None and row['p_value'] < 0.05) else ""
+                p_str = f"{fmt_p(row['p_value'])}{sig}" if row['p_value'] is not None else "—"
+                print(f"| {row['variable']} | {beta_str} | {se_str} | {z_str} | {row['hr']:.3f} | {row['ci']} | {p_str} |")
+            
+            print(f"\n**Model metrics:**  ")
+            print(f"   * **C-index:** {output_metrics['c_index']:.4f}  ")
+            print(f"   * **AIC:** {output_metrics['aic']:.2f}  ")
+            print(f"   * **BIC:** {output_metrics['bic']:.2f}  ")
+            print(f"   * **Log-Likelihood:** {output_metrics['log_likelihood']:.2f}  ")
+            print(f"   * **Likelihood Ratio Test p-value:** {fmt_p(output_metrics['global_p_value'])}  ")
+            
+            cph = final_cph
+            encoded_covs = final_covs
+    else:
+        output_metrics["warnings"].append("No predictors entered the final model")
+        cph = None
+
+
+# ==================== ОТРИСОВКА ГРАФИКОВ ====================
+if cph is not None and ('table' in output_metrics and output_metrics["table"]):
     timestamp = str(int(time.time()))
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     
-    # Forest plot
+    # Проверяем наличие непрерывных ковариат для графика остатков Мартингейла
+    continuous_vars = [c for c in selected_vars if c not in encoding_map] if 'selected_vars' in dir() else [c for c in valid_cov if c not in encoding_map]
+    has_continuous = len(continuous_vars) > 0
+    
+    n_subplots = 3 if has_continuous else 2
+    fig, axes = plt.subplots(1, n_subplots, figsize=(5 * n_subplots, 5.5))
+    
     ax1 = axes[0]
-    hr_vals = summary['exp(coef)'].values
-    ci_low = summary['exp(coef) lower 95%'].values
-    ci_high = summary['exp(coef) upper 95%'].values
-    y_pos = range(len(summary))
-    ax1.errorbar(hr_vals, y_pos, xerr=[hr_vals - ci_low, ci_high - hr_vals], 
-                  fmt='o', capsize=5, color='steelblue', markersize=8)
-    ax1.axvline(x=1, color='red', linestyle='--', alpha=0.7)
-    ax1.set_yticks(list(y_pos))
-    ax1.set_yticklabels(summary['Variable'].values, fontsize=9)
-    ax1.set_xlabel('Hazard Ratio')
-    ax1.set_title('Forest Plot')
-    ax1.grid(True, alpha=0.3)
-    
-    # Cumulative hazard
     ax2 = axes[1]
-    naf = NelsonAalenFitter()
-    naf.fit(df_cox[time_col], event_observed=df_cox[event_col])
-    naf.plot_cumulative_hazard(ax=ax2, ci_show=True, color='steelblue')
-    ax2.set_xlabel(time_col)
-    ax2.set_ylabel('Cumulative Hazard')
-    ax2.set_title('Cumulative Hazard Function')
-    ax2.grid(True, alpha=0.3)
     
+    # 1. Forest Plot
+    try:
+        plot_df = pd.DataFrame(output_metrics["table"])
+        plot_df = plot_df[~plot_df['is_reference']].copy()
+        
+        # Отфильтровываем строки с невалидными ДИ (NaN, Inf)
+        valid_mask = (
+            plot_df['ci_lower'].notna() & plot_df['ci_upper'].notna() &
+            plot_df['hr'].notna() & np.isfinite(plot_df['hr']) &
+            np.isfinite(plot_df['ci_lower']) & np.isfinite(plot_df['ci_upper'])
+        )
+        plot_df = plot_df[valid_mask]
+        
+        if not plot_df.empty:
+            plot_df = plot_df.iloc[::-1]
+            y_pos = np.arange(len(plot_df))
+            hr_vals = plot_df['hr'].values
+            ci_low = plot_df['ci_lower'].values
+            ci_high = plot_df['ci_upper'].values
+            labels = plot_df['variable'].values
+            
+            cap_upper = np.minimum(ci_high, 10.0)
+            
+            xerr_lo = np.maximum(hr_vals - ci_low, 0)
+            xerr_hi = np.maximum(cap_upper - hr_vals, 0)
+            
+            ax1.errorbar(hr_vals, y_pos, xerr=[xerr_lo, xerr_hi],
+                          fmt='o', capsize=5, color='#2563eb', markersize=8, elinewidth=2, mfc='#2563eb', mec='#2563eb')
+            ax1.axvline(x=1, color='#ef4444', linestyle='--', linewidth=1.5, alpha=0.8)
+            ax1.set_yticks(list(y_pos))
+            ax1.set_yticklabels(labels, fontsize=10)
+            ax1.set_xlabel('Hazard Ratio (HR)', fontsize=11, fontweight='semibold')
+            ax1.set_title('Forest Plot (Hazard Ratios)', fontsize=13, fontweight='bold', pad=15)
+            ax1.grid(True, linestyle=':', alpha=0.6)
+            
+            x_max = max(1.5, np.max(cap_upper) * 1.1)
+            ax1.set_xlim(0, x_max)
+            for idx, row in enumerate(plot_df.itertuples()):
+                pval_str = f"p={fmt_p(row.p_value)}" if row.p_value is not None else ""
+                text_str = f"{row.hr:.2f} ({row.ci_lower:.2f}–{row.ci_upper:.2f}) {pval_str}"
+                ax1.text(x_max * 0.98, idx, text_str, va='center', ha='right', fontsize=8.5,
+                          bbox=dict(boxstyle="round,pad=0.3", fc="#f3f4f6", ec="none", alpha=0.8))
+    except Exception as forest_err:
+        output_metrics["warnings"].append(f"Forest plot error: {str(forest_err)}")
+        ax1.text(0.5, 0.5, 'Forest plot error', ha='center', va='center', transform=ax1.transAxes)
+                      
+    # 2. Выживаемость
+    if plot_adjust_var and plot_adjust_var in encoding_map:
+        try:
+            info = encoding_map[plot_adjust_var]
+            categories = info['categories']
+            ref_group = info['reference']
+            
+            mean_X = df_cox[encoded_covs].mean()
+            
+            category_rows = []
+            for cat in categories:
+                row_data = mean_X.copy()
+                for dummy in info['dummy_cols']:
+                    if dummy in row_data:
+                        row_data[dummy] = 0
+                if cat != ref_group:
+                    dummy_col = f"{plot_adjust_var}_{cat}"
+                    if dummy_col in row_data:
+                        row_data[dummy_col] = 1
+                category_rows.append(row_data)
+                
+            X_plot = pd.DataFrame(category_rows, index=categories)
+            surv = cph.predict_survival_function(X_plot)
+            
+            for col_cat in surv.columns:
+                ax2.plot(surv.index, surv[col_cat], label=f"{plot_adjust_var}: {col_cat}", linewidth=2)
+                
+            ax2.set_xlabel('Time', fontsize=11, fontweight='semibold')
+            ax2.set_ylabel('Adjusted Survival', fontsize=11, fontweight='semibold')
+            ax2.set_title(f'Survival by {plot_adjust_var}', fontsize=13, fontweight='bold', pad=15)
+            ax2.legend(loc='lower left', frameon=True)
+            ax2.grid(True, linestyle=':', alpha=0.6)
+            ax2.set_ylim(0, 1.02)
+        except Exception as e:
+            output_metrics["warnings"].append(f"Survival curve plotting failed: {str(e)}")
+            cph.baseline_cumulative_hazard_.plot(ax=ax2, color='#2563eb', linewidth=2, legend=False)
+            ax2.set_xlabel('Time')
+            ax2.set_ylabel('Baseline Cumulative Hazard')
+            ax2.grid(True, alpha=0.3)
+    else:
+        cph.baseline_cumulative_hazard_.plot(ax=ax2, color='#2563eb', linewidth=2, legend=False)
+        ax2.set_xlabel('Time', fontsize=11, fontweight='semibold')
+        ax2.set_ylabel('Baseline Cumulative Hazard', fontsize=11, fontweight='semibold')
+        ax2.set_title('Model Baseline Cumulative Hazard', fontsize=13, fontweight='bold', pad=15)
+        ax2.grid(True, linestyle=':', alpha=0.6)
+        
+    # 3. Линейность (Martingale Residuals)
+    if has_continuous:
+        ax3 = axes[2]
+        cont_var = continuous_vars[0]
+        try:
+            resids = cph.compute_residuals(df_cox[[time_col, event_col] + encoded_covs], kind='martingale')
+            x_vals = df_work[cont_var]
+            y_vals = resids['martingale']
+            
+            ax3.scatter(x_vals, y_vals, color='#4b5563', alpha=0.6, edgecolors='none', s=25)
+            
+            try:
+                import statsmodels.api as sm
+                lowess = sm.nonparametric.lowess
+                smoothed = lowess(y_vals, x_vals, frac=0.66)
+                ax3.plot(smoothed[:, 0], smoothed[:, 1], color='#ef4444', linewidth=2.5, label='LOWESS trend')
+            except Exception as lowess_err:
+                m, b = np.polyfit(x_vals, y_vals, 1)
+                ax3.plot(x_vals, m*x_vals + b, color='#ef4444', linewidth=2, label='Linear trend')
+                
+            ax3.axhline(y=0, color='black', linestyle='--', alpha=0.5)
+            ax3.set_xlabel(cont_var, fontsize=11, fontweight='semibold')
+            ax3.set_ylabel('Martingale Residuals', fontsize=11, fontweight='semibold')
+            ax3.set_title(f'Linearity check: {cont_var}', fontsize=13, fontweight='bold', pad=15)
+            ax3.grid(True, linestyle=':', alpha=0.6)
+            ax3.legend(loc='best')
+        except Exception as mart_err:
+            output_metrics["warnings"].append(f"Martingale plot error: {str(mart_err)}")
+            ax3.text(0.5, 0.5, 'Error plotting residuals', ha='center', va='center')
+        
     plt.tight_layout()
     plot_filename = f"cox_ph_{timestamp}"
     save_plot(plot_filename, fig)
     output_metrics["plots"] = [f"{plot_filename}.png"]
     print(f"\n![Cox PH](/plots/{plot_filename}.png)\n")
 
-# ==================== FORWARD SELECTION ====================
-elif regression_type == "forward":
-    print("### Forward Selection (прямой пошаговый отбор)\n")
-    print("*Добавление предикторов по одному (p < 0.05 для включения)*\n")
-    
-    selected = []
-    remaining = valid_cov.copy()
-    step_num = 1
-    
-    while remaining:
-        best_pval = 1.0
-        best_cov = None
-        best_cph = None
-        
-        for cov in remaining:
-            test_covs = selected + [cov]
-            cph = fit_cox(test_covs)
-            if cph is None:
-                continue
-            summary = get_summary_table(cph)
-            if summary.empty:
-                continue
-            pval_row = summary[summary['Variable'].str.contains(cov, na=False)]['p']
-            if len(pval_row) > 0:
-                pval = pval_row.values[0]
-                if pval != "-" and pval < best_pval:
-                    best_pval = pval
-                    best_cov = cov
-                    best_cph = cph
-        
-        if best_pval < 0.05 and best_cov:
-            selected.append(best_cov)
-            remaining.remove(best_cov)
-            step_info = {
-                "step": step_num,
-                "action": "added",
-                "variable": str(best_cov),
-                "p_value": float(best_pval)
-            }
-            output_metrics["model_steps"].append(step_info)
-            print(f"+ `{best_cov}`: p = {best_pval:.4f}")
-            step_num += 1
-        else:
-            break
-    
-    if selected:
-        final_cph = fit_cox(selected)
-        if final_cph:
-            output_metrics["c_index"] = float(final_cph.concordance_index_)
-            output_metrics["schoenfeld_test"] = calculate_schoenfeld_all(final_cph, selected)
-            output_metrics["vif"] = calculate_vif(selected)
-            
-            print(f"\n**Итоговая модель ({len(selected)} предикторов):**")
-            summary = get_summary_table(final_cph)
-            print("\n| Variable | HR | 95% CI | p-value |")
-            print("|----------|-----|--------|--------|")
-            print("| (baseline) | 1.000 | — | — |")
-            for _, row in summary.iterrows():
-                var = row['Variable']
-                hr = row.get('exp(coef)', 1.0)
-                ci_low = row.get('exp(coef) lower 95%', 1.0)
-                ci_high = row.get('exp(coef) upper 95%', 1.0)
-                pval = row.get('p', 1.0)
-                sig = "**" if pval < 0.05 else ""
-                ci_str = f"{ci_low:.3f}–{ci_high:.3f}"
-                hr_str = f"{hr:.3f}"
-                pval_str = "-" if pval == "-" else f"{pval:.4f}{sig}"
-                print(f"| {var} | {hr_str} | {ci_str} | {pval_str} |")
-            
-            print(f"\n**C-index:** {output_metrics['c_index']:.4f}")
-            
-            # Графики
-            timestamp = str(int(time.time()))
-            fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-            ax1 = axes[0]
-            hr_vals = summary['exp(coef)'].values
-            ci_low = summary['exp(coef) lower 95%'].values
-            ci_high = summary['exp(coef) upper 95%'].values
-            y_pos = range(len(summary))
-            ax1.errorbar(hr_vals, y_pos, xerr=[hr_vals - ci_low, ci_high - hr_vals], fmt='o', capsize=5, color='steelblue')
-            ax1.axvline(x=1, color='red', linestyle='--')
-            ax1.set_yticks(list(y_pos))
-            ax1.set_yticklabels(summary['Variable'].values, fontsize=9)
-            ax1.set_xlabel('Hazard Ratio')
-            ax1.set_title('Forest Plot')
-            ax1.grid(True, alpha=0.3)
-            ax2 = axes[1]
-            naf = NelsonAalenFitter()
-            naf.fit(df_cox[time_col], event_observed=df_cox[event_col])
-            naf.plot_cumulative_hazard(ax=ax2, ci_show=True, color='steelblue')
-            ax2.set_xlabel(time_col)
-            ax2.set_ylabel('Cumulative Hazard')
-            ax2.set_title('Cumulative Hazard Function')
-            ax2.grid(True, alpha=0.3)
-            plt.tight_layout()
-            plot_filename = f"cox_ph_{timestamp}"
-            save_plot(plot_filename, fig)
-            output_metrics["plots"] = [f"{plot_filename}.png"]
-            print(f"\n![Cox PH](/plots/{plot_filename}.png)\n")
-    else:
-        output_metrics["warnings"].append("No predictors entered the model")
-
-# ==================== BACKWARD ELIMINATION ====================
-elif regression_type == "backward":
-    print("### Backward Elimination (обратный пошаговый отбор)\n")
-    print("*Удаление предикторов по одному (p > 0.1 для исключения)*\n")
-    
-    current = valid_cov.copy()
-    step_num = 1
-    
-    while len(current) > 1:
-        cph = fit_cox(current)
-        if cph is None:
-            break
-            
-        summary = get_summary_table(cph)
-        if summary.empty:
-            break
-        
-        max_pval = 0
-        worst_cov = None
-        for cov in current:
-            pval_row = summary[summary['Variable'].str.contains(cov, na=False)]['p']
-            if len(pval_row) > 0:
-                pval = pval_row.values[0]
-                if pval != "-" and pval > max_pval:
-                    max_pval = pval
-                    worst_cov = cov
-        
-        if max_pval > 0.1 and worst_cov:
-            current.remove(worst_cov)
-            step_info = {
-                "step": step_num,
-                "action": "removed",
-                "variable": str(worst_cov),
-                "p_value": float(max_pval)
-            }
-            output_metrics["model_steps"].append(step_info)
-            print(f"- `{worst_cov}`: p = {max_pval:.4f} → исключён")
-            step_num += 1
-        else:
-            break
-    
-    if current:
-        final_cph = fit_cox(current)
-        if final_cph:
-            output_metrics["c_index"] = float(final_cph.concordance_index_)
-            output_metrics["schoenfeld_test"] = calculate_schoenfeld_all(final_cph, current)
-            output_metrics["vif"] = calculate_vif(current)
-            
-            print(f"\n**Итоговая модель ({len(current)} предикторов):**")
-            summary = get_summary_table(final_cph)
-            print("\n| Variable | HR | 95% CI | p-value |")
-            print("|----------|-----|--------|--------|")
-            print("| (baseline) | 1.000 | — | — |")
-            for _, row in summary.iterrows():
-                var = row['Variable']
-                hr = row.get('exp(coef)', 1.0)
-                ci_low = row.get('exp(coef) lower 95%', 1.0)
-                ci_high = row.get('exp(coef) upper 95%', 1.0)
-                pval = row.get('p', 1.0)
-                sig = "**" if pval < 0.05 else ""
-                ci_str = f"{ci_low:.3f}–{ci_high:.3f}"
-                hr_str = f"{hr:.3f}"
-                pval_str = "-" if pval == "-" else f"{pval:.4f}{sig}"
-                print(f"| {var} | {hr_str} | {ci_str} | {pval_str} |")
-            
-            print(f"\n**C-index:** {output_metrics['c_index']:.4f}")
-            
-            # Графики
-            timestamp = str(int(time.time()))
-            fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-            ax1 = axes[0]
-            hr_vals = summary['exp(coef)'].values
-            ci_low = summary['exp(coef) lower 95%'].values
-            ci_high = summary['exp(coef) upper 95%'].values
-            y_pos = range(len(summary))
-            ax1.errorbar(hr_vals, y_pos, xerr=[hr_vals - ci_low, ci_high - hr_vals], fmt='o', capsize=5, color='steelblue')
-            ax1.axvline(x=1, color='red', linestyle='--')
-            ax1.set_yticks(list(y_pos))
-            ax1.set_yticklabels(summary['Variable'].values, fontsize=9)
-            ax1.set_xlabel('Hazard Ratio')
-            ax1.set_title('Forest Plot')
-            ax1.grid(True, alpha=0.3)
-            ax2 = axes[1]
-            naf = NelsonAalenFitter()
-            naf.fit(df_cox[time_col], event_observed=df_cox[event_col])
-            naf.plot_cumulative_hazard(ax=ax2, ci_show=True, color='steelblue')
-            ax2.set_xlabel(time_col)
-            ax2.set_ylabel('Cumulative Hazard')
-            ax2.set_title('Cumulative Hazard Function')
-            ax2.grid(True, alpha=0.3)
-            plt.tight_layout()
-            plot_filename = f"cox_ph_{timestamp}"
-            save_plot(plot_filename, fig)
-            output_metrics["plots"] = [f"{plot_filename}.png"]
-            print(f"\n![Cox PH](/plots/{plot_filename}.png)\n")
-    else:
-        output_metrics["warnings"].append("All predictors were excluded")
-
-# ВАЖНО: Выводим метрики в JSON для парсинга бэкендом
-
-# Добавляем детальные метрики для AI
+# ВАЖНО: Вывод метрик в JSON для бэкенда
 output_metrics["n_total"] = len(df_cox)
 output_metrics["n_events"] = n_events
 output_metrics["time_col"] = time_col
 output_metrics["event_col"] = event_col
 output_metrics["covariates"] = valid_cov
-
-if regression_type in ["multi", "enter"]:
-    try:
-        summary = get_summary_table(cph)
-        if not summary.empty:
-            output_metrics["coefficients"] = [
-                {
-                    "variable": row['Variable'],
-                    "hr": float(row.get('exp(coef)', 1.0)),
-                    "ci_lower": float(row.get('exp(coef) lower 95%', 1.0)),
-                    "ci_upper": float(row.get('exp(coef) upper 95%', 1.0)),
-                    "p_value": float(row.get('p', 1.0)) if row.get('p', '-') != '-' else 1.0
-                }
-                for _, row in summary.iterrows()
-                if not row['Variable'].startswith('(baseline)')
-            ]
-            output_metrics["significant_predictors"] = [
-                c for c in output_metrics["coefficients"] if c["p_value"] < 0.05
-            ]
-    except:
-        pass
-
-if regression_type == "forward" and ('selected' in dir() and selected):
-    try:
-        summary = get_summary_table(final_cph)
-        if not summary.empty:
-            output_metrics["coefficients"] = [
-                {
-                    "variable": row['Variable'],
-                    "hr": float(row.get('exp(coef)', 1.0)),
-                    "p_value": float(row.get('p', 1.0)) if row.get('p', '-') != '-' else 1.0
-                }
-                for _, row in summary.iterrows()
-                if not row['Variable'].startswith('(baseline)')
-            ]
-    except:
-        pass
-
-if regression_type == "backward" and ('current' in dir() and current):
-    try:
-        summary = get_summary_table(final_cph)
-        if not summary.empty:
-            output_metrics["coefficients"] = [
-                {
-                    "variable": row['Variable'],
-                    "hr": float(row.get('exp(coef)', 1.0)),
-                    "p_value": float(row.get('p', 1.0)) if row.get('p', '-') != '-' else None
-                }
-                for _, row in summary.iterrows()
-                if not str(row['Variable']).startswith('(baseline)')
-            ]
-    except:
-        pass
-
-if regression_type == "uni":
-    output_metrics["n_predictors_tested"] = len(valid_cov)
 
 output_metrics = make_json_serializable(output_metrics)
 print("\n<!-- JSON_METRICS_START -->")

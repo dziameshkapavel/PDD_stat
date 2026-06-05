@@ -79,42 +79,37 @@ def hanley_mcneil_ci(y_true, y_pred):
     auc_val = roc_auc_score(y_true, y_pred)
     n_pos = y_true.sum()
     n_neg = len(y_true) - n_pos
-    
+
     if n_pos == 0 or n_neg == 0:
         return auc_val, auc_val, auc_val
-    
+
     q1 = auc_val / (2 - auc_val) if auc_val < 1 else 1.0
     q2 = 2 * auc_val**2 / (1 + auc_val) if auc_val > 0 else 0.0
-    
+
     se_auc = np.sqrt(
-        (auc_val * (1 - auc_val) + 
-         (n_pos - 1) * (q1 - auc_val**2) + 
-         (n_neg - 1) * (q2 - auc_val**2)) / 
+        (auc_val * (1 - auc_val) +
+         (n_pos - 1) * (q1 - auc_val**2) +
+         (n_neg - 1) * (q2 - auc_val**2)) /
         (n_pos * n_neg)
     )
-    
+
     ci_low = max(0.0, auc_val - 1.96 * se_auc)
     ci_high = min(1.0, auc_val + 1.96 * se_auc)
-    
+
     return auc_val, ci_low, ci_high
 
 if target_col not in df.columns:
-    print(f"Error: Target column '{target_col}' not found")
-    exit()
+    raise ValueError(f"Target column '{target_col}' not found")
 
 if not predictors:
-    print("Error: No predictors specified")
-    exit()
+    raise ValueError("No predictors specified")
 
 valid_predictors = [p for p in predictors if p in df.columns and pd.api.types.is_numeric_dtype(df[p])]
 if len(valid_predictors) == 0:
-    print("Error: No valid numeric predictors")
-    exit()
+    raise ValueError("No valid numeric predictors")
 
-# Подготовка целевой переменной
-y = df[target_col].dropna().astype(int)
-
-# Кодируем: event_value -> 1, остальное -> 0
+# Binary target: event_value -> 1, rest -> 0
+y = df[target_col].dropna()
 y = (y == event_value).astype(int)
 
 print(f"**Target:** `{target_col}` (event = {event_value})")
@@ -132,35 +127,30 @@ for pred in valid_predictors:
     y_p_orig = y_p_orig[mask]
     if len(y_t) < 10:
         continue
-    
-    # Hanley-McNeil CI
+
     auc_base, ci_low, ci_high = hanley_mcneil_ci(y_t, y_p_orig)
-    
-    # ROC curve
+
     fpr, tpr_all, thresholds = roc_curve(y_t, y_p_orig)
-    
-    # Optimal threshold (Youden)
+
     j_scores = tpr_all - fpr
     opt_idx = np.argmax(j_scores)
     opt_thresh = thresholds[opt_idx]
     sensitivity = tpr_all[opt_idx]
     specificity = 1 - fpr[opt_idx]
-    
-    # PPV and NPV at optimal threshold
+
     y_pred_bin = (y_p_orig >= opt_thresh).astype(int)
     tp = ((y_pred_bin == 1) & (y_t == 1)).sum()
     fp = ((y_pred_bin == 1) & (y_t == 0)).sum()
     tn = ((y_pred_bin == 0) & (y_t == 0)).sum()
     fn = ((y_pred_bin == 0) & (y_t == 1)).sum()
-    
+
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0
     npv = tn / (tn + fn) if (tn + fn) > 0 else 0
-    
-    # Проверка на слабый предиктор
+
     note = ""
     if auc_base < 0.5:
         note = " (inverted: predictor inversely associated with event)"
-    
+
     results.append({
         'predictor': pred,
         'auc': auc_base,
@@ -176,6 +166,9 @@ for pred in valid_predictors:
         'note': note
     })
 
+if not results:
+    raise ValueError("No predictors with sufficient data (need >= 10 observations)")
+
 results.sort(key=lambda x: x['auc'], reverse=True)
 
 n_total = len(y)
@@ -184,7 +177,6 @@ n_events = int(y.sum())
 print(f"**Observations:** {n_total}")
 print(f"**Events ({event_value}):** {n_events} ({n_events/n_total*100:.1f}%)\n")
 
-# Таблица результатов
 print("### ROC Results (sorted by AUC)\n")
 print("| Predictor | AUC | 95% CI | Threshold | Sens. | Spec. | PPV | NPV |")
 print("|-----------|-----|--------|----------|------|------|-----|-----|")
@@ -219,15 +211,18 @@ print(f"![ROC Curves](/plots/{plot_name}.png)\n")
 
 # Pairwise comparison (DeLong)
 if len(results) >= 2:
+    n_comp = len(results) * (len(results) - 1) // 2
     print("### Pairwise Comparison (DeLong test)\n")
+    if n_comp > 1:
+        print(f"*{n_comp} pairwise comparisons. Multiple comparisons inflate Type I error.*\n")
     print("| Comparison | Delta AUC | Z-score | p-value |")
     print("|------------|-----------|---------|---------|")
-    
+
     for i in range(len(results)):
         for j in range(i + 1, len(results)):
             r1 = results[i]
             r2 = results[j]
-            y_all = df[target_col].dropna().astype(int)
+            y_all = df[target_col].dropna()
             y_all = (y_all == event_value).astype(int)
             y_pred_1 = df[r1['predictor']].dropna()
             y_pred_2 = df[r2['predictor']].dropna()
@@ -245,13 +240,27 @@ if len(results) >= 2:
             delta = r1['auc'] - r2['auc']
             sig = "**" if p_val < 0.05 else ""
             comparison = f"{r1['predictor']} vs {r2['predictor']}"
-            print(f"| {comparison} | {delta:+.4f} | {z_stat:+.3f} | {p_val:.4f}{sig} |")
+            print(f"| {comparison} | {delta:+.4f} | {z_stat:+.3f} | {fmt_p(p_val)}{sig} |")
 
 print("")
 print("---")
 print("**ROC Analysis complete**")
 
-# JSON метрики для AI
+def make_json_serializable(obj):
+    if isinstance(obj, dict):
+        return {str(k): make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_json_serializable(item) for item in obj]
+    elif isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    elif isinstance(obj, (np.integer, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64)):
+        return float(obj) if not np.isnan(obj) else None
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
+
 output_metrics = {
     "model_type": "roc_analysis",
     "target": target_col,
@@ -286,6 +295,7 @@ if len(results) >= 2:
     if best_vs_others:
         output_metrics["best_vs_others"] = best_vs_others[:3]
 
+output_metrics = make_json_serializable(output_metrics)
 print("\n<!-- JSON_METRICS_START -->")
 print(json.dumps(output_metrics, ensure_ascii=False))
 print("<!-- JSON_METRICS_END -->")

@@ -26,25 +26,23 @@ target_col = "{{ target_col }}"
 test_cols = {{ test_cols|default([])|tojson }}
 
 if target_col not in df.columns:
-    print(f"Error: Reference column '{target_col}' not found")
-    exit()
+    raise ValueError(f"Reference column '{target_col}' not found")
 if not test_cols:
-    print("Error: No test columns specified")
-    exit()
+    raise ValueError("No test columns specified")
 
 valid_tests = [c for c in test_cols if c in df.columns]
 if not valid_tests:
-    print("Error: No valid test columns")
-    exit()
+    raise ValueError("No valid test columns")
 
 print(f"**Reference (gold standard):** `{target_col}`  ")
 print(f"**Index tests:** {', '.join([f'`{t}`' for t in valid_tests])}  \n")
 
-# Ensure binary
-for col in valid_tests:
-    unique_vals = df[col].dropna().unique()
-    if len(unique_vals) > 2:
-        print(f"Warning: Column `{col}` has >2 unique values and will be treated as binary after dropping NA.")
+def make_binary(series):
+    s = series.dropna()
+    uniq = s.unique()
+    if len(uniq) > 2:
+        raise ValueError(f"Column has {len(uniq)} unique values; binary required")
+    return uniq, s
 
 def calc_metrics(tp, fp, fn, tn):
     sens = tp / (tp + fn) if (tp + fn) > 0 else np.nan
@@ -58,7 +56,7 @@ def calc_metrics(tp, fp, fn, tn):
     return sens, spec, ppv, npv, acc, lr_pos, lr_neg, dor
 
 def wilson_ci(prop, n):
-    if n == 0:
+    if n == 0 or np.isnan(prop):
         return np.nan, np.nan
     z = norm.ppf(0.975)
     denominator = 1 + z**2 / n
@@ -67,27 +65,48 @@ def wilson_ci(prop, n):
     return max(0, centre - margin), min(1, centre + margin)
 
 def lr_ci(lr, tp, fp, fn, tn):
-    # Approximate CI for LR+ and LR-
-    if lr <= 0 or np.isinf(lr):
+    if lr <= 0 or np.isinf(lr) or np.isnan(lr):
         return np.nan, np.nan
-    if lr > 1:
-        se = np.sqrt(1/tp - 1/(tp+fp) + 1/fn - 1/(fn+tn)) if tp>0 and fn>0 else np.nan
+    if lr >= 1:
+        if tp > 0 and fn > 0 and (tp + fp) > 0 and (fn + tn) > 0:
+            se = np.sqrt(1/tp - 1/(tp+fp) + 1/fn - 1/(fn+tn))
+        else:
+            return np.nan, np.nan
     else:
-        se = np.sqrt(1/fp - 1/(tp+fp) + 1/tn - 1/(fn+tn)) if fp>0 and tn>0 else np.nan
-    if np.isnan(se):
+        if fp > 0 and tn > 0 and (tp + fp) > 0 and (fn + tn) > 0:
+            se = np.sqrt(1/fp - 1/(tp+fp) + 1/tn - 1/(fn+tn))
+        else:
+            return np.nan, np.nan
+    if np.isnan(se) or se <= 0:
         return np.nan, np.nan
     ci_low = np.exp(np.log(lr) - 1.96 * se)
     ci_high = np.exp(np.log(lr) + 1.96 * se)
     return ci_low, ci_high
 
 def mcnemar_test(b, c):
-    # b: FN for test1, TP for test2 (discordant pairs)
-    # c: FP for test1, TN for test2
     if b + c == 0:
-        return 1.0, 0.0
+        return 0.0, 1.0
     chi2_val = (abs(b - c) - 1)**2 / (b + c) if (b + c) > 0 else 0
     p = 1 - chi2.cdf(chi2_val, 1)
     return chi2_val, p
+
+# Validate binary (auto-threshold probability columns at 0.5)
+for col in [target_col] + valid_tests:
+    uniq_vals = df[col].dropna().unique()
+    if len(uniq_vals) > 2:
+        col_min, col_max = float(df[col].min()), float(df[col].max())
+        if 0 <= col_min and col_max <= 1:
+            print(f"ℹ️ `{col}` auto-thresholded at 0.5 (probability column)")
+            df[col + '_binarized'] = (df[col] >= 0.5).astype(int)
+            idx = valid_tests.index(col) if col in valid_tests else None
+            if idx is not None:
+                valid_tests[idx] = col + '_binarized'
+            else:
+                pass
+        else:
+            raise ValueError(f"Column `{col}` has {len(uniq_vals)} unique values; binary required")
+    elif len(uniq_vals) < 2:
+        raise ValueError(f"Column `{col}` has only 1 unique value; binary required")
 
 # Prepare results
 results = []
@@ -95,17 +114,18 @@ pairwise_tests = []
 
 for test in valid_tests:
     data = df[[target_col, test]].dropna()
-    # Make binary: assume positive class is 1 or True etc.
+    n_dropped = len(df) - len(data)
+    if n_dropped > 0:
+        print(f"⚠️ Removed {n_dropped} rows ({n_dropped/len(df)*100:.1f}%) with missing data for test `{test}`")
     ref = data[target_col].astype(int)
     pred = data[test].astype(int)
-    
-    # Counts
+
     tp = ((pred == 1) & (ref == 1)).sum()
     fp = ((pred == 1) & (ref == 0)).sum()
     fn = ((pred == 0) & (ref == 1)).sum()
     tn = ((pred == 0) & (ref == 0)).sum()
     n = len(data)
-    
+
     sens, spec, ppv, npv, acc, lr_pos, lr_neg, dor = calc_metrics(tp, fp, fn, tn)
     sens_ci = wilson_ci(sens, tp + fn)
     spec_ci = wilson_ci(spec, tn + fp)
@@ -114,7 +134,7 @@ for test in valid_tests:
     acc_ci = wilson_ci(acc, n)
     lr_pos_ci = lr_ci(lr_pos, tp, fp, fn, tn)
     lr_neg_ci = lr_ci(lr_neg, tp, fp, fn, tn)
-    
+
     results.append({
         "test": test,
         "tp": int(tp), "fp": int(fp), "fn": int(fn), "tn": int(tn),
@@ -135,20 +155,20 @@ if len(valid_tests) > 1:
         for j in range(i+1, len(valid_tests)):
             t1 = valid_tests[i]
             t2 = valid_tests[j]
-            # Merge on target
             data_pair = df[[target_col, t1, t2]].dropna()
+            n_dropped = len(df) - len(data_pair)
+            if n_dropped > 0:
+                print(f"⚠️ Removed {n_dropped} rows ({n_dropped/len(df)*100:.1f}%) with missing data for pairwise test")
             ref = data_pair[target_col].astype(int)
             p1 = data_pair[t1].astype(int)
             p2 = data_pair[t2].astype(int)
-            # Discordant pairs among diseased (ref=1)
             mask_d = (ref == 1)
-            b = ((p1[mask_d] == 0) & (p2[mask_d] == 1)).sum()  # FN test1, TP test2
-            c = ((p1[mask_d] == 1) & (p2[mask_d] == 0)).sum()  # TP test1, FN test2
+            b = ((p1[mask_d] == 0) & (p2[mask_d] == 1)).sum()
+            c = ((p1[mask_d] == 1) & (p2[mask_d] == 0)).sum()
             chi2_sens, p_sens = mcnemar_test(b, c)
-            # Among non-diseased (ref=0)
             mask_nd = (ref == 0)
-            b_spec = ((p1[mask_nd] == 1) & (p2[mask_nd] == 0)).sum()  # FP test1, TN test2
-            c_spec = ((p1[mask_nd] == 0) & (p2[mask_nd] == 1)).sum()  # TN test1, FP test2
+            b_spec = ((p1[mask_nd] == 1) & (p2[mask_nd] == 0)).sum()
+            c_spec = ((p1[mask_nd] == 0) & (p2[mask_nd] == 1)).sum()
             chi2_spec, p_spec = mcnemar_test(b_spec, c_spec)
             pairwise_tests.append({
                 "test1": t1, "test2": t2,
@@ -159,7 +179,6 @@ if len(valid_tests) > 1:
             })
 
 # ----- Output -----
-# Table 1: 2x2 for each test
 for res in results:
     print(f"### {res['test']}\n")
     print("#### Contingency Table\n")
@@ -169,7 +188,6 @@ for res in results:
     print(f"| **Test -** | {res['fn']} (FN) | {res['tn']} (TN) |")
     print()
 
-# Table 2: Metrics summary
 print("### Accuracy Metrics\n")
 print("| Metric | " + " | ".join([f"`{res['test']}` ({res['n']})" for res in results]) + " |")
 print("|--------|" + "|".join(["--------" for _ in results]) + "|")
@@ -201,13 +219,15 @@ for metric in metrics_names:
 
 print()
 
-# Pairwise comparisons
 if pairwise_tests:
+    n_comp = len(pairwise_tests)
     print("### Paired Comparison (McNemar)\n")
+    if n_comp > 1:
+        print(f"*{n_comp} pairwise comparisons. Multiple comparisons inflate Type I error.*\n")
     print("| Comparison | Sensitivity p-value | Specificity p-value |")
     print("|------------|-------------------|-------------------|")
     for pt in pairwise_tests:
-        print(f"| {pt['test1']} vs {pt['test2']} | {pt['sens_p']:.4f} | {pt['spec_p']:.4f} |")
+        print(f"| {pt['test1']} vs {pt['test2']} | {fmt_p(pt['sens_p'])} | {fmt_p(pt['spec_p'])} |")
     print()
 
 # Forest plot of sensitivity and specificity
@@ -253,11 +273,13 @@ def make_json_serializable(obj):
     elif isinstance(obj, (np.integer, np.int64)):
         return int(obj)
     elif isinstance(obj, (np.floating, np.float64)):
-        if np.isnan(obj):
+        if np.isnan(obj) or np.isinf(obj):
             return None
         return float(obj)
     elif isinstance(obj, np.bool_):
         return bool(obj)
+    elif isinstance(obj, float) and (np.isnan(obj) or np.isinf(obj)):
+        return None
     elif obj is None:
         return None
     else:
