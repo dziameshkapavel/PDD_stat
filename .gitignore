@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# IDE / OS
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# User data
+projects/*/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# Project tracking
+active_project.txt
+
+# Linter
+.ruff_cache/

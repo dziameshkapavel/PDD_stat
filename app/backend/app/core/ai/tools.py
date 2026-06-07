@@ -1,0 +1,170 @@
+"""
+Template metadata — описания и параметры шаблонов анализа.
+"""
+
+TEMPLATE_DESCRIPTIONS = {
+    "descriptive_stats": "Descriptive statistics — mean, median, SD, min, max for selected columns",
+    "kaplan_meier": "Kaplan-Meier survival curves with log-rank test",
+    "cox_ph": "Cox proportional hazards regression (uni/multivariable, stepwise)",
+    "logistic": "Binary logistic regression (uni/multivariable, stepwise, with goodness-of-fit)",
+    "cox_vs": "Cox with variable selection (AIC-based stepwise + LASSO penalty)",
+    "cox_stratified": "Stratified Cox regression",
+    "cox_time_dependent": "Cox with time-dependent coefficients (Schoenfeld residuals)",
+    "lasso_regression": "LASSO logistic regression with cross-validation",
+    "random_forest": "Random Forest (classification or regression with feature importance)",
+    "roc_analysis": "ROC curve analysis (single or multiple predictors)",
+    "spline_analysis": "Restricted cubic spline analysis (logistic or Cox)",
+    "survival_evaluation": "Survival model evaluation — C-index, calibration, DCA",
+    "random_survival_forest": "Random Survival Forest with Harrell's C-index",
+    "numeric_compare": "Compare numeric variables between groups (t-test, Mann-Whitney, etc.)",
+    "categorical": "Crosstab with chi-square or Fisher exact test",
+    "anova": "One-way ANOVA or Kruskal-Wallis test",
+    "correlation_analysis": "Correlation matrix with pairwise tests",
+    "kaplan_meier_by_feature": "Stratified KM curves for multiple features",
+    "cox_vs_feature": "Cox regression for multiple features",
+    "chart_builder": "Charts and visualizations — histogram, boxplot, scatter, bar",
+    "violin_plot": "Violin plots with group comparison",
+    "agreement_categorical": "Inter-rater agreement — Cohen's kappa, Fleiss' kappa",
+    "diagnostic_accuracy": "Diagnostic test accuracy — sensitivity, specificity, PPV, NPV, LR",
+    "individual_prediction": "Individual prediction using trained models",
+}
+
+TEMPLATE_PARAMS = {
+    "kaplan_meier": [
+        "time_col (required): time-to-event column",
+        "event_col (required): event indicator column (0/1)",
+        "group_col: grouping variable for comparison (default='')",
+        "stratify_col: stratification variable (default='')",
+    ],
+    "cox_ph": [
+        "time_col (required): time-to-event column",
+        "event_col (required): event indicator column (0/1)",
+        "covariates: list of predictor columns (default=[])",
+        "regression_type: 'uni', 'multi', 'forward', or 'backward' (default='multi')",
+        "reference_groups: dict of reference levels for categorical vars",
+    ],
+    "logistic": [
+        "target_col (required): binary target column (0/1)",
+        "predictors: list of predictor columns (default=[])",
+        "regression_type: 'uni', 'multi', 'forward', or 'backward' (default='multi')",
+        "covariate_types: dict mapping variable names to 'categorical' or 'continuous'",
+        "reference_groups: dict of reference levels for categorical vars",
+        "validation: 'none', 'split', or 'cv' (default='none')",
+    ],
+    "descriptive_stats": [
+        "variables: list of column names, all numeric if empty (default=[])",
+        "include_plots: generate histogram plots (default=False)",
+    ],
+    "numeric_compare": [
+        "value (required): numeric value column",
+        "group (required): categorical grouping column",
+    ],
+    "categorical": [
+        "col1 (required): first categorical column",
+        "col2 (required): second categorical column",
+    ],
+    "anova": [
+        "value_col (required): numeric dependent variable",
+        "group_col (required): categorical grouping column",
+    ],
+    "correlation_analysis": [
+        "variables: list of numeric columns, all if empty (default=[])",
+        "method: 'pearson', 'spearman', or 'kendall' (default='pearson')",
+        "threshold: min |r| to report (default=0.5)",
+    ],
+    "roc_analysis": [
+        "target_col (required): binary target column",
+        "predictors: list of numeric predictor columns (default=[])",
+        "event_value: value considered positive (default=1)",
+    ],
+    "random_forest": [
+        "target_col (required): target column (binary or numeric)",
+        "covariates: list of predictor columns, auto if empty (default=[])",
+        "top_n: number of top features to show (default=15)",
+        "calculate_shap: compute SHAP explanations (default='false')",
+    ],
+    "lasso_regression": [
+        "target_col (required): binary target column",
+        "covariates: list of predictor columns, auto if empty (default=[])",
+        "C_value: inverse regularization strength (default=1.0)",
+        "auto_select_C: auto-tune C via CV (default=True)",
+    ],
+    "spline_analysis": [
+        "variable (required): numeric variable for spline analysis",
+        "target_col: binary target for logistic model (default='')",
+        "time_col: time column for Cox model (default='')",
+        "event_col: event column for Cox model (default='')",
+        "covariates: list of adjustment covariates (default=[])",
+    ],
+    "survival_evaluation": [
+        "pred_cols: list of prediction/risk score columns (default=[])",
+        "time_col (required): time-to-event column",
+        "event_col (required): event indicator column",
+        "stratify_col: stratification variable (default='')",
+        "n_bootstrap: number of bootstrap samples (default=1000)",
+        "target_col (required): binary target column",
+        "n_bootstrap: number of bootstrap samples (default=1000)",
+        "run_dca: run Decision Curve Analysis (default=True)",
+    ],
+    "chart_builder": [
+        "chart_type (required): 'histogram', 'box', 'scatter', 'bar', or 'density'",
+        "x_col (required): x-axis column",
+        "y_col: y-axis column for scatter (default='')",
+        "group_col: grouping/color column (default='')",
+    ],
+    "violin_plot": [
+        "value_col (required): numeric value column",
+        "group_col (required): grouping column",
+        "show_box: overlay box plot (default=True)",
+    ],
+    "agreement_categorical": [
+        "raters: list of rater columns, at least 2 (default=[])",
+        "scale_type: 'nominal' or 'ordinal' (default='nominal')",
+    ],
+    "diagnostic_accuracy": [
+        "target_col (required): binary target (true outcome)",
+        "predictor: predicted/classification column",
+        "positive_value: value considered positive (default=1)",
+    ],
+    "cox_vs": [
+        "time_col (required): time-to-event column",
+        "event_col (required): event indicator column (0/1)",
+        "covariates: list of predictor columns (default=[])",
+    ],
+    "cox_stratified": [
+        "time_col (required): time-to-event column",
+        "event_col (required): event indicator column (0/1)",
+        "covariates: list of predictor columns (default=[])",
+        "stratify_col (required): stratification variable",
+    ],
+    "cox_time_dependent": [
+        "time_col (required): time-to-event column",
+        "event_col (required): event indicator column (0/1)",
+        "covariates: list of predictor columns (default=[])",
+    ],
+    "random_survival_forest": [
+        "time_col (required): time-to-event column",
+        "event_col (required): event indicator column (0/1)",
+        "covariates: list of predictor columns, auto if empty (default=[])",
+        "top_n: number of top features to show (default=15)",
+    ],
+    "individual_prediction": [
+        "model_type: 'cox' or 'logistic' (default='cox')",
+        "covariates: list of predictor columns (default=[])",
+        "time_col: time column for Cox (default='')",
+        "event_col: event column for Cox (default='')",
+        "target_col: target column for logistic (default='')",
+    ],
+    "kaplan_meier_by_feature": [
+        "time_col (required): time-to-event column",
+        "event_col (required): event indicator column",
+        "features: list of categorical or numeric features (default=[])",
+        "event_label: description of event (default='event')",
+    ],
+    "cox_vs_feature": [
+        "time_col (required): time-to-event column",
+        "event_col (required): event indicator column",
+        "features: list of predictor features (default=[])",
+        "event_label: description of event (default='event')",
+    ],
+}

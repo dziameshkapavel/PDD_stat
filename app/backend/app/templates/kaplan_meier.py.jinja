@@ -1,0 +1,573 @@
+# kaplan_meier.py.jinja - Kaplan-Meier survival curves
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mtick
+from lifelines import KaplanMeierFitter, NelsonAalenFitter
+from lifelines.statistics import logrank_test, multivariate_logrank_test
+from itertools import combinations
+import json
+import time
+import warnings
+warnings.filterwarnings('ignore')
+
+print("## Kaplan-Meier Analysis\n")
+
+from pathlib import Path
+var_labels = {}
+try:
+    project_path = Path("{{ project_path }}") if "{{ project_path }}" else Path(".")
+    labels_path = project_path / "state" / "variable_labels.json"
+    if labels_path.exists():
+        with open(labels_path, 'r', encoding='utf-8') as f:
+            var_labels = json.load(f)
+except:
+    pass
+
+time_col = "{{ time_col }}"
+event_col = "{{ event_col }}"
+group_col = "{{ group_col|default('') }}"
+stratify_col = "{{ stratify_col|default('') }}"
+plot_type = "{{ plot_type|default('survival') }}"
+show_ci_str = "{{ show_ci|default('true') }}"
+show_ci = show_ci_str.lower() in ['true', '1', 'yes', 'on'] or show_ci_str == 'True' or show_ci_str == 'TRUE'
+
+x_tick_step = {{ x_tick_step|default(6)|int }}
+if x_tick_step <= 0:
+    x_tick_step = 6
+x_label = "{{ x_label|default('Time, months') }}"
+y_tick_step = {{ y_tick_step|default(0.1)|float }}
+if y_tick_step <= 0:
+    y_tick_step = 0.1
+y_label = "{{ y_label|default('Survival Probability') }}"
+
+if time_col not in df.columns:
+    raise ValueError(f"Time column '{time_col}' not found")
+if event_col not in df.columns:
+    raise ValueError(f"Event column '{event_col}' not found")
+
+print(f"**Time:** `{time_col}`")
+print(f"**Event:** `{event_col}`")
+print(f"**Plot type:** {'Cumulative Hazard' if plot_type == 'hazard' else 'Survival'}")
+
+cols = [time_col, event_col]
+if group_col and group_col in df.columns and str(group_col).strip():
+    cols.append(group_col)
+    print(f"**Group by:** `{group_col}`")
+else:
+    group_col = ''
+
+if stratify_col and stratify_col in df.columns and str(stratify_col).strip():
+    cols.append(stratify_col)
+    print(f"**Stratify by:** `{stratify_col}`")
+else:
+    stratify_col = ''
+
+n_before = len(df)
+df_km = df[cols].copy().dropna()
+n_after = len(df_km)
+if n_after < n_before:
+    print(f"⚠️ Removed {n_before - n_after} rows ({((n_before - n_after)/n_before*100):.1f}%) with missing data")
+
+total_n = len(df_km)
+total_events = int(df_km[event_col].sum())
+
+print(f"**Observations:** {total_n}")
+print(f"**Events:** {total_events}\n")
+
+output_metrics = {
+    "model_type": "kaplan_meier",
+    "n_total": total_n,
+    "events_total": total_events,
+    "summary": [],
+    "logrank_overall": None,
+    "logrank_pairwise": [],
+    "number_at_risk": None,
+    "survival_probability": None,
+    "plots": []
+}
+
+if total_n == 0:
+    raise ValueError("No data")
+if total_events == 0:
+    raise ValueError("No events")
+
+
+def finalize_plot(fig, ax, title_prefix, suffix, plot_type, timestamp):
+    """Finalize and save a plot"""
+    if plot_type == 'hazard':
+        ax.set_title(f"Nelson-Aalen Cumulative Hazard{suffix}", fontsize=14, fontweight='bold')
+        ax.set_ylabel(y_label, fontsize=12)
+    else:
+        ax.set_title(f"Kaplan-Meier Survival Curves{suffix}", fontsize=14, fontweight='bold')
+        ax.set_ylabel(y_label + " (%)", fontsize=12)
+        ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0))
+        ax.set_yticks(np.arange(0, 1.0 + y_tick_step, y_tick_step))
+        ax.set_ylim(0, 1.02)
+    
+    ax.set_xlabel(x_label, fontsize=12)
+    max_time_val = float(df_km[time_col].max())
+    x_ticks = np.arange(0, max_time_val + x_tick_step, x_tick_step)
+    ax.set_xticks(x_ticks)
+    ax.grid(True, linestyle='--', alpha=0.5)
+    ax.legend(loc='best', framealpha=0.9)
+    plt.tight_layout()
+    
+    plot_filename = f"{title_prefix}_{timestamp}_{suffix.replace(' ', '_').replace('/', '_')}"
+    save_plot(plot_filename)
+    plt.close('all')
+    return f"{plot_filename}.png"
+
+
+# MAIN ANALYSIS
+timestamp = str(int(time.time()))
+
+if stratify_col:
+    # STRATIFIED ANALYSIS
+    unique_strata = sorted([str(x) for x in df_km[stratify_col].unique()], key=lambda x: float(x) if x.replace('.','').isdigit() else float('inf'))
+    n_strata = len(unique_strata)
+    print(f"**Strata:** {n_strata}\n")
+    
+    all_metrics = []
+    all_plots = []
+    
+    for stratum in unique_strata:
+        print(f"\n### Stratum: {stratum}\n")
+        stratum_df = df_km[df_km[stratify_col].astype(str) == stratum].copy()
+        stratum_n = len(stratum_df)
+        stratum_events = int(stratum_df[event_col].sum())
+        print(f"**N = {stratum_n}, Events = {stratum_events}**")
+        
+        stratum_metrics = {
+            "stratum": stratum,
+            "n": stratum_n,
+            "events": stratum_events,
+            "summary": [],
+            "logrank_overall": None,
+            "logrank_pairwise": []
+        }
+        
+        if group_col:
+            unique_groups_raw = stratum_df[group_col].unique()
+            unique_groups = [str(x) for x in unique_groups_raw]
+            unique_groups = sorted(unique_groups, key=lambda x: float(x) if x.replace('.','').isdigit() else float('inf'))
+            n_groups = len(unique_groups)
+            print(f"**Groups:** {n_groups}")
+            n_colors = max(n_groups, 1)
+            colors = plt.cm.tab10(np.linspace(0, 1, n_colors))
+            
+            fig, ax = plt.subplots(figsize=(10, 7))
+            medians = {}
+            
+            stratum_df = stratum_df.copy()
+            stratum_df['_grp'] = stratum_df[group_col].astype(str)
+            
+            for idx, g_str in enumerate(unique_groups):
+                grp_data = stratum_df[stratum_df['_grp'] == g_str]
+                if len(grp_data) == 0:
+                    continue
+                
+                t = grp_data[time_col].values.astype(float)
+                e = grp_data[event_col].values.astype(int)
+                n_grp = len(grp_data)
+                e_grp = int(e.sum())
+                
+                label_g = var_labels.get(group_col, {}).get('value_labels', {}).get(str(g_str), str(g_str))
+                
+                if plot_type == 'hazard':
+                    grp_fitter = NelsonAalenFitter()
+                    grp_fitter.fit(t, e, label=f"{label_g} (n={n_grp})")
+                    grp_fitter.plot_cumulative_hazard(ax=ax, ci_show=show_ci, color=colors[idx])
+                else:
+                    grp_fitter = KaplanMeierFitter()
+                    grp_fitter.fit(t, e, label=f"{label_g} (n={n_grp})")
+                    grp_fitter.plot_survival_function(ax=ax, ci_show=show_ci, color=colors[idx])
+                
+                if plot_type != 'hazard':
+                    m = grp_fitter.median_survival_time_
+                    if m is not None:
+                        try:
+                            m_float = float(m)
+                            if not np.isnan(m_float) and not np.isinf(m_float):
+                                medians[g_str] = m_float
+                        except:
+                            pass
+                
+                print(f"  - {label_g}: n={n_grp}, events={e_grp}")
+                stratum_metrics["summary"].append({
+                    "group": label_g, "n": n_grp, "events": e_grp
+                })
+            
+                # Добавляем медиану в summary
+                median_str_group = f"{medians[g_str]:.1f}" if g_str in medians else "NR"
+                stratum_metrics["summary"][-1]["median"] = median_str_group
+            
+            # Log-Rank for stratum
+            if n_groups >= 2:
+                try:
+                    t_all = stratum_df[time_col].values.astype(float)
+                    e_all = stratum_df[event_col].values.astype(int)
+                    g_all = stratum_df[group_col].astype(str).values
+                    
+                    overall_res = multivariate_logrank_test(t_all, g_all, e_all)
+                    p_overall = float(overall_res.p_value)
+                    stratum_metrics["logrank_overall"] = p_overall
+                    
+                    sig_mark = " **" if p_overall < 0.05 else ""
+                    print(f"  **Log-Rank:** p = {fmt_p(p_overall)}{sig_mark}")
+                except Exception as ex:
+                    print(f"  Log-Rank error: {ex}")
+                
+                # Pairwise
+                n_comp = len(list(combinations(unique_groups, 2)))
+                if n_comp > 1:
+                    print(f"  *{n_comp} pairwise comparisons. Multiple comparisons inflate Type I error.*\n")
+                
+                for g1, g2 in combinations(unique_groups, 2):
+                    try:
+                        g1_data = stratum_df[stratum_df[group_col].astype(str) == g1]
+                        g2_data = stratum_df[stratum_df[group_col].astype(str) == g2]
+                        
+                        t1 = g1_data[time_col].values.astype(float)
+                        e1 = g1_data[event_col].values.astype(int)
+                        t2 = g2_data[time_col].values.astype(float)
+                        e2 = g2_data[event_col].values.astype(int)
+                        
+                        res = logrank_test(t1, t2, e1, e2)
+                        p_val = float(res.p_value)
+                        
+                        stratum_metrics["logrank_pairwise"].append({
+                            "group1": str(g1), "group2": str(g2),
+                            "p_value": p_val
+                        })
+                    except:
+                        pass
+            
+            # Number at Risk & S(t) per stratum/group
+            if plot_type == 'survival':
+                max_time = float(stratum_df[time_col].max())
+                time_points = [6, 12, 24, 36, 48, 60]
+                time_points = [t for t in time_points if t <= max_time]
+                
+                if time_points:
+                    nar_data = {}
+                    s_prob_data = {}
+                    
+                    for g in unique_groups:
+                        grp_data = stratum_df[stratum_df['_grp'] == g]
+                        grp_nar = []
+                        grp_s = []
+                        row_label = f"{stratum}/{g}"
+                        
+                        for tp in time_points:
+                            at_risk = int((grp_data[time_col] >= tp).sum())
+                            grp_nar.append(at_risk)
+                            
+                            if len(grp_data) > 0:
+                                kmf = KaplanMeierFitter()
+                                kmf.fit(grp_data[time_col].values.astype(float), grp_data[event_col].values.astype(int))
+                                s_prob = kmf.survival_function_at_times(tp).values[0]
+                                grp_s.append(float(s_prob) if not np.isnan(s_prob) else None)
+                            else:
+                                grp_s.append(None)
+                        
+                        nar_data[row_label] = grp_nar
+                        s_prob_data[row_label] = grp_s
+                    
+                    stratum_metrics["number_at_risk"] = {"time_points": time_points, "data": nar_data}
+                    stratum_metrics["survival_probability"] = {"time_points": time_points, "data": s_prob_data}
+            
+            plot_suffix = f" [{stratum}]"
+            plot_filename = finalize_plot(fig, ax, "kaplan_meier", plot_suffix, plot_type, timestamp)
+            all_plots.append(plot_filename)
+            print(f"\n![Kaplan-Meier {stratum}](/plots/{plot_filename})\n")
+        
+        else:
+            # No group_col - single curve per stratum
+            t = stratum_df[time_col].values.astype(float)
+            e = stratum_df[event_col].values.astype(int)
+            
+            fig, ax = plt.subplots(figsize=(10, 7))
+            
+            if plot_type == 'hazard':
+                fitter = NelsonAalenFitter()
+                fitter.fit(t, e, label=f"{stratum} (n={stratum_n})")
+                fitter.plot_cumulative_hazard(ax=ax, ci_show=show_ci)
+            else:
+                fitter = KaplanMeierFitter()
+                fitter.fit(t, e, label=f"{stratum} (n={stratum_n})")
+                fitter.plot_survival_function(ax=ax, ci_show=show_ci)
+                
+                m = fitter.median_survival_time_
+                if m is not None:
+                    try:
+                        m_float = float(m)
+                        if not np.isnan(m_float) and not np.isinf(m_float):
+                            stratum_metrics["median_survival"] = {stratum: m_float}
+                            stratum_metrics["summary"][0]["median"] = f"{m_float:.1f}"
+                    except:
+                        pass
+            
+            plot_suffix = f" [{stratum}]"
+            plot_filename = finalize_plot(fig, ax, "kaplan_meier", plot_suffix, plot_type, timestamp)
+            all_plots.append(plot_filename)
+            print(f"\n![Kaplan-Meier {stratum}](/plots/{plot_filename})\n")
+        
+        all_metrics.append(stratum_metrics)
+    
+    output_metrics["strata"] = all_metrics
+    output_metrics["plots"] = all_plots
+    output_metrics["summary"] = [{"stratum": m["stratum"], "n": m["n"], "events": m["events"]} for m in all_metrics]
+    p_vals = [m.get("logrank_overall") for m in all_metrics if m.get("logrank_overall") is not None]
+    if p_vals:
+        output_metrics["logrank_overall"] = min(p_vals)
+    output_metrics["n_groups"] = n_groups if group_col else 1
+
+else:
+    # NON-STRATIFIED ANALYSIS
+    if group_col:
+        unique_groups_raw = df_km[group_col].unique()
+        unique_groups = [str(x) for x in unique_groups_raw]
+        unique_groups = sorted(unique_groups, key=lambda x: float(x) if x.replace('.','').isdigit() else float('inf'))
+        n_groups = len(unique_groups)
+        print(f"**Groups:** {n_groups}\n")
+        n_colors = max(n_groups, 1)
+        colors = plt.cm.tab10(np.linspace(0, 1, n_colors))
+        
+        medians = {}
+        df_km['_grp'] = df_km[group_col].astype(str)
+        
+        fig, ax = plt.subplots(figsize=(10, 7))
+        
+        for idx, g_str in enumerate(unique_groups):
+            grp_data = df_km[df_km['_grp'] == g_str]
+            if len(grp_data) == 0:
+                continue
+            
+            t = grp_data[time_col].values.astype(float)
+            e = grp_data[event_col].values.astype(int)
+            n_grp = len(grp_data)
+            e_grp = int(e.sum())
+            
+            label_g = var_labels.get(group_col, {}).get('value_labels', {}).get(str(g_str), str(g_str))
+            
+            if plot_type == 'hazard':
+                grp_fitter = NelsonAalenFitter()
+                grp_fitter.fit(t, e, label=f"{label_g} (n={n_grp})")
+                grp_fitter.plot_cumulative_hazard(ax=ax, ci_show=show_ci, color=colors[idx])
+            else:
+                grp_fitter = KaplanMeierFitter()
+                grp_fitter.fit(t, e, label=f"{label_g} (n={n_grp})")
+                grp_fitter.plot_survival_function(ax=ax, ci_show=show_ci, color=colors[idx])
+            
+            if plot_type != 'hazard':
+                m = grp_fitter.median_survival_time_
+                median_str = "NR"
+                if m is not None:
+                    try:
+                        m_float = float(m)
+                        if not np.isnan(m_float) and not np.isinf(m_float):
+                            medians[g_str] = m_float
+                            median_str = f"{m_float:.1f}"
+                    except:
+                        pass
+            else:
+                median_str = "N/A"
+            
+            label_g = var_labels.get(group_col, {}).get('value_labels', {}).get(str(g_str), str(g_str))
+            
+            print(f"  - {label_g}: n={n_grp}, events={e_grp}, median={median_str}")
+            
+            output_metrics["summary"].append({
+                "group": label_g, "n": n_grp, "events": e_grp, "median": median_str
+            })
+        
+        df_km.drop('_grp', axis=1, inplace=True)
+        
+        if medians:
+            output_metrics["median_survival"] = medians
+            median_strs = [f"{g}={v:.1f}" for g, v in medians.items()]
+            print(f"\n**Median survival:** " + ", ".join(median_strs))
+        
+        # Log-Rank Test
+        if n_groups >= 2:
+            print("\n### Log-Rank Test\n")
+            
+            try:
+                t_all = df_km[time_col].values.astype(float)
+                e_all = df_km[event_col].values.astype(int)
+                g_all = df_km[group_col].astype(str).values
+                
+                overall_res = multivariate_logrank_test(t_all, g_all, e_all)
+                p_overall = float(overall_res.p_value)
+                output_metrics["logrank_overall"] = p_overall
+                
+                sig_mark = " **" if p_overall < 0.05 else ""
+                print(f"**Overall:** p = {fmt_p(p_overall)}{sig_mark}\n")
+            except Exception as ex:
+                print(f"Overall log-rank error: {ex}")
+            
+            # Pairwise
+            n_comp = len(list(combinations(unique_groups, 2)))
+            if n_comp > 1:
+                print(f"\n*{n_comp} pairwise comparisons. Multiple comparisons inflate Type I error.*\n")
+            
+            for g1, g2 in combinations(unique_groups, 2):
+                try:
+                    g1_data = df_km[df_km[group_col].astype(str) == g1]
+                    g2_data = df_km[df_km[group_col].astype(str) == g2]
+                    
+                    t1 = g1_data[time_col].values.astype(float)
+                    e1 = g1_data[event_col].values.astype(int)
+                    t2 = g2_data[time_col].values.astype(float)
+                    e2 = g2_data[event_col].values.astype(int)
+                    
+                    res = logrank_test(t1, t2, e1, e2)
+                    p_val = float(res.p_value)
+                    
+                    output_metrics["logrank_pairwise"].append({
+                        "group1": str(g1), "group2": str(g2),
+                        "p_value": p_val, "significant": p_val < 0.05
+                    })
+                    
+                    sig = "**" if p_val < 0.05 else ""
+                    print(f"  {g1} vs {g2}: p = {fmt_p(p_val)} {sig}")
+                except Exception as ex:
+                    print(f"  {g1} vs {g2}: error - {ex}")
+        
+        if output_metrics["logrank_pairwise"]:
+            print("\n| Comparison | p-value | Significant |")
+            print("|------------|---------|-------------|")
+            for pw in output_metrics["logrank_pairwise"]:
+                sig_icon = "Yes **" if pw["significant"] else "No"
+                print(f"| {pw['group1']} vs {pw['group2']} | {fmt_p(pw['p_value'])} | {sig_icon} |")
+            if n_comp > 1:
+                print(f"\n*Bonferroni-corrected α = {0.05/n_comp:.4f}. Consider adjusted p-values for confirmatory inference.*")
+        
+        # Number at Risk & S(t)
+        if plot_type == 'survival' and total_n > 0:
+            max_time = float(df_km[time_col].max())
+            time_points = [6, 12, 24, 36, 48, 60]
+            time_points = [t for t in time_points if t <= max_time]
+            
+            if time_points:
+                nar_data = {}
+                s_prob_data = {}
+                
+                print("\n### Number at Risk\n")
+                header = "| Time |" + " | ".join(unique_groups) + " |"
+                print(header)
+                print("|------|" + "|".join(["-----|" for _ in unique_groups]))
+                for tp in time_points:
+                    row = f"| {tp} |"
+                    for g in unique_groups:
+                        grp_data = df_km[df_km[group_col].astype(str) == g]
+                        at_risk = int((grp_data[time_col] >= tp).sum())
+                        row += f" {at_risk} |"
+                        if g not in nar_data:
+                            nar_data[g] = []
+                        nar_data[g].append(at_risk)
+                    print(row)
+                
+                output_metrics["number_at_risk"] = {"time_points": time_points, "data": nar_data}
+                
+                print("\n### Survival Probability S(t)\n")
+                header = "| Time |" + " | ".join(unique_groups) + " |"
+                print(header)
+                print("|------|" + "|".join(["-----------|" for _ in unique_groups]))
+                for tp in time_points:
+                    row = f"| {tp} |"
+                    for g in unique_groups:
+                        grp_data = df_km[df_km[group_col].astype(str) == g]
+                        if len(grp_data) > 0:
+                            kmf = KaplanMeierFitter()
+                            kmf.fit(grp_data[time_col].values.astype(float), grp_data[event_col].values.astype(int))
+                            s_prob = kmf.survival_function_at_times(tp).values[0]
+                            if np.isnan(s_prob):
+                                row += " — |"
+                                s_val = None
+                            else:
+                                s_val = float(s_prob)
+                                row += f" {s_prob:.1%} |"
+                        else:
+                            row += " — |"
+                            s_val = None
+                        if g not in s_prob_data:
+                            s_prob_data[g] = []
+                        s_prob_data[g].append(s_val)
+                    print(row)
+                
+                output_metrics["survival_probability"] = {"time_points": time_points, "data": s_prob_data}
+        
+        plot_suffix = ""
+        plot_filename = finalize_plot(fig, ax, "kaplan_meier", plot_suffix, plot_type, timestamp)
+        output_metrics["plots"] = [plot_filename]
+        print(f"\n![Kaplan-Meier](/plots/{plot_filename})\n")
+    
+    else:
+        # No groups - single cohort
+        t = df_km[time_col].values.astype(float)
+        e = df_km[event_col].values.astype(int)
+        
+        fig, ax = plt.subplots(figsize=(10, 7))
+        
+        if plot_type == 'hazard':
+            fitter = NelsonAalenFitter()
+            fitter.fit(t, e, label=f"All (n={total_n})")
+            fitter.plot_cumulative_hazard(ax=ax, ci_show=show_ci)
+        else:
+            fitter = KaplanMeierFitter()
+            fitter.fit(t, e, label=f"All (n={total_n})")
+            fitter.plot_survival_function(ax=ax, ci_show=show_ci)
+        
+        m = fitter.median_survival_time_
+        median_str = "NR"
+        if m is not None:
+            try:
+                m_float = float(m)
+                if not np.isnan(m_float) and not np.isinf(m_float):
+                    output_metrics["median_survival"] = {"All": m_float}
+                    median_str = f"{m_float:.1f}"
+                    print(f"**Median survival:** {m_float:.1f}")
+            except:
+                pass
+        
+        if median_str == "NR":
+            print("**Median survival:** Not reached")
+        
+        output_metrics["summary"].append({
+            "group": "All", "n": total_n, "events": total_events, "median": median_str
+        })
+        
+        plot_suffix = ""
+        plot_filename = finalize_plot(fig, ax, "kaplan_meier", plot_suffix, plot_type, timestamp)
+        output_metrics["plots"] = [plot_filename]
+        print(f"\n![Kaplan-Meier](/plots/{plot_filename})\n")
+
+print("---")
+print("**Analysis complete**")
+
+# Добавляем ключевые метрики для AI
+output_metrics["time_col"] = time_col
+output_metrics["event_col"] = event_col
+output_metrics["group_col"] = group_col if group_col else None
+output_metrics["stratify_col"] = stratify_col if stratify_col else None
+output_metrics.setdefault("n_groups", len(unique_groups) if group_col else 1)
+
+# Log-rank p-value для AI
+if output_metrics.get("logrank_overall") is not None:
+    output_metrics["significant"] = output_metrics["logrank_overall"] < 0.05
+
+# Медианы выживаемости
+if group_col:
+    output_metrics.setdefault("median_survival", medians if 'medians' in dir() else {})
+
+# Количество значимых pairwise сравнений
+if output_metrics.get("logrank_pairwise"):
+    sig_count = sum(1 for pw in output_metrics["logrank_pairwise"] if pw.get("significant"))
+    output_metrics["n_significant_pairs"] = sig_count
+
+print("<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False))
+print("<!-- JSON_METRICS_END -->")

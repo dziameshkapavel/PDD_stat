@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  pdd_stat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pdd_stat
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ./projects:/app/app/backend/projects
+      - ./data:/app/app/backend/data
+    environment:
+      - PDD_STAT_API_KEY=${PDD_STAT_API_KEY:-}
+      - APP_DATA_DIR=/app/app/backend/projects
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

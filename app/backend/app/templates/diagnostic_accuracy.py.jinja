@@ -1,0 +1,292 @@
+# diagnostic_accuracy.py.jinja
+# Diagnostic Accuracy for binary tests vs binary reference
+
+import pandas as pd
+import numpy as np
+import json
+from scipy.stats import norm, chi2
+import matplotlib.pyplot as plt
+import time
+from pathlib import Path
+import warnings
+warnings.filterwarnings('ignore')
+
+var_labels = {}
+try:
+    labels_path = Path(project_path) / "state" / "variable_labels.json"
+    if labels_path.exists():
+        with open(labels_path, 'r', encoding='utf-8') as f:
+            var_labels = json.load(f)
+except:
+    pass
+
+print("## Diagnostic Accuracy\n")
+
+target_col = "{{ target_col }}"
+test_cols = {{ test_cols|default([])|tojson }}
+
+if target_col not in df.columns:
+    raise ValueError(f"Reference column '{target_col}' not found")
+if not test_cols:
+    raise ValueError("No test columns specified")
+
+valid_tests = [c for c in test_cols if c in df.columns]
+if not valid_tests:
+    raise ValueError("No valid test columns")
+
+print(f"**Reference (gold standard):** `{target_col}`  ")
+print(f"**Index tests:** {', '.join([f'`{t}`' for t in valid_tests])}  \n")
+
+def make_binary(series):
+    s = series.dropna()
+    uniq = s.unique()
+    if len(uniq) > 2:
+        raise ValueError(f"Column has {len(uniq)} unique values; binary required")
+    return uniq, s
+
+def calc_metrics(tp, fp, fn, tn):
+    sens = tp / (tp + fn) if (tp + fn) > 0 else np.nan
+    spec = tn / (tn + fp) if (tn + fp) > 0 else np.nan
+    ppv = tp / (tp + fp) if (tp + fp) > 0 else np.nan
+    npv = tn / (tn + fn) if (tn + fn) > 0 else np.nan
+    acc = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else np.nan
+    lr_pos = sens / (1 - spec) if (1 - spec) > 0 else np.inf
+    lr_neg = (1 - sens) / spec if spec > 0 else np.inf
+    dor = (tp * tn) / (fp * fn) if (fp * fn) > 0 else np.inf
+    return sens, spec, ppv, npv, acc, lr_pos, lr_neg, dor
+
+def wilson_ci(prop, n):
+    if n == 0 or np.isnan(prop):
+        return np.nan, np.nan
+    z = norm.ppf(0.975)
+    denominator = 1 + z**2 / n
+    centre = (prop + z**2 / (2 * n)) / denominator
+    margin = z * np.sqrt((prop * (1 - prop) + z**2 / (4 * n)) / n) / denominator
+    return max(0, centre - margin), min(1, centre + margin)
+
+def lr_ci(lr, tp, fp, fn, tn):
+    if lr <= 0 or np.isinf(lr) or np.isnan(lr):
+        return np.nan, np.nan
+    if lr >= 1:
+        if tp > 0 and fn > 0 and (tp + fp) > 0 and (fn + tn) > 0:
+            se = np.sqrt(1/tp - 1/(tp+fp) + 1/fn - 1/(fn+tn))
+        else:
+            return np.nan, np.nan
+    else:
+        if fp > 0 and tn > 0 and (tp + fp) > 0 and (fn + tn) > 0:
+            se = np.sqrt(1/fp - 1/(tp+fp) + 1/tn - 1/(fn+tn))
+        else:
+            return np.nan, np.nan
+    if np.isnan(se) or se <= 0:
+        return np.nan, np.nan
+    ci_low = np.exp(np.log(lr) - 1.96 * se)
+    ci_high = np.exp(np.log(lr) + 1.96 * se)
+    return ci_low, ci_high
+
+def mcnemar_test(b, c):
+    if b + c == 0:
+        return 0.0, 1.0
+    chi2_val = (abs(b - c) - 1)**2 / (b + c) if (b + c) > 0 else 0
+    p = 1 - chi2.cdf(chi2_val, 1)
+    return chi2_val, p
+
+# Validate binary (auto-threshold probability columns at 0.5)
+for col in [target_col] + valid_tests:
+    uniq_vals = df[col].dropna().unique()
+    if len(uniq_vals) > 2:
+        col_min, col_max = float(df[col].min()), float(df[col].max())
+        if 0 <= col_min and col_max <= 1:
+            print(f"ℹ️ `{col}` auto-thresholded at 0.5 (probability column)")
+            df[col + '_binarized'] = (df[col] >= 0.5).astype(int)
+            idx = valid_tests.index(col) if col in valid_tests else None
+            if idx is not None:
+                valid_tests[idx] = col + '_binarized'
+            else:
+                pass
+        else:
+            raise ValueError(f"Column `{col}` has {len(uniq_vals)} unique values; binary required")
+    elif len(uniq_vals) < 2:
+        raise ValueError(f"Column `{col}` has only 1 unique value; binary required")
+
+# Prepare results
+results = []
+pairwise_tests = []
+
+for test in valid_tests:
+    data = df[[target_col, test]].dropna()
+    n_dropped = len(df) - len(data)
+    if n_dropped > 0:
+        print(f"⚠️ Removed {n_dropped} rows ({n_dropped/len(df)*100:.1f}%) with missing data for test `{test}`")
+    ref = data[target_col].astype(int)
+    pred = data[test].astype(int)
+
+    tp = ((pred == 1) & (ref == 1)).sum()
+    fp = ((pred == 1) & (ref == 0)).sum()
+    fn = ((pred == 0) & (ref == 1)).sum()
+    tn = ((pred == 0) & (ref == 0)).sum()
+    n = len(data)
+
+    sens, spec, ppv, npv, acc, lr_pos, lr_neg, dor = calc_metrics(tp, fp, fn, tn)
+    sens_ci = wilson_ci(sens, tp + fn)
+    spec_ci = wilson_ci(spec, tn + fp)
+    ppv_ci = wilson_ci(ppv, tp + fp)
+    npv_ci = wilson_ci(npv, tn + fn)
+    acc_ci = wilson_ci(acc, n)
+    lr_pos_ci = lr_ci(lr_pos, tp, fp, fn, tn)
+    lr_neg_ci = lr_ci(lr_neg, tp, fp, fn, tn)
+
+    results.append({
+        "test": test,
+        "tp": int(tp), "fp": int(fp), "fn": int(fn), "tn": int(tn),
+        "n": n,
+        "sensitivity": sens, "sensitivity_ci_low": sens_ci[0], "sensitivity_ci_high": sens_ci[1],
+        "specificity": spec, "specificity_ci_low": spec_ci[0], "specificity_ci_high": spec_ci[1],
+        "ppv": ppv, "ppv_ci_low": ppv_ci[0], "ppv_ci_high": ppv_ci[1],
+        "npv": npv, "npv_ci_low": npv_ci[0], "npv_ci_high": npv_ci[1],
+        "accuracy": acc, "accuracy_ci_low": acc_ci[0], "accuracy_ci_high": acc_ci[1],
+        "lr_pos": lr_pos, "lr_pos_ci_low": lr_pos_ci[0], "lr_pos_ci_high": lr_pos_ci[1],
+        "lr_neg": lr_neg, "lr_neg_ci_low": lr_neg_ci[0], "lr_neg_ci_high": lr_neg_ci[1],
+        "dor": dor
+    })
+
+# Pairwise McNemar
+if len(valid_tests) > 1:
+    for i in range(len(valid_tests)):
+        for j in range(i+1, len(valid_tests)):
+            t1 = valid_tests[i]
+            t2 = valid_tests[j]
+            data_pair = df[[target_col, t1, t2]].dropna()
+            n_dropped = len(df) - len(data_pair)
+            if n_dropped > 0:
+                print(f"⚠️ Removed {n_dropped} rows ({n_dropped/len(df)*100:.1f}%) with missing data for pairwise test")
+            ref = data_pair[target_col].astype(int)
+            p1 = data_pair[t1].astype(int)
+            p2 = data_pair[t2].astype(int)
+            mask_d = (ref == 1)
+            b = ((p1[mask_d] == 0) & (p2[mask_d] == 1)).sum()
+            c = ((p1[mask_d] == 1) & (p2[mask_d] == 0)).sum()
+            chi2_sens, p_sens = mcnemar_test(b, c)
+            mask_nd = (ref == 0)
+            b_spec = ((p1[mask_nd] == 1) & (p2[mask_nd] == 0)).sum()
+            c_spec = ((p1[mask_nd] == 0) & (p2[mask_nd] == 1)).sum()
+            chi2_spec, p_spec = mcnemar_test(b_spec, c_spec)
+            pairwise_tests.append({
+                "test1": t1, "test2": t2,
+                "sens_chi2": chi2_sens, "sens_p": p_sens,
+                "spec_chi2": chi2_spec, "spec_p": p_spec,
+                "discordant_sens": f"{b} vs {c}",
+                "discordant_spec": f"{b_spec} vs {c_spec}"
+            })
+
+# ----- Output -----
+for res in results:
+    print(f"### {res['test']}\n")
+    print("#### Contingency Table\n")
+    print("|  | Reference + | Reference - |")
+    print("|----------|-------------|-------------|")
+    print(f"| **Test +** | {res['tp']} (TP) | {res['fp']} (FP) |")
+    print(f"| **Test -** | {res['fn']} (FN) | {res['tn']} (TN) |")
+    print()
+
+print("### Accuracy Metrics\n")
+print("| Metric | " + " | ".join([f"`{res['test']}` ({res['n']})" for res in results]) + " |")
+print("|--------|" + "|".join(["--------" for _ in results]) + "|")
+
+metrics_names = ["Sensitivity", "Specificity", "PPV", "NPV", "Accuracy", "LR+", "LR-", "DOR"]
+for metric in metrics_names:
+    row = f"| {metric} |"
+    for res in results:
+        if metric == "Sensitivity":
+            val = f"{res['sensitivity']:.3f} ({res['sensitivity_ci_low']:.3f}-{res['sensitivity_ci_high']:.3f})"
+        elif metric == "Specificity":
+            val = f"{res['specificity']:.3f} ({res['specificity_ci_low']:.3f}-{res['specificity_ci_high']:.3f})"
+        elif metric == "PPV":
+            val = f"{res['ppv']:.3f} ({res['ppv_ci_low']:.3f}-{res['ppv_ci_high']:.3f})"
+        elif metric == "NPV":
+            val = f"{res['npv']:.3f} ({res['npv_ci_low']:.3f}-{res['npv_ci_high']:.3f})"
+        elif metric == "Accuracy":
+            val = f"{res['accuracy']:.3f} ({res['accuracy_ci_low']:.3f}-{res['accuracy_ci_high']:.3f})"
+        elif metric == "LR+":
+            val = f"{res['lr_pos']:.2f} ({res['lr_pos_ci_low']:.2f}-{res['lr_pos_ci_high']:.2f})" if not np.isinf(res['lr_pos']) else "∞"
+        elif metric == "LR-":
+            val = f"{res['lr_neg']:.2f} ({res['lr_neg_ci_low']:.2f}-{res['lr_neg_ci_high']:.2f})" if not np.isinf(res['lr_neg']) else "0"
+        elif metric == "DOR":
+            val = f"{res['dor']:.2f}" if not np.isinf(res['dor']) else "∞"
+        else:
+            val = "—"
+        row += f" {val} |"
+    print(row)
+
+print()
+
+if pairwise_tests:
+    n_comp = len(pairwise_tests)
+    print("### Paired Comparison (McNemar)\n")
+    if n_comp > 1:
+        print(f"*{n_comp} pairwise comparisons. Multiple comparisons inflate Type I error.*\n")
+    print("| Comparison | Sensitivity p-value | Specificity p-value |")
+    print("|------------|-------------------|-------------------|")
+    for pt in pairwise_tests:
+        print(f"| {pt['test1']} vs {pt['test2']} | {fmt_p(pt['sens_p'])} | {fmt_p(pt['spec_p'])} |")
+    print()
+
+# Forest plot of sensitivity and specificity
+timestamp = str(int(time.time()))
+fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+
+for idx, metric_key in enumerate(["sensitivity", "specificity"]):
+    ax_i = ax[idx]
+    y_pos = range(len(results))
+    estimates = [res[metric_key] for res in results]
+    ci_lows = [res[f"{metric_key}_ci_low"] for res in results]
+    ci_highs = [res[f"{metric_key}_ci_high"] for res in results]
+    err_low = [est - low for est, low in zip(estimates, ci_lows)]
+    err_high = [high - est for est, high in zip(estimates, ci_highs)]
+    ax_i.errorbar(estimates, y_pos, xerr=[err_low, err_high], fmt='o', capsize=5)
+    ax_i.set_yticks(list(y_pos))
+    ax_i.set_yticklabels([res['test'] for res in results])
+    ax_i.set_xlabel(metric_key.capitalize())
+    ax_i.set_title(f"{metric_key.capitalize()} with 95% CI")
+    ax_i.set_xlim(0, 1)
+    ax_i.axvline(x=0.5, color='gray', linestyle='--')
+    ax_i.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plot_name = f"diag_acc_{timestamp}"
+save_plot(plot_name, fig)
+print(f"![Diagnostic Accuracy](/plots/{plot_name}.png)\n")
+
+# ---------- JSON metrics ----------
+output_metrics = {
+    "model_type": "diagnostic_accuracy",
+    "reference": target_col,
+    "tests": [res['test'] for res in results],
+    "results": results,
+    "pairwise_tests": pairwise_tests
+}
+
+def make_json_serializable(obj):
+    if isinstance(obj, dict):
+        return {k: make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [make_json_serializable(v) for v in obj]
+    elif isinstance(obj, (np.integer, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64)):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+        return float(obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, float) and (np.isnan(obj) or np.isinf(obj)):
+        return None
+    elif obj is None:
+        return None
+    else:
+        return obj
+
+output_metrics = make_json_serializable(output_metrics)
+print("\n<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False))
+print("<!-- JSON_METRICS_END -->")
+print("\n---\n**Diagnostic accuracy analysis complete**")

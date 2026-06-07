@@ -1,0 +1,410 @@
+# lasso_regression.py.jinja
+# Logistic LASSO Regression + Feature Selection
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.metrics import roc_auc_score, accuracy_score, classification_report
+import json
+import time
+from pathlib import Path
+import warnings
+from sklearn.calibration import calibration_curve
+warnings.filterwarnings('ignore')
+
+def net_benefit(y_true, y_pred, threshold):
+    if threshold <= 0 or threshold >= 1:
+        return 0
+    y_pred_bin = (y_pred >= threshold).astype(int)
+    tp = ((y_pred_bin == 1) & (y_true == 1)).sum()
+    fp = ((y_pred_bin == 1) & (y_true == 0)).sum()
+    n = len(y_true)
+    return (tp / n) - (fp / n) * (threshold / (1 - threshold))
+
+var_labels = {}
+try:
+    labels_path = Path(project_path) / "state" / "variable_labels.json"
+    if labels_path.exists():
+        with open(labels_path, 'r', encoding='utf-8') as f:
+            var_labels = json.load(f)
+except:
+    pass
+
+print("## Logistic LASSO: Feature Selection\n")
+
+target_col = "{{ target_col }}"
+covariates = {{ covariates|default([]) }}
+C_value = {{ C_value|default(1.0)|float }}
+auto_select_C = {{ auto_select_C|default(True) }}
+
+def safe_int(x):
+    try:
+        return int(float(x))
+    except:
+        return 0
+
+def safe_float(x):
+    try:
+        return float(x)
+    except:
+        return 0.0
+
+print(f"**Target (binary):** `{target_col}`")
+print(f"**Covariates:** {len(covariates) if covariates else 'all numeric'} variables")
+print(f"**C selection:** {'Automatic (CV)' if auto_select_C else f'Fixed C = {C_value}'}\n")
+
+if target_col not in df.columns:
+    raise ValueError(f"Target column '{target_col}' not found")
+
+# Определяем ковариаты
+if not covariates:
+    all_numeric = [c for c in df.columns if c != target_col and pd.api.types.is_numeric_dtype(df[c])]
+    auto_exclude = []
+    for col in all_numeric:
+        col_lower = col.lower()
+        if any(p in col_lower for p in ['_event', 'event_', '_time', 'time_', 'predicted_', '_prob', 'censored', 'followup', 'cox_', 'logistic_', 'rf_']):
+            auto_exclude.append(col)
+    valid_cov = [c for c in all_numeric if c not in auto_exclude]
+else:
+    valid_cov = [c for c in covariates if c in df.columns and c != target_col]
+
+if len(valid_cov) < 2:
+    raise ValueError("Need at least 2 valid numeric covariates")
+
+print(f"**Valid covariates:** {len(valid_cov)} variables\n")
+
+covariate_types = {{ covariate_types|default({})|tojson }}
+reference_groups = {{ reference_groups|default({})|tojson }}
+
+# Подготовка данных
+df_model = df[[target_col] + valid_cov].copy()
+
+# Кодируем целевую если нужно
+if df_model[target_col].dtype == 'object' or df_model[target_col].dtype.name == 'category':
+    le_target = LabelEncoder()
+    df_model[target_col] = le_target.fit_transform(df_model[target_col].astype(str))
+    print(f"**Target encoded:** 0 = {le_target.classes_[0]}, 1 = {le_target.classes_[1]}\n")
+
+def prepare_dummies(df_in, covariates_list, ref_groups, cov_types):
+    df_out = df_in.copy()
+    encoding_map = {}
+    dummy_to_info = {}
+    encoded_covariates = []
+    
+    for col in covariates_list:
+        if col in cov_types:
+            is_cat = (cov_types[col] == 'categorical')
+        else:
+            is_cat = (df_out[col].dtype == 'object' or
+                      df_out[col].dtype.name == 'category' or
+                      isinstance(df_out[col].dtype, pd.CategoricalDtype))
+        
+        if is_cat:
+            df_out[col] = df_out[col].astype(str).fillna('__MISSING__')
+            categories = sorted(list(df_out[col].unique()))
+            
+            ref = ref_groups.get(col)
+            if ref not in categories:
+                ref = categories[0] if categories else '__MISSING__'
+            
+            encoding_map[col] = {
+                'categories': categories,
+                'reference': ref,
+                'dummy_cols': []
+            }
+            
+            for cat in categories:
+                if cat == ref:
+                    continue
+                dummy_name = f"{col}_{cat}"
+                df_out[dummy_name] = (df_out[col] == cat).astype(int)
+                encoding_map[col]['dummy_cols'].append(dummy_name)
+                encoded_covariates.append(dummy_name)
+                dummy_to_info[dummy_name] = {
+                    'original': col,
+                    'category': cat,
+                    'reference': ref
+                }
+        else:
+            df_out[col] = pd.to_numeric(df_out[col], errors='coerce')
+            encoded_covariates.append(col)
+            
+    return df_out, encoded_covariates, encoding_map, dummy_to_info
+
+df_model, encoded_covs, encoding_map, dummy_to_info = prepare_dummies(df_model, valid_cov, reference_groups, covariate_types)
+
+if encoding_map:
+    print(f"**Categorical variables (dummy encoding):**")
+    for col, info in encoding_map.items():
+        print(f"   * `{col}`: Reference = `{info['reference']}`, Categories = {info['categories']}")
+    print()
+
+# Удаляем пропуски
+n_before = len(df_model)
+df_model = df_model.dropna()
+n_after = len(df_model)
+if n_after < n_before:
+    print(f"⚠️ Removed {n_before - n_after} rows ({((n_before - n_after)/n_before*100):.1f}%) with missing data")
+
+
+if len(df_model) < 20:
+    raise ValueError("Insufficient data")
+
+n_total = len(df_model)
+n_positive = int(df_model[target_col].sum())
+print(f"**Observations:** {n_total}")
+print(f"**Events (1):** {n_positive} ({n_positive/n_total*100:.1f}%)\n")
+
+# Подготовка данных
+X = df_model[encoded_covs].values
+y = df_model[target_col].values
+
+# Стандартизация
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Logistic LASSO (L1 penalty)
+if auto_select_C:
+    from sklearn.model_selection import GridSearchCV
+    param_grid = {'C': np.logspace(-4, 0, 20)}
+    base_model = LogisticRegression(penalty='l1', solver='saga', max_iter=10000, tol=1e-8, random_state=42, class_weight='balanced')
+    grid = GridSearchCV(base_model, param_grid, cv=5, scoring='neg_log_loss', n_jobs=-1)
+    grid.fit(X_scaled, y)
+    best_C = grid.best_params_['C']
+    model = grid.best_estimator_
+    if model.n_iter_[0] >= 10000:
+        print("⚠ Warning: solver did not converge. Increase max_iter.")
+    print(f"**Best C (inverse of λ):** {best_C:.4f} (selected by 5-fold CV)\n")
+else:
+    model = LogisticRegression(penalty='l1', C=C_value, solver='saga', max_iter=10000, tol=1e-8, random_state=42, class_weight='balanced')
+    model.fit(X_scaled, y)
+    if model.n_iter_[0] >= 10000:
+        print("⚠ Warning: solver did not converge. Increase max_iter or C.")
+    print(f"**C (inverse of λ):** {C_value} (fixed)\n")
+
+# Коэффициенты
+coefs = model.coef_[0]
+intercept = model.intercept_[0]
+
+feature_coefs = pd.DataFrame({
+    'Feature': encoded_covs,
+    'Coefficient': coefs
+}).sort_values('Coefficient', key=abs, ascending=False)
+
+# Map back to display names
+def display_name(col_name):
+    if col_name in dummy_to_info:
+        info = dummy_to_info[col_name]
+        return f"{info['original']} = {info['category']} (ref: {info['reference']})"
+    return col_name
+
+selected_features = feature_coefs[feature_coefs['Coefficient'] != 0]
+zeroed_features = feature_coefs[feature_coefs['Coefficient'] == 0]
+
+n_selected = len(selected_features)
+n_zeroed = len(zeroed_features)
+
+n_cov_total = len(encoded_covs)
+print(f"**Features selected:** {n_selected}/{n_cov_total}")
+print(f"**Features zeroed (LASSO):** {n_zeroed}/{n_cov_total}\n")
+
+# Таблица выбранных признаков
+if n_selected > 0:
+    print("### Selected Features (non-zero coefficients)\n")
+    print("| # | Feature | Coefficient | OR = exp(coef) |")
+    print("|---|---------|-------------|----------------|")
+    for i, (_, row) in enumerate(selected_features.iterrows(), 1):
+        coef = row['Coefficient']
+        or_val = np.exp(coef)
+        direction = "risk" if coef > 0 else "protective"
+        arrow = "↑" if coef > 0 else "↓"
+        disp = display_name(row['Feature'])
+        print(f"| {i} | {disp} {arrow} {direction} | {coef:.4f} | {or_val:.4f} |")
+    print()
+
+# Обнулённые признаки
+if n_zeroed > 0:
+    print("### Features Removed by LASSO\n")
+    zeroed_list = zeroed_features['Feature'].tolist()
+    zeroed_display = [display_name(f) for f in zeroed_list]
+    print(f"Removed ({len(zeroed_list)}): {', '.join([f'`{f}`' for f in zeroed_display])}")
+    print()
+
+# Метрики (на обучающей выборке — оптимистичны)
+y_pred_proba = model.predict_proba(X_scaled)[:, 1]
+y_pred = model.predict(X_scaled)
+auc = roc_auc_score(y, y_pred_proba)
+accuracy = accuracy_score(y, y_pred)
+
+print("**⚠️ Metrics computed on training data and may be optimistic**")
+print(f"**AUC:** {auc:.4f}")
+print(f"**Accuracy:** {accuracy:.4f}")
+print(f"**Intercept:** {intercept:.4f}\n")
+
+timestamp = str(int(time.time()))
+
+# График коэффициентов
+if n_selected > 0:
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # Plot 1: Selected features
+    ax1 = axes[0]
+    sel_sorted = selected_features.sort_values('Coefficient')
+    colors = ['#d62728' if c < 0 else '#1f77b4' for c in sel_sorted['Coefficient']]
+    ax1.barh(range(len(sel_sorted)), sel_sorted['Coefficient'].values, color=colors)
+    ax1.set_yticks(range(len(sel_sorted)))
+    ax1.set_yticklabels([display_name(f) for f in sel_sorted['Feature'].values], fontsize=9)
+    ax1.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
+    ax1.set_xlabel('Coefficient (log-odds)')
+    ax1.set_title(f'Logistic LASSO: Selected Features (n={n_selected})')
+    ax1.grid(True, alpha=0.3, axis='x')
+    
+    # Plot 2: All features (top 30)
+    ax2 = axes[1]
+    all_sorted = feature_coefs.sort_values('Coefficient')
+    top_n = min(30, len(all_sorted))
+    colors_all = ['#d62728' if c < 0 else ('#1f77b4' if c != 0 else '#999999') for c in all_sorted['Coefficient'].values[-top_n:]]
+    ax2.barh(range(top_n), all_sorted['Coefficient'].values[-top_n:], color=colors_all)
+    ax2.set_yticks(range(top_n))
+    ax2.set_yticklabels([display_name(f) for f in all_sorted['Feature'].values[-top_n:]], fontsize=8)
+    ax2.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
+    ax2.set_xlabel('Coefficient (log-odds)')
+    ax2.set_title(f'Logistic LASSO: All Features (Top {top_n})')
+    ax2.grid(True, alpha=0.3, axis='x')
+    
+    plt.tight_layout()
+    plot_filename = f"lasso_coefs_{timestamp}"
+    save_plot(plot_filename, fig)
+    print(f"![LASSO Coefficients](/plots/{plot_filename}.png)\n")
+
+# CV curve если авто
+if auto_select_C:
+    fig, ax = plt.subplots(figsize=(10, 5))
+    Cs = grid.param_grid['C']
+    scores = grid.cv_results_['mean_test_score']
+    
+    ax.plot(Cs, scores, 'b-o', markersize=4)
+    ax.axvline(x=best_C, color='red', linestyle='--', label=f'Best C = {best_C:.4f}')
+    ax.set_xscale('log')
+    ax.set_xlabel('C (inverse of λ)')
+    ax.set_ylabel('AUC (5-fold CV)')
+    ax.set_title('Logistic LASSO: Cross-Validation')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    cv_plot = f"lasso_cv_{timestamp}"
+    save_plot(cv_plot, fig)
+    print(f"![LASSO CV](/plots/{cv_plot}.png)\n")
+
+# ========== DCA ==========
+print("### Decision Curve Analysis (DCA)\n")
+
+thresholds = np.linspace(0.01, 0.99, 99)
+key_ths = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50]
+
+print("| Threshold | Model NB | Treat All NB | Treat None NB | Net Benefit Gain |")
+print("|-----------|----------|---------------|---------------|------------------|")
+for t in key_ths:
+    nb_m = net_benefit(y, y_pred_proba, t)
+    nb_a = net_benefit(y, np.ones(len(y)), t)
+    print(f"| {t*100:.0f}% | {nb_m:.4f} | {nb_a:.4f} | 0.0000 | {nb_m-nb_a:+.4f} |")
+print()
+
+fig_dca, ax_dca = plt.subplots(figsize=(10, 6))
+ta = [net_benefit(y, np.ones(len(y)), t) for t in thresholds]
+ax_dca.plot(thresholds, ta, color='#1f77b4', lw=2, label='Treat All')
+ax_dca.plot(thresholds, [0]*len(thresholds), color='#d62728', lw=2, label='Treat None')
+nb_model = [net_benefit(y, y_pred_proba, t) for t in thresholds]
+ax_dca.plot(thresholds, nb_model, color='#2ca02c', lw=2, label='LASSO Model')
+ax_dca.set_xlabel('Threshold Probability', fontsize=12)
+ax_dca.set_ylabel('Net Benefit', fontsize=12)
+ax_dca.set_xlim(0, 1)
+ax_dca.set_ylim(-0.05, max(max(ta), max(nb_model)) + 0.05)
+ax_dca.legend(loc='upper right', fontsize=9)
+ax_dca.grid(True, alpha=0.3)
+ax_dca.spines['top'].set_visible(False)
+ax_dca.spines['right'].set_visible(False)
+plt.tight_layout()
+dca_fn = f"lasso_dca_{timestamp}"
+save_plot(dca_fn, fig_dca)
+print(f"![LASSO DCA](/plots/{dca_fn}.png)\n")
+
+# ========== Calibration ==========
+print("### Calibration Plot\n")
+fig_cal, ax_cal = plt.subplots(figsize=(8, 8))
+prob_true, prob_pred = calibration_curve(y, y_pred_proba, n_bins=10, strategy='uniform')
+brier = ((y - y_pred_proba)**2).mean()
+ax_cal.plot(prob_pred, prob_true, 'o-', color='steelblue', ms=8, label=f'LASSO (Brier={brier:.3f})')
+ax_cal.plot([0, 1], [0, 1], '--', color='gray', label='Perfect calibration')
+ax_cal.set_xlabel('Predicted Probability')
+ax_cal.set_ylabel('Observed Proportion')
+ax_cal.set_title('Calibration Plot')
+ax_cal.legend(fontsize=10)
+ax_cal.grid(True, alpha=0.3)
+plt.tight_layout()
+cal_fn = f"lasso_calibration_{timestamp}"
+save_plot(cal_fn, fig_cal)
+print(f"![LASSO Calibration](/plots/{cal_fn}.png)\n")
+
+# ========== JSON METRICS FOR AI ==========
+output_metrics = {
+    "model_type": "logistic_lasso",
+    "target": target_col,
+    "n_total": n_total,
+    "n_events": n_positive,
+    "n_features_total": n_cov_total,
+    "n_features_selected": n_selected,
+    "n_features_zeroed": n_zeroed,
+    "auc": float(auc),
+    "accuracy": float(accuracy),
+    "intercept": float(intercept),
+    "best_C": float(best_C) if auto_select_C else C_value,
+    "auto_select_C": auto_select_C,
+    "selected_features": [
+        {
+            "feature": row['Feature'],
+            "display_name": display_name(row['Feature']),
+            "coefficient": float(row['Coefficient']),
+            "or": float(np.exp(row['Coefficient']))
+        }
+        for _, row in selected_features.iterrows()
+    ] if n_selected > 0 else [],
+    "zeroed_features": [display_name(f) for f in zeroed_features['Feature'].tolist()] if n_zeroed > 0 else [],
+    "encoding_map": {col: {'categories': info['categories'], 'reference': info['reference']} for col, info in encoding_map.items()}
+}
+
+def make_json_serializable(obj):
+    if isinstance(obj, dict):
+        return {str(k): make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_json_serializable(item) for item in obj]
+    elif isinstance(obj, (np.integer, np.int64, np.int32)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64, np.float32)):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    elif obj is None:
+        return None
+    else:
+        try:
+            return float(obj)
+        except:
+            return str(obj)
+
+output_metrics = make_json_serializable(output_metrics)
+
+print("---")
+print("**Logistic LASSO complete**")
+
+print("\n<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False))
+print("<!-- JSON_METRICS_END -->")

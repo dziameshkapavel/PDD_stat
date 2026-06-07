@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDD_STAT · Statistical Analysis</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body data-theme="light">
+    <!-- Apple-style Header -->
+    <header class="app-header">
+        <div class="app-header-left">
+            <div class="app-title-block">
+                <div class="app-title">
+                    <span class="app-title-main">PDD_STAT</span>
+                </div>
+                <div class="app-developer">Developed by P. Demeshko</div>
+            </div>
+        </div>
+        
+        <div class="app-header-center">
+            <!-- Basic Stats -->
+            <div class="dropdown">
+                <button class="header-btn dropdown-toggle" data-menu="basic">Basic Stats ▾</button>
+                <div class="dropdown-menu" id="basicMenu">
+                    <div class="dropdown-item" data-template="categorical">Categorical Comparison</div>
+                    <div class="dropdown-item" data-template="numeric">Numeric Comparison</div>
+                    <div class="dropdown-item" data-template="correlation">Correlation Analysis</div>
+                    <div class="dropdown-item" data-template="spline">Spline Analysis</div>
+                    <div class="dropdown-item" data-template="descriptive">Descriptive Statistics</div>
+                    <div class="dropdown-item" data-template="violin">Violin Plots</div>
+                    <div class="dropdown-item" data-template="anova">ANOVA / Kruskal-Wallis</div>
+                    <div class="dropdown-item" data-template="chartbuilder">Chart Builder</div>
+                </div>
+            </div>
+            
+            <!-- Regression -->
+            <div class="dropdown">
+                <button class="header-btn dropdown-toggle" data-menu="regression">Regression ▾</button>
+                <div class="dropdown-menu" id="regressionMenu">
+                    <div class="dropdown-item" data-template="cox">Cox Regression</div>
+                    <div class="dropdown-item" data-template="logistic">Logistic Regression</div>
+                    <div class="dropdown-item" data-template="lasso">Logistic LASSO</div>
+                    <div class="dropdown-item" data-template="rf">Random Forest</div>
+                </div>
+            </div>
+            
+            <!-- Survival -->
+            <div class="dropdown">
+                <button class="header-btn dropdown-toggle" data-menu="survival">Survival ▾</button>
+                <div class="dropdown-menu" id="survivalMenu">
+                    <div class="dropdown-item" data-template="km">Kaplan-Meier</div>
+                </div>
+            </div>
+            
+            <!-- Evaluation -->
+            <div class="dropdown">
+                <button class="header-btn dropdown-toggle" data-menu="evaluation">Evaluation ▾</button>
+                <div class="dropdown-menu" id="evaluationMenu">
+                    <div class="dropdown-item" data-template="modeleval">Model Evaluation (Binary)</div>
+                    <div class="dropdown-item" data-template="surveval">Survival Prediction Eval</div>
+                    <div class="dropdown-item" data-template="roc">ROC Analysis</div>
+                    <div class="dropdown-item" data-template="diagacc">Diagnostic Accuracy</div>
+                    <div class="dropdown-item" data-template="agreement">Agreement Analysis</div>
+                </div>
+            </div>
+            
+            <!-- Prediction -->
+            <div class="dropdown">
+                <button class="header-btn dropdown-toggle" data-menu="prediction">Prediction ▾</button>
+                <div class="dropdown-menu" id="predictionMenu">
+                    <div class="dropdown-item" data-template="indpred">Individual Prediction</div>
+                </div>
+            </div>
+            
+            <!-- AI Chat -->
+            <button class="header-btn" id="aiChatBtn" style="background: rgba(52, 199, 89, 0.15); color: var(--accent-green); border-color: var(--accent-green);">
+                AI Chat
+            </button>
+
+            <!-- Code mode -->
+            <button class="header-btn" id="codeModeBtn" style="background: rgba(255, 59, 48, 0.1); color: var(--accent-red); border-color: var(--accent-red);">
+                Code
+            </button>
+        </div>
+        
+        <div class="app-header-right">
+            <button class="header-btn theme-toggle" id="themeToggle" title="Toggle theme">
+                <span class="sun">☀︎</span>
+                <span class="moon">☾</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Layout -->
+    <div class="app-container">
+        <!-- Left Panel (Collapsible) -->
+        <aside class="left-panel" id="leftPanel">
+            <div class="panel-header">
+                <span class="panel-title">Project Manager</span>
+                <button class="collapse-btn" id="collapseLeftBtn" title="Collapse panel">◀</button>
+            </div>
+            <div class="panel-content">
+                <button class="btn-primary create-project-btn" id="createProjectBtn">+ Create Project</button>
+                <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" style="display:none;">
+                <div class="projects-list" id="projectsList">
+                    <div class="projects-header">Projects</div>
+                </div>
+                
+                <div style="margin-top:auto;padding-top:16px;border-top:1px solid var(--border-primary);">
+                    <button class="btn-secondary" id="aiSettingsBtn" style="width:100%;">AI Settings</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Workspace -->
+        <main class="main-workspace" id="mainWorkspace">
+            <div class="empty-state" id="emptyState">
+                <div class="empty-icon">📊</div>
+                <h3>No analysis selected</h3>
+                <p>Choose a template from the "Templates" menu to start</p>
+            </div>
+            
+            <div class="analysis-cards-container" id="analysisCards"></div>
+            
+            <div class="code-editor-container hidden" id="codeEditorContainer">
+                <div class="code-editor-header">
+                    <span>Python Script</span>
+                    <button class="btn-secondary" id="exitCodeModeBtn">Exit Code Mode</button>
+                </div>
+                <textarea class="code-editor" id="codeEditor" placeholder="# Paste or write your Python code here..."></textarea>
+                <div class="code-editor-footer" style="display:flex; justify-content: space-between; align-items: center;">
+                    <button class="btn-secondary" id="clearHistoryBtn" style="color: var(--accent-red); border-color: var(--accent-red);">Clear History & Plots</button>
+                    <div style="display:flex; gap:8px;">
+                        <button class="btn-secondary" id="clearCodeBtn">Clear Code</button>
+                        <button class="btn-primary" id="runCodeBtn">Run</button>
+                    </div>
+                </div>
+                <div class="code-results-container" id="codeResultsContainer"></div>
+            </div>
+        </main>
+
+        <!-- Right Panel (Collapsible) -->
+        <aside class="right-panel" id="rightPanel">
+            <div class="panel-header">
+                <span class="panel-title">Variables</span>
+                <button class="collapse-btn" id="collapseRightBtn" title="Collapse panel">▶</button>
+            </div>
+            <div class="panel-content">
+<div class="tabs">
+                    <button class="tab-btn active" data-tab="columns">Columns</button>
+                    <button class="tab-btn" data-tab="table">Reports</button>
+                    <button class="tab-btn" data-tab="chain">Chain</button>
+                </div>
+                
+                <div class="tab-panel active" id="tabColumns">
+                    <div class="variables-search">
+                        <input type="text" class="search-input" placeholder="🔍 Filter variables..." id="varSearch">
+                    </div>
+                    <div class="variables-list" id="variablesList"></div>
+                </div>
+                
+                <div class="tab-panel" id="tabTable">
+                </div>
+                
+                <div class="tab-panel" id="tabChain">
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Create Project Modal -->
+    <div class="modal hidden" id="createProjectModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create Project</h3>
+                <button class="modal-close" id="createProjectModalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Project Name</label>
+                    <input type="text" id="newProjectName" class="form-input" placeholder="Enter project name" style="width:100%;">
+                </div>
+                <div class="form-group" style="margin-top:16px;">
+                    <label class="form-label">Data File (Excel or CSV)</label>
+                    <label class="btn-secondary" style="display:block; padding:12px 16px; text-align:center; cursor:pointer;">
+                        <span id="newProjectFileName">📂 Choose file...</span>
+                        <input type="file" id="newProjectFile" accept=".xlsx,.xls,.csv" style="display:none;">
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="cancelCreateProject">Cancel</button>
+                <button class="btn-primary" id="confirmCreateProject">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cleaning Recommendations Modal -->
+    <div class="modal hidden" id="cleaningModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Data Cleaning Recommendations</h3>
+                <button class="modal-close" id="cleaningModalClose">&times;</button>
+            </div>
+            <div class="modal-body" id="cleaningModalBody"></div>
+            <div class="modal-footer">
+                <button class="btn-primary" id="applyCleaningBtn">Apply Cleaning</button>
+                <button class="btn-secondary" id="skipCleaningBtn">Skip (Keep as is)</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Card Templates -->
+    <template id="coxCardTemplate">
+        <div class="analysis-card" data-template="cox">
+            <div class="card-header">
+                <span class="card-title">Cox regression</span>
+                <div class="card-actions">
+                    <button class="card-close-btn" title="Remove analysis">✕</button>
+                </div>
+            </div>
+            <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Select event variable</label>
+                    <input type="text" class="form-input event-input" placeholder="Select event variable..." data-field="event" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Select time variable</label>
+                    <input type="text" class="form-input time-input" placeholder="Select time variable..." data-field="time" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Select covariates</label>
+                    <input type="text" class="form-input covariates-input" placeholder="Select covariates..." data-field="covariates" readonly>
+                </div>
+                <div class="form-group covariate-types-wrapper hidden" style="margin-top: 12px; margin-bottom: 20px;">
+                    <label class="form-label">Covariate Variable Types (Click to toggle)</label>
+                    <div class="covariate-types-container" style="display: flex; flex-wrap: wrap; gap: 8px; background: var(--bg-secondary); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--border-primary);"></div>
+                </div>
+                <div class="form-group reference-groups-wrapper hidden" style="margin-top: 12px; margin-bottom: 20px;">
+                    <label class="form-label">Reference Groups (Categorical Covariates)</label>
+                    <div class="reference-groups-container" style="display: flex; flex-direction: column; gap: 8px; background: var(--bg-secondary); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--border-primary);"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1; margin-bottom: 20px;">
+                        <label class="form-label">Analysis type</label>
+                        <div class="button-group">
+                            <button class="btn-secondary analysis-type active" data-type="univariate">Univariate</button>
+                            <button class="btn-secondary analysis-type" data-type="multivariate">Multivariate</button>
+                        </div>
+                    </div>
+                    <div class="form-group method-group hidden" style="flex:1; margin-bottom: 20px;">
+                        <label class="form-label">Method</label>
+                        <div class="button-group">
+                            <button class="btn-secondary method-btn" data-method="enter">Enter</button>
+                            <button class="btn-secondary method-btn" data-method="forward">Forward</button>
+                            <button class="btn-secondary method-btn" data-method="backward">Backward</button>
+                        </div>
+                    </div>
+                    <div class="form-group stepwise-p-group hidden" style="flex:1; margin-bottom: 20px;">
+                        <label class="form-label stepwise-p-label">P-value threshold</label>
+                        <input type="number" class="stepwise-p-input" value="0.05" step="0.01" min="0.001" max="0.99" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid var(--border-primary); background: var(--bg-secondary); color: var(--text-primary);">
+                    </div>
+                </div>
+                <div class="form-row" style="margin-bottom: 20px;">
+                    <div class="form-group" style="flex:1; margin-bottom: 0;">
+                        <label class="form-label">Adjust Survival Curves by Covariate</label>
+                        <select class="plot-adjust-select" style="width: 100%; height: 44px; padding: 10px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-primary); background: var(--bg-secondary); color: var(--text-primary);">
+                            <option value="">-- Baseline Only --</option>
+                        </select>
+                    </div>
+                </div>
+                <button class="run-btn">▶ Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
+
+    <template id="categoricalCardTemplate">
+        <div class="analysis-card" data-template="categorical">
+            <div class="card-header">
+                <span class="card-title">Categorical comparison</span>
+                <div class="card-actions">
+                    <button class="card-close-btn" title="Remove analysis">✕</button>
+                </div>
+            </div>
+            <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Select first variable</label>
+                    <input type="text" class="form-input col1-input" placeholder="Select first variable..." data-field="col1" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Select second variable</label>
+                    <input type="text" class="form-input col2-input" placeholder="Select second variable..." data-field="col2" readonly>
+                </div>
+                <button class="run-btn">▶ Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
+
+    <template id="logisticCardTemplate">
+        <div class="analysis-card" data-template="logistic">
+            <div class="card-header">
+                <span class="card-title">Logistic regression</span>
+                <div class="card-actions">
+                    <button class="card-close-btn" title="Remove analysis">✕</button>
+                </div>
+            </div>
+            <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Select target variable (binary)</label>
+                    <input type="text" class="form-input target-input" placeholder="Select target variable..." data-field="target" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Select predictors</label>
+                    <input type="text" class="form-input predictors-input" placeholder="Select predictors..." data-field="predictors" readonly>
+                </div>
+                <div class="form-group covariate-types-wrapper hidden" style="margin-top: 12px; margin-bottom: 20px;">
+                    <label class="form-label">Covariate Variable Types (Click to toggle)</label>
+                    <div class="covariate-types-container" style="display: flex; flex-wrap: wrap; gap: 8px; background: var(--bg-secondary); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--border-primary);"></div>
+                </div>
+                <div class="form-group reference-groups-wrapper hidden" style="margin-top: 12px; margin-bottom: 20px;">
+                    <label class="form-label">Reference Groups (Categorical Covariates)</label>
+                    <div class="reference-groups-container" style="display: flex; flex-direction: column; gap: 8px; background: var(--bg-secondary); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--border-primary);"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1;">
+                        <label class="form-label">Analysis type</label>
+                        <div class="button-group">
+                            <button class="btn-secondary analysis-type active" data-type="univariate">Univariate</button>
+                            <button class="btn-secondary analysis-type" data-type="multivariate">Multivariate</button>
+                        </div>
+                    </div>
+                    <div class="form-group method-group hidden" style="flex:1;">
+                        <label class="form-label">Method</label>
+                        <div class="button-group">
+                            <button class="btn-secondary method-btn" data-method="enter">Enter</button>
+                            <button class="btn-secondary method-btn" data-method="forward">Forward</button>
+                            <button class="btn-secondary method-btn" data-method="backward">Backward</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1;">
+                        <label class="form-label">Validation</label>
+                        <div class="button-group">
+                            <button class="btn-secondary validation-btn active" data-validation="none">None</button>
+                            <button class="btn-secondary validation-btn" data-validation="split">Train/Test</button>
+                            <button class="btn-secondary validation-btn" data-validation="cv">Cross-val</button>
+                        </div>
+                    </div>
+                </div>
+                <button class="run-btn">▶ Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
+
+    <template id="rfCardTemplate">
+        <div class="analysis-card" data-template="rf">
+            <div class="card-header">
+                <span class="card-title">Random Forest</span>
+                <div class="card-actions">
+                    <button class="card-close-btn" title="Remove analysis">✕</button>
+                </div>
+            </div>
+            <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Select target variable</label>
+                    <input type="text" class="form-input target-input" placeholder="Select target variable..." data-field="target" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Exclude variables (optional)</label>
+                    <input type="text" class="form-input exclusions-input" placeholder="Select exclusions..." data-field="exclusions" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Top features to show</label>
+                    <select class="top-features-select" style="padding:10px;border-radius:var(--radius-md);border:1px solid var(--border-primary);background:var(--bg-secondary);color:var(--text-primary);width:100%;">
+                        <option value="10">10</option>
+                        <option value="15" selected>15</option>
+                        <option value="20">20</option>
+                        <option value="0">All</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" class="shap-check" style="width:16px;height:16px;">
+                        <span>Include SHAP analysis</span>
+                    </label>
+                </div>
+                <button class="run-btn">▶ Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
+
+    <template id="rocCardTemplate">
+        <div class="analysis-card" data-template="roc">
+            <div class="card-header">
+                <span class="card-title">ROC Analysis</span>
+                <div class="card-actions">
+                    <button class="card-close-btn" title="Remove analysis">✕</button>
+                </div>
+            </div>
+            <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Target variable (binary)</label>
+                <input type="text" class="form-input target-input" placeholder="Select target variable..." data-field="target" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Value for "event" (positive class)</label>
+                    <select class="event-value-select form-input" style="width:100%;">
+                        <option value="1">1</option>
+                        <option value="0">0</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Predictors (numeric)</label>
+                    <input type="text" class="form-input predictors-input" placeholder="Select predictors..." data-field="predictors" readonly>
+                </div>
+                <button class="run-btn">▶ Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
+
+    <template id="diagAccCardTemplate">
+        <div class="analysis-card" data-template="diagacc">
+            <div class="card-header">
+                <span class="card-title">Diagnostic Accuracy</span>
+                <div class="card-actions">
+                    <button class="card-close-btn" title="Remove analysis">✕</button>
+                </div>
+            </div>
+            <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Reference standard (binary)</label>
+                    <input type="text" class="form-input target-input" placeholder="Select reference variable..." data-field="target" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Index test(s) (numeric)</label>
+                    <input type="text" class="form-input predictors-input" placeholder="Select test variables..." data-field="predictors" readonly>
+                </div>
+                <button class="run-btn">▶ Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
+
+    <template id="agreementCardTemplate">
+        <div class="analysis-card" data-template="agreement">
+            <div class="card-header">
+                <span class="card-title">Agreement Analysis</span>
+                <div class="card-actions"><button class="card-close-btn">✕</button></div>
+            </div>
+            <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Select raters (2+ columns)</label>
+                    <input type="text" class="form-input predictors-input" placeholder="Select raters..." data-field="predictors" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Category type</label>
+                    <div class="button-group">
+                        <button class="btn-secondary btn-nominal" data-type="nominal">Nominal</button>
+                        <button class="btn-secondary btn-ordinal" data-type="ordinal">Ordinal (Weighted)</button>
+                    </div>
+                </div>
+                <div class="form-group weight-group" style="display:none;">
+                    <label class="form-label">Weight type</label>
+                    <div class="button-group">
+                        <button class="btn-secondary btn-weight active" data-weight="linear">Linear</button>
+                        <button class="btn-secondary btn-weight" data-weight="quadratic">Quadratic</button>
+                    </div>
+                </div>
+                <button class="run-btn">▶ Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
+
+    <template id="kmCardTemplate">
+        <div class="analysis-card" data-template="km">
+            <div class="card-header">
+                <span class="card-title">Kaplan-Meier Survival</span>
+                <div class="card-actions">
+                    <button class="card-close-btn" title="Remove analysis">✕</button>
+                </div>
+            </div>
+            <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Select time variable</label>
+                    <input type="text" class="form-input time-input" placeholder="Select time variable..." data-field="time" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Select event variable</label>
+                    <input type="text" class="form-input event-input" placeholder="Select event variable..." data-field="event" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Select group variable</label>
+                    <input type="text" class="form-input group-input" placeholder="Select group variable..." data-field="group" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Select stratify variable (optional)</label>
+                    <input type="text" class="form-input stratify-input" placeholder="Select stratify variable..." data-field="stratify" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Plot type</label>
+                    <div class="button-group">
+                        <button class="btn-secondary plot-type-btn active" data-type="survival">Survival</button>
+                        <button class="btn-secondary plot-type-btn" data-type="hazard">Hazard</button>
+                        <button class="btn-secondary ci-toggle-btn active" title="Show 95% CI">95% CI</button>
+                        <button class="btn-secondary chart-axes-btn" title="Customize axes">Chart Axes</button>
+                    </div>
+                    <div class="chart-axes-row" style="display:none;margin-top:8px;gap:12px;align-items:center;flex-wrap:wrap;">
+                        <div style="display:flex;align-items:center;gap:4px;">
+                            <span style="font-size:11px;">X step:</span>
+                            <input type="number" class="form-input x-step-input" value="6" min="1" max="120" style="width:55px;padding:4px 6px;font-size:12px;">
+                        </div>
+                        <div style="display:flex;align-items:center;gap:4px;">
+                            <span style="font-size:11px;">X label:</span>
+                            <input type="text" class="form-input x-label-input" value="Time, months" style="width:120px;padding:4px 6px;font-size:12px;">
+                        </div>
+                        <div style="display:flex;align-items:center;gap:4px;">
+                            <span style="font-size:11px;">Y step:</span>
+                            <input type="number" class="form-input y-step-input" value="10" min="1" max="100" style="width:55px;padding:4px 6px;font-size:12px;">
+                            <span style="font-size:10px;color:var(--text-muted);">%</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:4px;">
+                            <span style="font-size:11px;">Y label:</span>
+                            <input type="text" class="form-input y-label-input" value="Survival Probability" style="width:140px;padding:4px 6px;font-size:12px;">
+                        </div>
+                    </div>
+                </div>
+                <button class="run-btn">▶ Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
+
+    <template id="modelEvalBinaryCardTemplate">
+        <div class="analysis-card" data-template="modeleval">
+            <div class="card-header">
+                <span class="card-title">Model Evaluation (Binary)</span>
+                <div class="card-actions">
+                    <button class="card-close-btn" title="Remove analysis">✕</button>
+                </div>
+            </div>
+            <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Target variable (binary)</label>
+                    <input type="text" class="form-input target-input" placeholder="Select target variable..." data-field="target" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Prediction columns</label>
+                    <input type="text" class="form-input predictors-input" placeholder="Select prediction columns..." data-field="predictors" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Bootstrap samples</label>
+                    <select class="bootstrap-input" style="padding:10px;border-radius:var(--radius-md);border:1px solid var(--border-primary);background:var(--bg-secondary);color:var(--text-primary);width:100%;">
+                        <option value="500">500</option>
+                        <option value="1000" selected>1000</option>
+                        <option value="2000">2000</option>
+                    </select>
+                </div>
+                <div class="form-group" style="display:flex;gap:24px;flex-wrap:wrap;">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" class="dca-check" checked style="width:16px;height:16px;">
+                        <span>Include DCA</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" class="calib-check" checked style="width:16px;height:16px;">
+                        <span>Calibration</span>
+                    </label>
+                </div>
+                <button class="run-btn">▶ Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
+
+    <template id="aiChatCardTemplate">
+        <div class="analysis-card" data-template="aichat">
+            <div class="card-header">
+                <span class="card-title">AI Assistant <span class="model-label">Loading...</span></span>
+                <div class="card-actions">
+                    <button class="card-close-btn" title="Close chat">✕</button>
+                </div>
+            </div>
+            <div style="padding: 0;">
+                <div class="chat-messages" style="margin: 0 0 12px 0;"></div>
+                <div class="chat-input-row" style="padding: 0;">
+                    <textarea class="chat-input" rows="3" placeholder="Ask a question about your data or results..."></textarea>
+                    <button class="send-btn">↑</button>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <template id="numericCompareCardTemplate">
+        <div class="analysis-card" data-template="numeric">
+            <div class="card-header">
+                <span class="card-title">Numeric Comparison</span>
+                <div class="card-actions">
+                    <button class="card-close-btn" title="Remove analysis">✕</button>
+                </div>
+            </div>
+            <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Value variable (numeric)</label>
+                    <input type="text" class="form-input value-input" placeholder="Select value variable..." data-field="value" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Group by (categorical)</label>
+                    <input type="text" class="form-input group-input" placeholder="Select group variable..." data-field="group" readonly>
+                </div>
+                <button class="run-btn">▶ Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
+
+    <template id="anovaCardTemplate">
+        <div class="analysis-card" data-template="anova">
+            <div class="card-header">
+                <span class="card-title">ANOVA / Kruskal-Wallis</span>
+                <div class="card-actions"><button class="card-close-btn">✕</button></div>
+            </div>
+            <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Value variable (numeric)</label>
+                    <input type="text" class="form-input value-input" placeholder="Select value variable..." data-field="value" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Group by (categorical, ≥2 groups)</label>
+                    <input type="text" class="form-input group-input" placeholder="Select group variable..." data-field="group" readonly>
+                </div>
+                <button class="run-btn">▶ Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
+
+    <template id="lassoCardTemplate">
+    <div class="analysis-card" data-template="lasso">
+        <div class="card-header">
+            <span class="card-title">Logistic LASSO</span>
+            <div class="card-actions">
+                <button class="card-close-btn" title="Remove analysis">✕</button>
+            </div>
+        </div>
+        <div class="card-form">
+            <div class="form-group">
+                <label class="form-label">Target variable (binary)</label>
+                <input type="text" class="form-input target-input" placeholder="Select target variable..." data-field="target" readonly>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Covariates (leave empty for all numeric)</label>
+                <input type="text" class="form-input covariates-input" placeholder="Select covariates..." data-field="covariates" readonly>
+            </div>
+            <div class="form-group covariate-types-wrapper hidden" style="margin-top: 12px; margin-bottom: 20px;">
+                <label class="form-label">Covariate Variable Types (Click to toggle)</label>
+                <div class="covariate-types-container" style="display: flex; flex-wrap: wrap; gap: 8px; background: var(--bg-secondary); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--border-primary);"></div>
+            </div>
+            <div class="form-group reference-groups-wrapper hidden" style="margin-top: 12px; margin-bottom: 20px;">
+                <label class="form-label">Reference Groups (Categorical Covariates)</label>
+                <div class="reference-groups-container" style="display: flex; flex-direction: column; gap: 8px; background: var(--bg-secondary); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--border-primary);"></div>
+            </div>
+            <div class="form-group">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                    <input type="checkbox" class="auto-c-check" checked style="width:16px;height:16px;">
+                    <span>Auto-select C (cross-validation)</span>
+                </label>
+            </div>
+            <div class="form-group c-value-row" style="display:none;">
+                <label class="form-label">C (inverse of λ, lower = stronger regularization)</label>
+                <input type="number" class="form-input c-value-input" value="0.1" step="0.01" min="0.001" max="100" style="width:100%;">
+                </div>
+                <button class="run-btn">▶ Run</button>
+                <div style="clear:both;"></div>
+            </div>
+        <div class="card-results-container"></div>
+    </div>
+</template>
+
+    <template id="correlationCardTemplate">
+        <div class="analysis-card" data-template="correlation">
+            <div class="card-header">
+                <span class="card-title">Correlation Analysis</span>
+                <div class="card-actions">
+                    <button class="card-close-btn" title="Remove analysis">✕</button>
+                </div>
+            </div>
+            <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Variables (select multiple)</label>
+                    <input type="text" class="form-input predictors-input" placeholder="Select variables..." data-field="predictors" readonly>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1;">
+                        <label class="form-label">Method</label>
+                        <select class="method-select form-input" style="width:100%;">
+                            <option value="pearson">Pearson</option>
+                            <option value="spearman">Spearman</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex:1;">
+                        <label class="form-label">Threshold (|r| >)</label>
+                        <select class="threshold-input form-input" style="width:100%;">
+                            <option value="0.3">0.3</option>
+                            <option value="0.5" selected>0.5</option>
+                            <option value="0.7">0.7</option>
+                        </select>
+                    </div>
+                </div>
+                <button class="run-btn">Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
+
+    <template id="splineCardTemplate">
+        <div class="analysis-card" data-template="spline">
+            <div class="card-header">
+                <span class="card-title">Spline Analysis</span>
+                <div class="card-actions"><button class="card-close-btn">✕</button></div>
+            </div>
+            <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Variable of interest</label>
+                    <input type="text" class="form-input variable-input" placeholder="Select variable of interest..." data-field="variable" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Outcome type</label>
+                    <div style="display:flex;gap:16px;">
+                        <label><input type="radio" class="outcome-binary" name="outcome" checked> Binary target</label>
+                        <label><input type="radio" class="outcome-survival" name="outcome"> Time-to-event</label>
+                    </div>
+                </div>
+                <div class="binary-inputs">
+                    <div class="form-group">
+                        <label class="form-label">Target variable (binary)</label>
+                    <input type="text" class="form-input target-input" placeholder="Select target variable..." data-field="target" readonly>
+                    </div>
+                </div>
+                <div class="survival-inputs" style="display:none;">
+                    <div class="form-group">
+                        <label class="form-label">Time variable</label>
+                        <input type="text" class="form-input time-input" placeholder="Select time variable..." data-field="time" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Event variable</label>
+                        <input type="text" class="form-input event-input" placeholder="Select event variable..." data-field="event" readonly>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Adjust for (optional)</label>
+                    <input type="text" class="form-input covariates-input" placeholder="Select covariates..." data-field="covariates" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Knot placement</label>
+                    <div style="display:flex;gap:12px;align-items:center;">
+                        <label><input type="radio" class="knot-radio" name="knot" value="median" checked> Median</label>
+                        <label><input type="radio" class="knot-radio" name="knot" value="quartiles"> Quartiles</label>
+                        <label><input type="radio" class="knot-radio" name="knot" value="custom"> Custom:</label>
+                        <input type="number" class="form-input custom-knot" style="width:80px;" placeholder="0" step="any">
+                    </div>
+                </div>
+                <button class="run-btn">Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
+
+    <template id="violinPlotCardTemplate">
+        <div class="analysis-card" data-template="violin">
+            <div class="card-header">
+                <span class="card-title">Violin Plots</span>
+                <div class="card-actions"><button class="card-close-btn">✕</button></div>
+            </div>
+            <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Variable (numeric)</label>
+                    <input type="text" class="form-input value-input" placeholder="Select value variable..." data-field="value" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Select group variable</label>
+                    <input type="text" class="form-input group-input" placeholder="Select group variable..." data-field="group" readonly>
+                </div>
+                <button class="run-btn">Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
+
+    <template id="descriptiveStatsCardTemplate">
+        <div class="analysis-card" data-template="descriptive">
+            <div class="card-header">
+                <span class="card-title">Descriptive Statistics</span>
+                <div class="card-actions"><button class="card-close-btn">✕</button></div>
+            </div>
+                <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Variables (leave empty for all numeric)</label>
+                    <input type="text" class="form-input covariates-input" placeholder="Select variables..." data-field="covariates" readonly>
+                </div>
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" class="plots-check" style="width:16px;height:16px;">
+                        <span>Include histograms</span>
+                    </label>
+                </div>
+                <button class="run-btn">Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
+
+    <template id="resultsBlockTemplate">
+        <div class="results-block">
+            <div class="results-header">
+                <span class="results-title"></span>
+                <button class="btn-secondary charts-toggle-btn">Hide Charts</button>
+                <button class="results-close-btn" title="Remove results">✕</button>
+            </div>
+            <div class="results-table-container"></div>
+            <div class="results-stats"></div>
+            <div class="results-plots"></div>
+        </div>
+    </template>
+
+    <!-- Главный модуль приложения -->
+    <template id="extValCardTemplate">
+    <div class="analysis-card" data-template="extval">
+        <div class="card-header">
+            <span class="card-title">External Model Validation</span>
+            <div class="card-actions"><button class="card-close-btn">✕</button></div>
+        </div>
+        <div class="card-form">
+            <div class="form-group">
+                <label class="form-label">Model file (.joblib or .pkl)</label>
+                <input type="file" class="model-file-input" accept=".joblib,.pkl" style="display:none;">
+                <button class="btn-primary upload-btn" style="width:100%;">Select File</button>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Target column</label>
+                <input type="text" class="form-input target-input" placeholder="Select target variable...">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Event value (positive class)</label>
+                <select class="event-value-select form-input" style="width:100%;">
+                    <option value="1">1</option>
+                    <option value="0">0</option>
+                </select>
+            </div>
+            <div class="mapping-container"></div>
+            <button class="run-btn">▶ Run Validation</button>
+            <div style="clear:both;"></div>
+        </div>
+        <div class="card-results-container"></div>
+    </div>
+</template>
+    <template id="indPredCardTemplate">
+    <div class="analysis-card" data-template="indpred">
+        <div class="card-header">
+            <span class="card-title">Individual Prediction</span>
+            <div class="card-actions"><button class="card-close-btn">✕</button></div>
+        </div>
+        <div class="card-form">
+            <div class="form-group">
+                <label class="form-label">Model file (.joblib)</label>
+                <input type="file" class="model-file-input" accept=".joblib,.pkl" style="display:none;">
+                <button class="btn-primary upload-btn" style="width:100%;">Select File</button>
+            </div>
+            <div class="patient-form"></div>
+            <button class="run-btn">▶ Predict</button>
+            <div style="clear:both;"></div>
+        </div>
+        <div class="card-results-container"></div>
+    </div>
+</template>
+    <template id="survEvalCardTemplate">
+    <div class="analysis-card" data-template="surveval">
+        <div class="card-header">
+            <span class="card-title">Survival Prediction Evaluation</span>
+            <div class="card-actions"><button class="card-close-btn">✕</button></div>
+        </div>
+        <div class="card-form">
+            <div class="form-group">
+                <label class="form-label">Time variable</label>
+                <input type="text" class="form-input time-input" data-field="time" 
+                       placeholder="Select time variable..." readonly>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Event variable</label>
+                <input type="text" class="form-input event-input" data-field="event" 
+                       placeholder="Select event variable..." readonly>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Prediction columns (risk scores)</label>
+                <input type="text" class="form-input predictors-input" data-field="predictors" 
+                       placeholder="Select risk columns..." readonly>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Evaluation time points (months)</label>
+                <input type="text" class="form-input time-points-input" 
+                       value="" placeholder="Optional: 12,24,48" style="width:100%;">
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Stratify by (optional)</label>
+                <input type="text" class="form-input stratify-input" data-field="stratify" 
+                       placeholder="Select variable to stratify..." readonly>
+            </div>
+                <div class="form-group">
+                    <label class="form-label">Plot type</label>
+                    <div class="button-group">
+                        <button class="btn-secondary smooth-btn" title="Smooth curves">Smooth</button>
+                        <button class="btn-secondary chart-axes-btn" title="Customize axes">Chart Axes</button>
+                    </div>
+                <div class="chart-axes-row" style="display:none;margin-top:8px;gap:12px;align-items:center;flex-wrap:wrap;">
+                    <div style="display:flex;align-items:center;gap:4px;">
+                        <span style="font-size:11px;">X step:</span>
+                        <input type="number" class="form-input x-step-input" value="6" min="1" max="120" style="width:55px;padding:4px 6px;font-size:12px;">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:4px;">
+                        <span style="font-size:11px;">X label:</span>
+                        <input type="text" class="form-input x-label-input" value="Time, months" style="width:120px;padding:4px 6px;font-size:12px;">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:4px;">
+                        <span style="font-size:11px;">Y step:</span>
+                        <input type="number" class="form-input y-step-input" value="0.1" min="0.05" max="0.5" step="0.05" style="width:55px;padding:4px 6px;font-size:12px;">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:4px;">
+                        <span style="font-size:11px;">Y label:</span>
+                        <input type="text" class="form-input y-label-input" value="AUC" style="width:80px;padding:4px 6px;font-size:12px;">
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Bootstrap settings -->
+            <div class="form-group">
+                <label class="form-label">Bootstrap samples for CI</label>
+                <select class="bootstrap-input" style="padding:10px;border-radius:var(--radius-md);
+                        border:1px solid var(--border-primary);background:var(--bg-secondary);
+                        color:var(--text-primary);width:100%;">
+                    <option value="500">500</option>
+                    <option value="1000" selected>1000</option>
+                    <option value="2000">2000</option>
+                </select>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">
+                    More samples = more accurate CIs but slower (2000 ≈ 30s)
+                </div>
+            </div>
+            
+            <button class="run-btn">▶ Run</button>
+            <div style="clear:both;"></div>
+        </div>
+        <div class="card-results-container"></div>
+        </div>
+    </template>
+    <template id="chartBuilderCardTemplate">
+        <div class="analysis-card" data-template="chartbuilder">
+            <div class="card-header">
+                <span class="card-title">Chart Builder</span>
+                <div class="card-actions"><button class="card-close-btn">✕</button></div>
+            </div>
+            <div class="card-form">
+                <div class="form-group">
+                    <label class="form-label">Chart type</label>
+                    <select class="form-input chart-type-select" style="width:100%;">
+                        <option value="histogram">Histogram</option>
+                        <option value="box">Box Plot</option>
+                        <option value="scatter">Scatter Plot</option>
+                        <option value="bar">Bar Chart (mean ± SD)</option>
+                        <option value="density">Density Plot</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">X variable</label>
+                    <input type="text" class="form-input x-input" data-field="x" placeholder="Select variable..." readonly>
+                </div>
+                <div class="form-group y-group">
+                    <label class="form-label">Y variable</label>
+                    <input type="text" class="form-input y-input" data-field="y" placeholder="Select variable..." readonly>
+                </div>
+                <div class="form-group group-group">
+                    <label class="form-label">Group / Color by (optional)</label>
+                    <input type="text" class="form-input group-input" data-field="group" placeholder="Select variable..." readonly>
+                </div>
+                <div class="form-group hist-params" style="display:none;">
+                    <label class="form-label">Number of bins</label>
+                    <input type="number" class="form-input bins-input" value="20" min="5" max="100" style="width:100%;">
+                    <label style="display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer;">
+                        <input type="checkbox" class="kde-check" style="width:16px;height:16px;">
+                        <span>Show KDE curve</span>
+                    </label>
+                </div>
+                <div class="form-group scatter-params" style="display:none;">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" class="regline-check" style="width:16px;height:16px;">
+                        <span>Show regression line</span>
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Plot options</label>
+                    <div class="button-group">
+                        <button class="btn-secondary chart-axes-btn" title="Customize axes">Chart Axes</button>
+                    </div>
+                    <div class="chart-axes-row" style="display:none;margin-top:8px;gap:12px;align-items:center;flex-wrap:wrap;">
+                        <div style="display:flex;align-items:center;gap:4px;">
+                            <span style="font-size:11px;">Title:</span>
+                            <input type="text" class="form-input title-input" value="" style="width:180px;padding:4px 6px;font-size:12px;" placeholder="Chart title">
+                        </div>
+                        <div style="display:flex;align-items:center;gap:4px;">
+                            <span style="font-size:11px;">X label:</span>
+                            <input type="text" class="form-input x-label-input" value="" style="width:120px;padding:4px 6px;font-size:12px;" placeholder="X axis">
+                        </div>
+                        <div style="display:flex;align-items:center;gap:4px;">
+                            <span style="font-size:11px;">Y label:</span>
+                            <input type="text" class="form-input y-label-input" value="" style="width:120px;padding:4px 6px;font-size:12px;" placeholder="Y axis">
+                        </div>
+                    </div>
+                </div>
+                <button class="run-btn">▶ Run</button>
+                <div style="clear:both;"></div>
+            </div>
+            <div class="card-results-container"></div>
+        </div>
+    </template>
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

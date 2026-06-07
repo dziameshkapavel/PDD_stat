@@ -1,0 +1,414 @@
+# model_evaluation_binary.py.jinja
+# Model Evaluation for Binary Classification
+# DCA + Metrics with Bootstrap
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import (
+    roc_curve, auc, roc_auc_score,
+    accuracy_score, precision_score, recall_score, f1_score,
+    brier_score_loss, confusion_matrix
+)
+from sklearn.calibration import calibration_curve
+from scipy import stats
+import json
+import time
+from pathlib import Path
+import warnings
+warnings.filterwarnings('ignore')
+
+var_labels = {}
+try:
+    labels_path = Path(project_path) / "state" / "variable_labels.json"
+    if labels_path.exists():
+        with open(labels_path, 'r', encoding='utf-8') as f:
+            var_labels = json.load(f)
+except:
+    pass
+
+print("## Model Evaluation: Binary Classification\n")
+
+# ========== PARAMETERS ==========
+pred_cols = {{ pred_cols|default([])|tojson }}
+target_col = "{{ target_col }}"
+
+n_bootstrap = {{ n_bootstrap|default(1000)|int }}
+bootstrap_seed = {{ bootstrap_seed|default(42)|int }}
+run_dca = {{ run_dca|default(True) }}
+run_calibration = {{ run_calibration|default(True) }}
+auto_invert = {{ auto_invert|default(False) }}
+
+print(f"**Target:** `{target_col}`")
+print(f"**Models:** {', '.join([f'`{p}`' for p in pred_cols])}")
+print(f"**Bootstrap samples:** {n_bootstrap}")
+print(f"**Auto-invert:** {'Yes' if auto_invert else 'No'}")
+print(f"**DCA:** {'Yes' if run_dca else 'No'}")
+print(f"**Calibration:** {'Yes' if run_calibration else 'No'}\n")
+
+# ========== VALIDATION ==========
+if target_col not in df.columns:
+    raise ValueError(f"Target column '{target_col}' not found")
+
+valid_preds = [p for p in pred_cols if p in df.columns]
+if not valid_preds:
+    raise ValueError("No valid prediction columns")
+
+n_before = len(df)
+df_eval = df[[target_col] + valid_preds].copy().dropna()
+n_after = len(df_eval)
+if n_after < n_before:
+    print(f"⚠️ Removed {n_before - n_after} rows ({((n_before - n_after)/n_before*100):.1f}%) with missing data")
+
+y_true = df_eval[target_col].values.astype(int)
+
+n_total = len(df_eval)
+n_positive = y_true.sum()
+n_negative = n_total - n_positive
+
+print(f"**Observations:** {n_total}")
+print(f"**Positive events:** {n_positive} ({n_positive/n_total*100:.1f}%)")
+print(f"**Negative events:** {n_negative} ({n_negative/n_total*100:.1f}%)\n")
+
+# ========== METRIC FUNCTIONS ==========
+def is_inverted(y_true, y_pred):
+    return roc_auc_score(y_true, y_pred) < 0.5
+
+def fix_if_inverted(y_true, y_pred):
+    if auto_invert and is_inverted(y_true, y_pred):
+        return 1 - y_pred
+    return y_pred
+
+def calc_auc(y_true, y_pred):
+    if auto_invert:
+        yp = fix_if_inverted(y_true, y_pred)
+    else:
+        yp = y_pred
+    return roc_auc_score(y_true, yp)
+
+def calc_accuracy(y_true, y_pred):
+    yp = fix_if_inverted(y_true, y_pred)
+    return accuracy_score(y_true, (yp >= 0.5).astype(int))
+
+def calc_sensitivity(y_true, y_pred):
+    yp = fix_if_inverted(y_true, y_pred)
+    y_pred_bin = (yp >= 0.5).astype(int)
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred_bin).ravel()
+    return tp / (tp + fn) if (tp + fn) > 0 else 0
+
+def calc_specificity(y_true, y_pred):
+    yp = fix_if_inverted(y_true, y_pred)
+    y_pred_bin = (yp >= 0.5).astype(int)
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred_bin).ravel()
+    return tn / (tn + fp) if (tn + fp) > 0 else 0
+
+def calc_ppv(y_true, y_pred):
+    yp = fix_if_inverted(y_true, y_pred)
+    y_pred_bin = (yp >= 0.5).astype(int)
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred_bin).ravel()
+    return tp / (tp + fp) if (tp + fp) > 0 else 0
+
+def calc_npv(y_true, y_pred):
+    yp = fix_if_inverted(y_true, y_pred)
+    y_pred_bin = (yp >= 0.5).astype(int)
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred_bin).ravel()
+    return tn / (tn + fn) if (tn + fn) > 0 else 0
+
+def calc_f1(y_true, y_pred):
+    yp = fix_if_inverted(y_true, y_pred)
+    y_pred_bin = (yp >= 0.5).astype(int)
+    return f1_score(y_true, y_pred_bin, zero_division=0)
+
+def calc_brier(y_true, y_pred):
+    yp = fix_if_inverted(y_true, y_pred)
+    return brier_score_loss(y_true, yp)
+
+def bootstrap_ci(y_true, y_pred, metric_func, n_iter=1000):
+    n = len(y_true)
+    values = []
+    np.random.seed(bootstrap_seed)
+
+    for _ in range(n_iter):
+        idx = np.random.choice(n, n, replace=True)
+        y_t = y_true[idx]
+        y_p = y_pred[idx]
+
+        if len(np.unique(y_t)) < 2:
+            continue
+        try:
+            values.append(metric_func(y_t, y_p))
+        except:
+            continue
+
+    if not values:
+        return None, None, None
+
+    base = metric_func(y_true, y_pred)
+    ci_low = np.percentile(values, 2.5)
+    ci_high = np.percentile(values, 97.5)
+    return base, ci_low, ci_high
+
+def net_benefit(y_true, y_pred, threshold):
+    if threshold <= 0 or threshold >= 1:
+        return 0
+    yp = fix_if_inverted(y_true, y_pred)
+    y_pred_bin = (yp >= threshold).astype(int)
+    tp = ((y_pred_bin == 1) & (y_true == 1)).sum()
+    fp = ((y_pred_bin == 1) & (y_true == 0)).sum()
+    n = len(y_true)
+    return (tp / n) - (fp / n) * (threshold / (1 - threshold))
+
+# ========== METRICS TABLE ==========
+print("### Model Performance Metrics\n")
+if not auto_invert:
+    print("*Auto-inversion disabled. Models with AUC < 0.5 will show poor metrics.*\n")
+else:
+    print("*Auto-inversion enabled. Predictions with AUC < 0.5 will be flipped.*\n")
+
+metrics_config = [
+    ("AUC", calc_auc, True),
+    ("Accuracy", calc_accuracy, False),
+    ("Sensitivity (Recall)", calc_sensitivity, False),
+    ("Specificity", calc_specificity, False),
+    ("PPV (Precision)", calc_ppv, False),
+    ("NPV", calc_npv, False),
+    ("F1-score", calc_f1, False),
+    ("Brier Score", calc_brier, False),
+]
+
+header = "| Model | " + " | ".join([m[0] for m in metrics_config]) + " |"
+separator = "|-------|" + "|".join(["-------" for _ in metrics_config]) + "|"
+print(header)
+print(separator)
+
+for pred_col in valid_preds:
+    y_pred = df_eval[pred_col].values
+    inverted = is_inverted(y_true, y_pred)
+
+    row_values = []
+
+    for metric_name, metric_func, do_bootstrap in metrics_config:
+        try:
+            base_val = metric_func(y_true, y_pred)
+
+            if do_bootstrap:
+                _, ci_low, ci_high = bootstrap_ci(y_true, y_pred, metric_func, n_bootstrap)
+                if ci_low is not None and ci_high is not None:
+                    val_str = f"{base_val:.3f} [{ci_low:.3f}-{ci_high:.3f}]"
+                else:
+                    val_str = f"{base_val:.3f}"
+            else:
+                val_str = f"{base_val:.3f}"
+
+            row_values.append(val_str)
+        except:
+            row_values.append("Error")
+
+    note = " (inverted)" if inverted and not auto_invert else (" (auto-corrected)" if inverted and auto_invert else "")
+    print(f"| {pred_col}{note} | " + " | ".join(row_values) + " |")
+
+print()
+
+# ========== DCA CURVES & TABLE ==========
+if run_dca:
+    print("### Decision Curve Analysis (DCA)\n")
+
+    thresholds = np.linspace(0.01, 0.99, 99)
+    key_thresholds = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50]
+
+    for pred_col in valid_preds:
+        y_pred = df_eval[pred_col].values
+
+        print(f"**{pred_col}:**\n")
+        print("| Threshold | Model NB | Treat All NB | Treat None NB | Net Benefit Gain |")
+        print("|-----------|----------|-------------|---------------|------------------|")
+
+        for t in key_thresholds:
+            nb_model = net_benefit(y_true, y_pred, t)
+            nb_all = net_benefit(y_true, np.ones(len(y_true)), t)
+            nb_none = 0
+            nb_gain = nb_model - nb_all
+
+            print(f"| {t*100:.0f}% | {nb_model:.4f} | {nb_all:.4f} | {nb_none:.4f} | {nb_gain:+.4f} |")
+
+        print()
+
+    # DCA Plot
+    fig, ax = plt.subplots(figsize=(10, 6))
+    colors = plt.cm.tab10(np.linspace(0, 1, len(valid_preds) + 2))
+
+    treat_all = [net_benefit(y_true, np.ones(len(y_true)), t) for t in thresholds]
+    ax.plot(thresholds, treat_all, color=colors[0], lw=2, label='Treat All')
+    ax.plot(thresholds, [0]*len(thresholds), color=colors[1], lw=2, label='Treat None')
+
+    for i, pred_col in enumerate(valid_preds):
+        y_pred = df_eval[pred_col].values
+        nb_model = [net_benefit(y_true, y_pred, t) for t in thresholds]
+        ax.plot(thresholds, nb_model, color=colors[i+2], lw=2, label=pred_col)
+
+    ax.set_xlabel('Threshold Probability', fontsize=12)
+    ax.set_ylabel('Net Benefit', fontsize=12)
+    ax.set_xlim(0, 1)
+
+    all_nbs = [max([net_benefit(y_true, df_eval[p].values, t) for t in thresholds]) for p in valid_preds]
+    max_nb = max([max(treat_all)] + all_nbs)
+    ax.set_ylim(-0.05, max_nb + 0.05)
+
+    ax.legend(loc='upper right', fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    plt.tight_layout()
+    timestamp = str(int(time.time()))
+    dca_plot = f"binary_eval_dca_{timestamp}"
+    save_plot(dca_plot, fig)
+    print(f"![DCA Curves](/plots/{dca_plot}.png)\n")
+
+# ========== CALIBRATION PLOTS ==========
+if run_calibration:
+    n_cols = min(3, len(valid_preds))
+    n_rows = (len(valid_preds) + n_cols - 1) // n_cols if len(valid_preds) > 0 else 1
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5*n_cols, 4*n_rows))
+
+    if n_rows == 1 and n_cols == 1:
+        axes = np.array([axes])
+    axes = axes.flatten()
+
+    for i, pred_col in enumerate(valid_preds):
+        ax = axes[i]
+        y_pred = df_eval[pred_col].values
+        yp = fix_if_inverted(y_true, y_pred)
+
+        prob_true, prob_pred = calibration_curve(y_true, yp, n_bins=10, strategy='uniform')
+
+        brier = calc_brier(y_true, y_pred)
+
+        ax.plot(prob_pred, prob_true, 'o-', color='steelblue', markersize=8,
+                label=f'{pred_col} (Brier={brier:.3f})')
+        ax.plot([0, 1], [0, 1], '--', color='gray', label='Perfect calibration')
+        ax.set_xlabel('Predicted Probability')
+        ax.set_ylabel('Observed Proportion')
+        ax.set_title(pred_col)
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+    for i in range(len(valid_preds), len(axes)):
+        axes[i].set_visible(False)
+
+    plt.tight_layout()
+    cal_plot = f"binary_eval_calibration_{timestamp}"
+    save_plot(cal_plot, fig)
+    print(f"![Calibration Plots](/plots/{cal_plot}.png)\n")
+
+# ========== SUMMARY ==========
+print("### Summary\n")
+
+for pred_col in valid_preds:
+    y_pred = df_eval[pred_col].values
+    inverted = is_inverted(y_true, y_pred)
+    auc_val = calc_auc(y_true, y_pred)
+    brier_val = calc_brier(y_true, y_pred)
+
+    print(f"**{pred_col}:**")
+    if inverted and auto_invert:
+        print(f"  - Model was inverted (auto-corrected)")
+    elif inverted:
+        print(f"  - Model is inverted (AUC < 0.5). Enable auto-invert to flip predictions.")
+
+    if auc_val >= 0.9:
+        print(f"  - AUC = {auc_val:.3f}: Excellent discrimination")
+    elif auc_val >= 0.8:
+        print(f"  - AUC = {auc_val:.3f}: Good discrimination")
+    elif auc_val >= 0.7:
+        print(f"  - AUC = {auc_val:.3f}: Acceptable discrimination")
+    else:
+        print(f"  - AUC = {auc_val:.3f}: Limited discrimination")
+
+    if brier_val < 0.10:
+        print(f"  - Brier = {brier_val:.3f}: Good calibration")
+    elif brier_val < 0.20:
+        print(f"  - Brier = {brier_val:.3f}: Moderate calibration")
+    else:
+        print(f"  - Brier = {brier_val:.3f}: Poor calibration")
+
+    print()
+
+# ========== JSON METRICS FOR AI ==========
+output_metrics = {
+    "model_type": "model_evaluation_binary",
+    "target": target_col,
+    "n_total": n_total,
+    "n_positive": n_positive,
+    "n_negative": n_negative,
+    "n_models": len(valid_preds),
+    "models": valid_preds,
+    "auto_invert": auto_invert,
+    "includes_dca": run_dca,
+    "includes_calibration": run_calibration,
+    "metrics_by_model": {}
+}
+
+for pred_col in valid_preds:
+    y_pred = df_eval[pred_col].values
+    inverted = is_inverted(y_true, y_pred)
+
+    model_metrics = {
+        "auc": float(calc_auc(y_true, y_pred)),
+        "accuracy": float(calc_accuracy(y_true, y_pred)),
+        "sensitivity": float(calc_sensitivity(y_true, y_pred)),
+        "specificity": float(calc_specificity(y_true, y_pred)),
+        "ppv": float(calc_ppv(y_true, y_pred)),
+        "npv": float(calc_npv(y_true, y_pred)),
+        "f1": float(calc_f1(y_true, y_pred)),
+        "brier": float(calc_brier(y_true, y_pred)),
+        "inverted": inverted
+    }
+    output_metrics["metrics_by_model"][pred_col] = model_metrics
+
+if valid_preds:
+    best_model = max(valid_preds, key=lambda p: calc_auc(y_true, df_eval[p].values))
+    output_metrics["best_model"] = best_model
+    output_metrics["best_auc"] = float(calc_auc(y_true, df_eval[best_model].values))
+
+if run_dca:
+    dca_summary = {}
+    for pred_col in valid_preds:
+        y_pred = df_eval[pred_col].values
+        nb_values = {}
+        for t in [0.05, 0.10, 0.20, 0.30, 0.50]:
+            nb = net_benefit(y_true, y_pred, t)
+            nb_values[f"{int(t*100)}%"] = float(nb) if not np.isnan(nb) else None
+        dca_summary[pred_col] = nb_values
+    output_metrics["dca_net_benefit"] = dca_summary
+
+if run_calibration:
+    output_metrics["includes_calibration"] = True
+    calib_summary = {}
+    for pred_col in valid_preds:
+        calib_summary[pred_col] = {
+            "brier_score": float(calc_brier(y_true, df_eval[pred_col].values))
+        }
+    output_metrics["calibration"] = calib_summary
+
+def make_json_serializable(obj):
+    if isinstance(obj, dict):
+        return {str(k): make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_json_serializable(item) for item in obj]
+    elif isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    elif isinstance(obj, (np.integer, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64)):
+        return float(obj) if not np.isnan(obj) else None
+    return obj
+
+output_metrics = make_json_serializable(output_metrics)
+
+print("\n<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False))
+print("<!-- JSON_METRICS_END -->")
+
+print("---")
+print("**Model Evaluation complete**")

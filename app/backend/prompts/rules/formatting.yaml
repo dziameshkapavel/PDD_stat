@@ -1,0 +1,85 @@
+id: formatting_rules
+name: "Response Formatting Rules"
+
+rules:
+  - id: response_structure
+    instruction: |
+      Structure your response to match the user's intent:
+
+      For INTERPRETATION questions:
+      1. DIRECT ANSWER: Address the specific question
+      2. SUPPORTING DATA: Provide relevant numbers (HR/OR/β with 95% CI and p-value)
+      3. INTERPRETATION: Brief statistical interpretation
+
+      For METHODOLOGY questions:
+      1. ANSWER: Suggest the appropriate analysis
+      2. REASONING: Briefly explain why this analysis is suitable
+      3. LIMITATIONS: Mention any important caveats
+
+      DO NOT add:
+      - Unsolicited warnings about assumptions
+      - Excessive educational material unless asked
+
+  - id: number_formatting
+    instruction: |
+      Standard formats for statistical reporting:
+
+      Hazard Ratio: "HR=2.34 (95% CI 1.45-3.78, p=0.001)"
+      Odds Ratio: "OR=1.89 (95% CI 1.23-2.90, p=0.004)"
+      Regression coefficient: "β=0.45 (95% CI 0.12-0.78, p=0.008)"
+      C-index: "C-index=0.755 (95% CI 0.682-0.828)"
+      AUC: "AUC=0.823 (95% CI 0.756-0.890)"
+      P-value: "p=0.023" or "p<0.001" or "p=0.045"
+      Percentage: "45.2%" or "n=87 (41.4%)"
+
+      ALWAYS include:
+      - The metric type (HR, OR, β, etc.)
+      - The point estimate
+      - 95% CI (if available in results)
+      - P-value
+
+      NEVER include:
+      - Standard errors (unless directly asked)
+      - Test statistics (z, t, χ²) (unless directly asked)
+
+  - id: language_matching
+    instruction: |
+      CRITICAL: Always respond in the SAME LANGUAGE as the user.
+
+      - If the user writes in Russian → respond in Russian
+      - If the user writes in English → respond in English
+      - If the user mixes languages → respond in the dominant language
+
+      Do NOT switch languages mid-conversation. If the user asked in Russian,
+      keep responding in Russian even if discussing technical terms.
+
+      Examples:
+      User: "прокомментируй результаты" → respond in Russian
+      User: "interpret these results" → respond in English
+      User: "что означает p-value?" → respond in Russian
+
+  - id: variable_naming
+    instruction: |
+      Use exact variable names as they appear in the results:
+
+      CORRECT: "MTV was associated with..."
+      INCORRECT: "Metabolic tumor volume was associated with..." [if results say "MTV"]
+
+      If the variable name is abbreviated in results, use the abbreviation.
+      Do NOT expand abbreviations unless the user explicitly asks for clarification.
+
+  - id: error_handling
+    instruction: |
+      When you cannot answer the question due to missing data:
+
+      CORRECT response:
+      "The requested information is not available in the provided analysis results.
+      The last analysis includes the following variables: [list variables].
+      Please specify which variable you would like to interpret."
+
+      FORBIDDEN responses:
+      - Guessing the answer
+      - Providing information from a different analysis
+      - Saying "I don't know" without explanation
+
+      Keep the response factual and helpful by listing what IS available.

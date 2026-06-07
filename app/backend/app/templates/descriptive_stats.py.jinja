@@ -1,0 +1,132 @@
+# descriptive_stats.py.jinja
+# Descriptive Statistics for selected numeric variables
+
+import pandas as pd
+import numpy as np
+from scipy import stats
+import matplotlib.pyplot as plt
+import json
+from pathlib import Path
+
+var_labels = {}
+try:
+    labels_path = Path(project_path) / "state" / "variable_labels.json"
+    if labels_path.exists():
+        with open(labels_path, 'r', encoding='utf-8') as f:
+            var_labels = json.load(f)
+except:
+    pass
+
+print("## Descriptive Statistics\n")
+
+variables = {{ variables|default([])|tojson }}
+include_plots = {{ include_plots|default(False) }}
+
+if not variables:
+    valid_vars = df.select_dtypes(include=[np.number]).columns.tolist()
+else:
+    valid_vars = [v for v in variables if v in df.columns and pd.api.types.is_numeric_dtype(df[v])]
+
+if not valid_vars:
+    raise ValueError("No numeric variables found")
+
+print(f"**Variables:** {', '.join([f'`{v}`' for v in valid_vars])} ({len(valid_vars)})")
+print(f"**Observations:** {len(df)}\n")
+
+# Таблица статистик
+print("### Summary Statistics\n")
+print("| Variable | N | Mean | Median | Std | Min | Max | Q1 | Q3 | Skew | Kurt | Missing | Outliers |")
+print("|----------|---|------|--------|-----|-----|-----|----|----|------|------|---------|----------|")
+
+for col in valid_vars:
+    data = df[col].dropna()
+    n = len(data)
+    if n < 3:
+        continue
+    
+    mean_val = data.mean()
+    median_val = data.median()
+    std_val = data.std()
+    min_val = data.min()
+    max_val = data.max()
+    q1 = data.quantile(0.25)
+    q3 = data.quantile(0.75)
+    skew_val = stats.skew(data) if n > 2 else np.nan
+    kurt_val = stats.kurtosis(data) if n > 3 else np.nan
+    missing = df[col].isna().sum()
+    
+    # Outliers (IQR)
+    iqr = q3 - q1
+    lower = q1 - 1.5 * iqr
+    upper = q3 + 1.5 * iqr
+    outliers = ((data < lower) | (data > upper)).sum()
+    
+    skew_str = f"{skew_val:.2f}" if not np.isnan(skew_val) else "N/A"
+    kurt_str = f"{kurt_val:.2f}" if not np.isnan(kurt_val) else "N/A"
+    
+    print(f"| `{col}` | {n} | {mean_val:.2f} | {median_val:.2f} | {std_val:.2f} | {min_val:.2f} | {max_val:.2f} | {q1:.2f} | {q3:.2f} | {skew_str} | {kurt_str} | {missing} | {outliers} |")
+
+print()
+
+# Нормальность
+print("### Normality Tests (Shapiro-Wilk)\n")
+print("| Variable | N | W-statistic | p-value | Normal? |")
+print("|----------|---|-------------|---------|---------|")
+
+for col in valid_vars:
+    data = df[col].dropna()
+    n = len(data)
+    if n < 3 or n > 5000:
+        continue
+    try:
+        w_stat, p_val = stats.shapiro(data)
+        normal = "Yes" if p_val > 0.05 else "No"
+        print(f"| `{col}` | {n} | {w_stat:.4f} | {fmt_p(p_val)} | {normal} |")
+    except:
+        pass
+
+print()
+
+# Графики
+if include_plots:
+    n_cols = min(3, len(valid_vars))
+    n_rows = (len(valid_vars) + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5*n_cols, 4*n_rows))
+    if len(valid_vars) == 1:
+        axes = np.array([axes])
+    axes = axes.flatten()
+    
+    for i, col in enumerate(valid_vars):
+        ax = axes[i]
+        data = df[col].dropna()
+        ax.hist(data, bins=20, color='steelblue', edgecolor='white', alpha=0.8)
+        ax.axvline(data.mean(), color='red', linestyle='--', label=f'Mean={data.mean():.1f}')
+        ax.axvline(data.median(), color='green', linestyle='--', label=f'Median={data.median():.1f}')
+        ax.set_title(col, fontsize=10, fontweight='bold')
+        ax.legend(fontsize=7)
+        ax.grid(True, alpha=0.3)
+    
+    for i in range(len(valid_vars), len(axes)):
+        axes[i].set_visible(False)
+    
+    plt.tight_layout()
+    import time
+    timestamp = str(int(time.time()))
+    plot_name = f"desc_stats_{timestamp}"
+    save_plot(plot_name, fig)
+    print(f"![Descriptive Statistics](/plots/{plot_name}.png)\n")
+
+print("---")
+print("**Descriptive statistics complete**")
+
+# JSON метрики для AI
+output_metrics = {
+    "model_type": "descriptive_stats",
+    "n_variables": len(valid_vars),
+    "n_observations": len(df),
+    "variables": valid_vars
+}
+
+print("\n<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False))
+print("<!-- JSON_METRICS_END -->")

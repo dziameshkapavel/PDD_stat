@@ -1,0 +1,428 @@
+# survival_evaluation.py.jinja
+# Survival Prediction Evaluation
+# C-index, Time-dependent AUC + Bootstrap CI, Model Comparison, Stratification
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import json
+import time
+from pathlib import Path
+from itertools import combinations
+import warnings
+warnings.filterwarnings('ignore')
+
+# ========== PARAMETERS ==========
+pred_cols = {{ pred_cols|default([])|tojson }}
+time_col = "{{ time_col }}"
+event_col = "{{ event_col }}"
+stratify_col = "{{ stratify_col|default('') }}"
+
+time_step = {{ time_step|default(6)|int }}
+time_points_raw = "{{ time_points|default('') }}"
+time_points = [int(t.strip()) for t in time_points_raw.split(',') if t.strip().isdigit()]
+
+n_bootstrap = {{ n_bootstrap|default(1000)|int }}
+bootstrap_seed = {{ bootstrap_seed|default(42)|int }}
+run_model_comparison = {{ run_model_comparison|default(True) }}
+
+x_tick_step = {{ x_tick_step|default(6)|int }}
+if x_tick_step <= 0:
+    x_tick_step = 6
+x_label = "{{ x_label|default('Time, months') }}"
+y_tick_step = {{ y_tick_step|default(0.1)|float }}
+if y_tick_step <= 0:
+    y_tick_step = 0.1
+y_label = "{{ y_label|default('AUC') }}"
+
+smooth = "{{ smooth }}" == "True"
+
+# ========== LABELS ==========
+var_labels = {}
+try:
+    labels_path = Path(project_path) / "state" / "variable_labels.json"
+    if labels_path.exists():
+        with open(labels_path, 'r', encoding='utf-8') as f:
+            var_labels = json.load(f)
+except:
+    pass
+
+def get_label(col_name, value):
+    if col_name in var_labels:
+        val_labels = var_labels[col_name].get('value_labels', {})
+        key_float = f"{float(value):.1f}"
+        if key_float in val_labels:
+            return val_labels[key_float]
+        key_int = str(int(float(value)))
+        if key_int in val_labels:
+            return val_labels[key_int]
+        key_str = str(value)
+        if key_str in val_labels:
+            return val_labels[key_str]
+    try:
+        f = float(value)
+        if f == int(f):
+            return str(int(f))
+    except:
+        pass
+    return str(value)
+
+# ========== DATA PREPARATION ==========
+print("## Survival Prediction Evaluation\n")
+
+if time_col not in df.columns or event_col not in df.columns:
+    raise ValueError(f"Time/event columns missing")
+
+valid_preds = [p for p in pred_cols if p in df.columns]
+if not valid_preds:
+    raise ValueError("No valid prediction columns")
+
+strata = [None]
+if stratify_col and stratify_col in df.columns:
+    strata = sorted(df[stratify_col].dropna().unique(), key=lambda x: str(x))
+    strata_labels = [get_label(stratify_col, s) for s in strata]
+    print(f"**Stratify by:** `{stratify_col}` ({len(strata)} groups: {', '.join(strata_labels)})")
+
+cols_to_keep = [time_col, event_col] + valid_preds
+if stratify_col and stratify_col in df.columns:
+    cols_to_keep.append(stratify_col)
+
+n_before = len(df)
+df_eval = df[cols_to_keep].copy().dropna()
+n_after = len(df_eval)
+if n_after < n_before:
+    print(f"⚠️ Removed {n_before - n_after} rows ({((n_before - n_after)/n_before*100):.1f}%) with missing data")
+
+n_total = len(df_eval)
+n_events = int(df_eval[event_col].sum())
+
+print(f"**Time:** `{time_col}`  ")
+print(f"**Event:** `{event_col}`  ")
+print(f"**Models:** {', '.join([f'`{p}`' for p in valid_preds])}  ")
+print(f"**Observations:** {n_total}  ")
+print(f"**Events:** {n_events} ({n_events/n_total*100:.1f}%)  ")
+print(f"**Bootstrap samples:** {n_bootstrap}  \n")
+print("*Note: C-index may be inflated with high censoring. Tied event times can reduce discriminative power.*\n")
+
+# ========== HELPERS ==========
+from sksurv.util import Surv
+from sksurv.metrics import concordance_index_censored, cumulative_dynamic_auc
+from scipy import stats
+
+def calc_cindex(y_ev, y_tm, risk):
+    try:
+        return float(concordance_index_censored(y_ev, y_tm, risk)[0])
+    except:
+        return 0.5
+
+def bootstrap_cindex(y_ev, y_tm, risk, n_iter=1000):
+    n = len(y_ev)
+    base_c = calc_cindex(y_ev, y_tm, risk)
+    boot_c = []
+    np.random.seed(bootstrap_seed)
+    for _ in range(n_iter):
+        idx = np.random.choice(n, n, replace=True)
+        if y_ev[idx].sum() == 0 or y_ev[idx].sum() == len(y_ev[idx]):
+            continue
+        try:
+            c = calc_cindex(y_ev[idx], y_tm[idx], risk[idx])
+            if not np.isnan(c):
+                boot_c.append(c)
+        except:
+            continue
+    if len(boot_c) < 50:
+        return base_c, base_c, base_c
+    boot_c = np.array(boot_c)
+    return float(base_c), float(np.percentile(boot_c, 2.5)), float(np.percentile(boot_c, 97.5))
+
+def calc_time_auc_bootstrap(y_surv_local, risk, times, y_ev, y_tm, n_iter=500):
+    n = len(y_ev)
+    results = {}
+
+    for t in times:
+        if t <= 0 or t > y_tm.max():
+            continue
+
+        boot_aucs = []
+        np.random.seed(bootstrap_seed)
+
+        for _ in range(n_iter):
+            idx_train = np.random.choice(n, n, replace=True)
+            oob_mask = np.ones(n, dtype=bool)
+            for i in idx_train:
+                oob_mask[i] = False
+
+            if oob_mask.sum() < 10:
+                continue
+            if y_ev[oob_mask].sum() < 2:
+                continue
+
+            try:
+                auc_val = cumulative_dynamic_auc(
+                    y_surv_local[idx_train],
+                    y_surv_local[oob_mask],
+                    risk[oob_mask],
+                    [t]
+                )
+                val = float(auc_val[0][0]) if isinstance(auc_val, tuple) else float(auc_val[0])
+                if 0.01 < val < 0.99:
+                    boot_aucs.append(val)
+            except:
+                continue
+
+        if len(boot_aucs) >= 50:
+            boot_aucs = np.array(boot_aucs)
+            mean_auc = float(boot_aucs.mean())
+            se_auc = float(boot_aucs.std())
+            z = (mean_auc - 0.5) / se_auc if se_auc > 0 else 0
+            p_val = float(2 * (1 - stats.norm.cdf(abs(z))))
+            results[t] = {
+                'auc': mean_auc,
+                'ci_low': float(np.percentile(boot_aucs, 2.5)),
+                'ci_high': float(np.percentile(boot_aucs, 97.5)),
+                'p_value': p_val
+            }
+        else:
+            try:
+                auc_val = cumulative_dynamic_auc(y_surv_local, y_surv_local, risk, [t])
+                val = float(auc_val[0][0]) if isinstance(auc_val, tuple) else float(auc_val[0])
+                results[t] = {'auc': val, 'ci_low': val, 'ci_high': val, 'p_value': None}
+            except:
+                continue
+
+    return results
+
+# ========== ANALYSIS ==========
+results_by_stratum = []
+all_auc_plot_data = {}
+model_comparisons = []
+
+for s in strata:
+    if s is None:
+        stratum_df = df_eval
+        label = "All"
+    else:
+        stratum_df = df_eval[df_eval[stratify_col] == s]
+        label = get_label(stratify_col, s)
+
+    if len(stratum_df) < 20:
+        print(f"*Stratum '{label}': insufficient data ({len(stratum_df)} obs)*\n")
+        continue
+
+    local_y_time = stratum_df[time_col].values
+    local_y_event = stratum_df[event_col].values.astype(bool)
+    local_y_surv = Surv.from_arrays(event=local_y_event, time=local_y_time)
+
+    _min_t = max(6, int(local_y_time.min()))
+    _max_t = int(local_y_time.max())
+    local_times = list(range(_min_t, _max_t + 6, 6))
+    if not local_times:
+        local_times = [_max_t]
+
+    c_indices = {}
+    auc_data = {}
+
+    for pred_col in valid_preds:
+        risk = stratum_df[pred_col].values
+
+        if n_bootstrap > 0:
+            c_val, ci_low, ci_high = bootstrap_cindex(local_y_event, local_y_time, risk, n_bootstrap)
+        else:
+            c_val = calc_cindex(local_y_event, local_y_time, risk)
+            ci_low, ci_high = c_val, c_val
+
+        c_indices[pred_col] = {'value': c_val, 'ci_low': ci_low, 'ci_high': ci_high}
+        auc_data[pred_col] = calc_time_auc_bootstrap(local_y_surv, risk, local_times, local_y_event, local_y_time, min(500, n_bootstrap))
+
+    results_by_stratum.append({
+        'label': label,
+        'n': len(stratum_df),
+        'events': int(local_y_event.sum()),
+        'c_indices': c_indices,
+        'auc_data': auc_data
+    })
+
+    print(f"### Stratum: {label} (n={len(stratum_df)}, events={int(local_y_event.sum())})\n")
+
+    print("| Model | C-index | 95% CI |")
+    print("|-------|---------|--------|")
+    for m, c in c_indices.items():
+        print(f"| {m} | {c['value']:.4f} | [{c['ci_low']:.4f}, {c['ci_high']:.4f}] |")
+    print()
+
+    times_to_show = time_points
+    if times_to_show:
+        print("| Time | " + " | ".join([f"`{p}`" for p in valid_preds]) + " |")
+        print("|------|" + "|".join(["---------------" for _ in valid_preds]) + "|")
+        for t in times_to_show:
+            if t in local_times:
+                row = f"| {t}mo |"
+                for m in valid_preds:
+                    if m in auc_data and t in auc_data[m]:
+                        a = auc_data[m][t]
+                        p = a.get('p_value')
+                        if p is not None:
+                            row += f" {a['auc']:.3f} [{a['ci_low']:.3f}-{a['ci_high']:.3f}] p={fmt_p(p)} |"
+                        else:
+                            row += f" {a['auc']:.3f} [{a['ci_low']:.3f}-{a['ci_high']:.3f}] |"
+                    else:
+                        row += " — |"
+                print(row)
+        print()
+    else:
+        print("*No time points specified. Enter values (e.g., 12,24,36) in the field above.*\n")
+
+    for m, auc_d in auc_data.items():
+        key = f"{label}|{m}"
+        all_auc_plot_data[key] = {'data': auc_d, 'label': label, 'model': m, 'times': local_times}
+
+# Model comparison
+if run_model_comparison and len(valid_preds) >= 2 and len(strata) == 1:
+    n_comp = len(valid_preds) * (len(valid_preds) - 1) // 2
+    print("### Model Comparison\n")
+    if n_comp > 1:
+        print(f"*{n_comp} pairwise comparisons. Multiple comparisons inflate Type I error.*\n")
+    y_all_time = df_eval[time_col].values
+    y_all_event = df_eval[event_col].values.astype(bool)
+
+    for m1, m2 in combinations(valid_preds, 2):
+        c1 = calc_cindex(y_all_event, y_all_time, df_eval[m1].values)
+        c2 = calc_cindex(y_all_event, y_all_time, df_eval[m2].values)
+        delta = c1 - c2
+
+        n_boot_test = min(n_bootstrap, 500)
+        boot_deltas = []
+        np.random.seed(bootstrap_seed)
+        for _ in range(n_boot_test):
+            idx = np.random.choice(len(y_all_event), len(y_all_event), replace=True)
+            if y_all_event[idx].sum() == 0:
+                continue
+            try:
+                cb1 = calc_cindex(y_all_event[idx], y_all_time[idx], df_eval[m1].values[idx])
+                cb2 = calc_cindex(y_all_event[idx], y_all_time[idx], df_eval[m2].values[idx])
+                boot_deltas.append(cb1 - cb2)
+            except:
+                continue
+
+        if boot_deltas:
+            se = np.array(boot_deltas).std()
+            z_stat = delta / se if se > 0 else 0
+            p_val = 2 * (1 - stats.norm.cdf(abs(z_stat)))
+        else:
+            p_val = 1.0
+
+        sig = "**" if p_val < 0.05 else ""
+        print(f"| {m1} vs {m2} | ΔC = {delta:+.4f} | p = {fmt_p(p_val)}{sig} |")
+        model_comparisons.append({'model1': m1, 'model2': m2, 'delta': float(delta), 'p_value': float(p_val)})
+    print()
+
+# ========== PLOT ==========
+timestamp = str(int(time.time()))
+output_plots = []
+max_time_for_ticks = 60
+
+if all_auc_plot_data:
+    fig, ax = plt.subplots(figsize=(10, 6))
+    colors = plt.cm.tab10(np.linspace(0, 1, max(len(all_auc_plot_data), 1)))
+
+    for i, (key, info) in enumerate(sorted(all_auc_plot_data.items())):
+        auc_d = info['data']
+        t_vals = info['times']
+
+        if not t_vals or not auc_d:
+            continue
+
+        auc_vals = [auc_d[t]['auc'] for t in t_vals if t in auc_d]
+        plot_t_vals = [t for t in t_vals if t in auc_d]
+
+        if plot_t_vals:
+            lbl = f"{info['label']} - {info['model']}" if stratify_col else info['model']
+            color = colors[i % len(colors)]
+
+            ax.fill_between(plot_t_vals, 0.5, auc_vals, color=color, alpha=0.08)
+
+            if smooth and len(plot_t_vals) >= 4:
+                from scipy.interpolate import make_interp_spline
+                try:
+                    x_new = np.linspace(min(plot_t_vals), max(plot_t_vals), 200)
+                    spl = make_interp_spline(plot_t_vals, auc_vals, k=min(3, len(plot_t_vals) - 1))
+                    y_new = spl(x_new)
+                    ax.plot(x_new, y_new, '-', color=color, lw=2, label=lbl)
+                except:
+                    ax.plot(plot_t_vals, auc_vals, 'o-', color=color, lw=2, label=lbl, markersize=6)
+            else:
+                ax.plot(plot_t_vals, auc_vals, 'o-', color=color, lw=2, label=lbl, markersize=6)
+
+            if time_points:
+                for tx in time_points:
+                    vy = None
+                    if smooth and len(plot_t_vals) >= 4:
+                        try:
+                            vy = float(spl(tx))
+                        except:
+                            vy = auc_d[tx]['auc'] if tx in auc_d else None
+                    else:
+                        vy = auc_d[tx]['auc'] if tx in auc_d else None
+
+                    if vy is not None:
+                        ax.annotate(f'{vy:.3f}', xy=(tx, vy), xytext=(0, 10),
+                                   textcoords="offset points", ha='center', fontsize=9, color=color, fontweight='bold')
+                        ax.plot(tx, vy, 'o', color=color, markersize=8)
+
+            max_time_for_ticks = max(max_time_for_ticks, max(plot_t_vals))
+
+    ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5)
+    ax.set_xlabel(x_label, fontsize=12)
+    ax.set_ylabel(y_label, fontsize=12)
+    ax.set_title('Time-dependent AUC', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=9, loc='lower left')
+    ax.set_ylim(0.4, 1.05)
+    ax.grid(True, alpha=0.3)
+    ax.set_xticks(np.arange(0, max_time_for_ticks + x_tick_step, x_tick_step))
+
+    plt.tight_layout()
+    plot_filename = f"surv_eval_{timestamp}"
+    save_plot(plot_filename, fig)
+    output_plots = [f"{plot_filename}.png"]
+    print(f"![Survival Evaluation](/plots/{plot_filename}.png)\n")
+
+print("---")
+print("**Survival evaluation complete**")
+
+# ========== JSON METRICS ==========
+output_metrics = {
+    "model_type": "survival_evaluation",
+    "time_col": time_col,
+    "event_col": event_col,
+    "stratify_col": stratify_col if stratify_col else None,
+    "n_total": int(n_total),
+    "n_events": int(n_events),
+    "models": valid_preds,
+    "strata": [{'label': r['label'], 'n': r['n'], 'events': r['events'], 'c_indices': r['c_indices']} for r in results_by_stratum],
+    "c_indices": {r['label']: r['c_indices'] for r in results_by_stratum},
+    "time_auc": {r['label']: {m: {str(t): v for t, v in r['auc_data'].get(m, {}).items()} for m in valid_preds} for r in results_by_stratum},
+    "model_comparisons": model_comparisons,
+    "plots": output_plots
+}
+
+def make_serializable(obj):
+    if isinstance(obj, dict):
+        return {str(k): make_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_serializable(v) for v in obj]
+    elif isinstance(obj, (np.integer, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64)):
+        if np.isnan(obj):
+            return None
+        return float(obj)
+    elif isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    elif obj is None:
+        return None
+    return obj
+
+output_metrics = make_serializable(output_metrics)
+print("\n<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False))
+print("<!-- JSON_METRICS_END -->")

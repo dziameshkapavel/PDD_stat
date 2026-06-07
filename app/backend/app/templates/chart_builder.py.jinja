@@ -1,0 +1,149 @@
+# chart_builder.py.jinja
+# Chart Builder - quick visualization
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import json
+import time
+
+# ========== PARAMETERS ==========
+chart_type = "{{ chart_type }}"
+x_col = "{{ x_col }}"
+y_col = "{{ y_col }}"
+group_col = "{{ group_col }}"
+bins = {{ bins|default(20)|int }}
+show_kde = {{ show_kde|default(True) }}
+show_regline = {{ show_regline|default(False) }}
+title = "{{ title|default('') }}"
+x_label = "{{ x_label|default('') }}"
+y_label = "{{ y_label|default('') }}"
+
+# ========== LABELS ==========
+var_labels = var_labels if 'var_labels' in dir() else {}
+
+def get_label(col_name, value=None):
+    if col_name and col_name in var_labels:
+        vl = var_labels[col_name]
+        if value is not None:
+            val_labels = vl.get('value_labels', {})
+            for key in [f"{float(value):.1f}", str(int(float(value))), str(value)]:
+                if key in val_labels:
+                    return val_labels[key]
+        else:
+            return vl.get('chart_name', col_name)
+    return str(value) if value is not None else col_name
+
+# ========== VALIDATION ==========
+if x_col not in df.columns:
+    raise ValueError(f"Column '{x_col}' not found")
+
+df_plot = df[[x_col] + ([y_col] if y_col and y_col in df.columns else []) + ([group_col] if group_col and group_col in df.columns else [])].dropna()
+n_after = len(df_plot)
+if n_after < len(df):
+    print(f"⚠️ Removed {len(df) - n_after} rows ({((len(df) - n_after)/len(df)*100):.1f}%) with missing data")
+
+
+# Axis labels
+x_lbl = x_label or get_label(x_col)
+y_lbl = y_label or (get_label(y_col) if y_col else 'Count')
+chart_title = title or f"{chart_type.replace('_', ' ').title()} of {get_label(x_col)}"
+
+# ========== PLOT ==========
+timestamp = str(int(time.time()))
+fig, ax = plt.subplots(figsize=(10, 6))
+
+if chart_type == 'histogram':
+    if x_col not in df_plot.columns or not pd.api.types.is_numeric_dtype(df_plot[x_col]):
+        raise ValueError(f"Column '{x_col}' must be numeric for histogram")
+    data = df_plot[x_col].dropna()
+    ax.hist(data, bins=bins, color='steelblue', edgecolor='white', alpha=0.8)
+    if show_kde:
+        ax2 = ax.twinx()
+        sns.kdeplot(data, ax=ax2, color='darkorange', lw=2)
+        ax2.set_ylabel('Density')
+    ax.set_ylabel(y_lbl)
+
+elif chart_type == 'box':
+    if x_col not in df_plot.columns or not pd.api.types.is_numeric_dtype(df_plot[x_col]):
+        raise ValueError(f"Column '{x_col}' must be numeric for box plot")
+    if group_col and group_col in df_plot.columns:
+        order = sorted(df_plot[group_col].dropna().unique())
+        labels = [get_label(group_col, v) for v in order]
+        data = [df_plot[df_plot[group_col] == v][x_col].dropna().values for v in order]
+        bp = ax.boxplot(data, labels=labels, patch_artist=True)
+        colors = plt.cm.Set2(np.linspace(0, 1, len(order)))
+        for patch, c in zip(bp['boxes'], colors):
+            patch.set_facecolor(c)
+    else:
+        ax.boxplot(df_plot[x_col].dropna(), labels=[get_label(x_col)])
+    ax.set_ylabel(y_lbl or get_label(x_col))
+
+elif chart_type == 'scatter':
+    if y_col and y_col in df_plot.columns:
+        if group_col and group_col in df_plot.columns:
+            for g in sorted(df_plot[group_col].dropna().unique()):
+                mask = df_plot[group_col] == g
+                ax.scatter(df_plot.loc[mask, x_col], df_plot.loc[mask, y_col], 
+                          label=get_label(group_col, g), alpha=0.7, s=30)
+            ax.legend()
+        else:
+            ax.scatter(df_plot[x_col], df_plot[y_col], alpha=0.7, s=30)
+        
+        if show_regline:
+            from scipy import stats
+            slope, intercept, r, p, _ = stats.linregress(df_plot[x_col], df_plot[y_col])
+            x_range = np.linspace(df_plot[x_col].min(), df_plot[x_col].max(), 100)
+            ax.plot(x_range, slope * x_range + intercept, 'r--', lw=2, 
+                   label=f'y={slope:.2f}x+{intercept:.1f}\nr²={r**2:.3f}')
+            ax.legend()
+        ax.set_ylabel(y_lbl)
+    else:
+        ax.text(0.5, 0.5, 'Select Y variable', ha='center', va='center', transform=ax.transAxes)
+
+elif chart_type == 'bar':
+    if group_col and group_col in df_plot.columns:
+        order = sorted(df_plot[group_col].dropna().unique())
+        means = [df_plot[df_plot[group_col] == v][x_col].mean() for v in order]
+        stds = [df_plot[df_plot[group_col] == v][x_col].std() for v in order]
+        labels = [get_label(group_col, v) for v in order]
+        colors = plt.cm.Set2(np.linspace(0, 1, len(order)))
+        ax.bar(range(len(order)), means, yerr=stds, color=colors, capsize=5)
+        ax.set_xticks(range(len(order)))
+        ax.set_xticklabels(labels)
+        ax.set_ylabel(y_lbl or get_label(x_col))
+    else:
+        ax.text(0.5, 0.5, 'Select Group variable', ha='center', va='center', transform=ax.transAxes)
+
+elif chart_type == 'density':
+    if group_col and group_col in df_plot.columns:
+        for g in sorted(df_plot[group_col].dropna().unique()):
+            data = df_plot[df_plot[group_col] == g][x_col].dropna()
+            clip_min = data.min()
+            sns.kdeplot(data, ax=ax, label=get_label(group_col, g), lw=2, fill=True, alpha=0.2, clip=(clip_min, None))
+        ax.legend()
+    else:
+        data_all = df_plot[x_col].dropna()
+        sns.kdeplot(data_all, ax=ax, lw=2, fill=True, alpha=0.3, clip=(data_all.min(), None)) 
+    ax.set_ylabel(y_lbl or 'Density')
+
+ax.set_xlabel(x_lbl)
+ax.set_title(chart_title, fontsize=14, fontweight='bold')
+ax.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plot_name = f"chart_builder_{timestamp}"
+save_plot(plot_name, fig)
+print(f"![Chart Builder](/plots/{plot_name}.png)\n")
+print("**Chart ready**")
+
+output_metrics = {
+    "model_type": "chart_builder",
+    "chart_type": chart_type,
+    "x_col": x_col,
+    "plots": [f"{plot_name}.png"]
+}
+print("\n<!-- JSON_METRICS_START -->")
+print(json.dumps(output_metrics, ensure_ascii=False))
+print("<!-- JSON_METRICS_END -->")
