@@ -13,6 +13,23 @@ import numpy as np
 import pandas as pd
 
 
+def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize object columns: replace missing-value strings with pd.NA,
+    convert numeric-looking columns to proper types, coerce mixed columns to string."""
+    if df is None:
+        return df
+    df = df.copy()
+    object_cols = df.select_dtypes(include=['object']).columns
+    for col in object_cols:
+        df[col] = df[col].replace(['', 'nan', 'NaN', 'None', 'null', 'NULL'], pd.NA)
+        df[col] = df[col].apply(lambda x: pd.NA if isinstance(x, str) and x.strip() == '' else x)
+        try:
+            df[col] = pd.to_numeric(df[col])
+        except (ValueError, TypeError):
+            df[col] = df[col].astype(str).replace('nan', pd.NA).replace('<NA>', pd.NA)
+    return df
+
+
 class DataLoader:
     SUPPORTED_EXTENSIONS = {'.xlsx', '.xls', '.csv', '.tsv', '.parquet', '.txt'}
 
@@ -60,10 +77,7 @@ class DataLoader:
     def _normalize_missing_values(self):
         if self.df is None:
             return
-        object_cols = self.df.select_dtypes(include=['object']).columns
-        for col in object_cols:
-            self.df[col] = self.df[col].replace(['', 'nan', 'NaN', 'None', 'null', 'NULL'], pd.NA)
-            self.df[col] = self.df[col].apply(lambda x: pd.NA if isinstance(x, str) and x.strip() == '' else x)
+        self.df = normalize_dataframe(self.df)
 
     def _remove_technical_columns(self):
         if self.df is None:
@@ -133,7 +147,13 @@ class DataLoader:
         if self.df is None:
             raise ValueError("No data to save.")
         parquet_path = self.state_folder / "project_data.parquet"
-        self.df.to_parquet(parquet_path, compression='snappy', index=False)
+        try:
+            self.df.to_parquet(parquet_path, compression='snappy', index=False)
+        except Exception:
+            try:
+                self.df.to_parquet(parquet_path, compression='lz4', index=False)
+            except Exception:
+                self.df.to_parquet(parquet_path, compression=None, index=False)
         audit_path = self.state_folder / "data_audit_pre.json"
         with open(audit_path, 'w', encoding='utf-8') as f:
             json.dump(self.audit_results, f, indent=2, ensure_ascii=False)

@@ -100,7 +100,16 @@ async def upload_file(file: UploadFile = File(...)):
     loader.load_file(file_path)
     audit = loader.run_audit()
     raw_path = pm.current_project_path / "state" / "raw.parquet"
-    loader.df.to_parquet(raw_path)
+    try:
+        loader.df.to_parquet(raw_path, compression='snappy')
+    except Exception:
+        try:
+            df_str = loader.df.astype(str)
+            loader.df = df_str
+            loader._normalize_missing_values()
+            loader.df.to_parquet(raw_path, compression=None)
+        except Exception:
+            loader.df.to_parquet(raw_path, compression=None)
 
     plan = generate_cleaning_plan(loader.df)
     state["cached_cleaning_plan"] = plan
@@ -133,7 +142,13 @@ async def apply_cleaning(apply: bool = True):
         df = apply_cleaning_plan(df, plan)
 
     clean_path = pm.current_project_path / "state" / "project_data.parquet"
-    df.to_parquet(clean_path, compression='snappy')
+    try:
+        df.to_parquet(clean_path, compression='snappy')
+    except Exception:
+        try:
+            df.to_parquet(clean_path, compression='lz4')
+        except Exception:
+            df.to_parquet(clean_path, compression=None)
     state["cached_cleaning_plan"] = None
 
     loader = DataLoader(pm.current_project_path)

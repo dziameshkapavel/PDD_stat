@@ -16,6 +16,8 @@ import pandas as pd
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+from app.core.data_loader import normalize_dataframe
+
 
 class Executor:
     def __init__(self, project_path: Path):
@@ -29,7 +31,7 @@ class Executor:
         self._init_namespace()
 
     def _load_data(self):
-        """Загружает данные из state или data папки"""
+        """Loads data from state or data folder"""
         parquet_path = self.state_folder / "project_data.parquet"
         if parquet_path.exists():
             self.df = pd.read_parquet(parquet_path)
@@ -42,6 +44,8 @@ class Executor:
                 for f in data_dir.glob("*.csv"):
                     self.df = pd.read_csv(f)
                     break
+            if self.df is not None:
+                self.df = normalize_dataframe(self.df)
 
     def _init_namespace(self):
         """Инициализирует пространство имён для выполнения кода"""
@@ -163,13 +167,17 @@ class Executor:
             with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
                 exec(code, self.namespace)
 
-            # Если код модифицировал df - сохраняем изменения
+            # If code modified df - save changes
             if 'df' in self.namespace and isinstance(self.namespace['df'], pd.DataFrame):
                 self.df = self.namespace['df']
-                self.df.to_parquet(
-                    self.state_folder / "project_data.parquet",
-                    compression='snappy'
-                )
+                parquet_path = self.state_folder / "project_data.parquet"
+                try:
+                    self.df.to_parquet(parquet_path, compression='snappy')
+                except Exception:
+                    try:
+                        self.df.to_parquet(parquet_path, compression='lz4')
+                    except Exception:
+                        self.df.to_parquet(parquet_path, compression=None)
 
             return {
                 "success": True,
