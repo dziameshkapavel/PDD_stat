@@ -301,8 +301,11 @@ class ContextBuilder:
                         if isinstance(tdata, dict):
                             vals = []
                             for t, info in sorted(tdata.items(), key=lambda x: int(x[0]) if str(x[0]).isdigit() else 0):
-                                auc_val = info.get("auc", 0)
-                                vals.append(f"{t}mo: {auc_val:.3f}")
+                                auc_val = info.get("auc")
+                                if auc_val is not None:
+                                    vals.append(f"{t}mo: {auc_val:.3f}")
+                                else:
+                                    vals.append(f"{t}mo: N/A")
                             if vals:
                                 parts.append(f"{model}: " + ", ".join(vals[:4]))
             if parts:
@@ -338,7 +341,9 @@ class ContextBuilder:
         if results and isinstance(results, list) and results and "auc" in results[0]:
                 for r in results[:5]:
                     pred = r.get("predictor", "?")
-                    auc_val = r.get("auc", 0)
+                    auc_val = r.get("auc")
+                    if auc_val is None:
+                        continue
                     se = r.get("sensitivity", 0)
                     sp = r.get("specificity", 0)
                     opt = r.get("optimal_threshold")

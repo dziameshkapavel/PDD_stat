@@ -27,3 +27,6 @@ active_project.txt
 # Linter
 .ruff_cache/
 *.xlsx
+
+# Agent instructions (internal)
+AGENTS.md
