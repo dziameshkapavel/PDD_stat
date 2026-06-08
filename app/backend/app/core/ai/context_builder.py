@@ -84,6 +84,59 @@ class ContextBuilder:
         if model_type:
             lines.append(f"Model type: {model_type}")
 
+        # Per-variable statistics (descriptive_stats)
+        var_stats = metrics.get("variables_stats")
+        if var_stats and isinstance(var_stats, list):
+            lines.append("Variable statistics:")
+            for vs in var_stats[:15]:
+                if vs.get("n", 0) == 0:
+                    lines.append(f"  {vs.get('variable', '?')}: N=0")
+                    continue
+                parts = [f"N={vs.get('n',0)}"]
+                for key, label in [("mean","Mean"), ("median","Median"), ("std","Std"),
+                    ("min","Min"), ("max","Max"), ("q1","Q1"), ("q3","Q3"),
+                    ("skew","Skew"), ("kurtosis","Kurt")]:
+                    val = vs.get(key)
+                    if val is not None:
+                        parts.append(f"{label}={val}")
+                lines.append(f"  {vs.get('variable', '?')}: " + ", ".join(parts))
+            if len(var_stats) > 15:
+                lines.append(f"  ... ({len(var_stats)-15} more variables)")
+
+        # Contingency table (categorical)
+        ct = metrics.get("contingency_table")
+        if ct and isinstance(ct, list):
+            lines.append("Contingency table (2×2):")
+            for row in ct[:5]:
+                entries = [str(v) for v in row.values()]
+                lines.append("  " + " | ".join(entries))
+
+        # Kappa / agreement (agreement_categorical)
+        kappa = metrics.get("kappa")
+        if kappa is not None:
+            interp = metrics.get("interpretation")
+            pct = metrics.get("percent_agreement")
+            pa_str = f", %agreement={pct:.2f}" if pct is not None else ""
+            ip_str = f", {interp}" if interp else ""
+            lines.append(f"Cohen's κ={kappa:.4f}{pa_str}{ip_str}")
+        z_stat = metrics.get("z_statistic")
+        if z_stat is not None:
+            lines.append(f"  z={z_stat:.3f}")
+
+        # Group-level statistics (violin_plot, anova, numeric_compare)
+        group_stats = metrics.get("group_stats")
+        if group_stats and isinstance(group_stats, list):
+            lines.append("Group statistics:")
+            for gs in group_stats:
+                g = gs.get("group", "?")
+                parts = [f"N={gs.get('n',0)}"]
+                for key, label in [("mean","Mean"), ("median","Median"), ("std","Std"),
+                    ("q1","Q1"), ("q3","Q3"), ("iqr","IQR"), ("min","Min"), ("max","Max")]:
+                    val = gs.get(key)
+                    if val is not None:
+                        parts.append(f"{label}={val}")
+                lines.append(f"  {g}: " + ", ".join(parts))
+
         # Коэффициенты (HR/OR) — logistic хранит в "coefficients", cox в "table"
         coeffs = metrics.get("coefficients") or metrics.get("table", [])
         if coeffs:
@@ -126,6 +179,13 @@ class ContextBuilder:
             ("events", "Events: {}"),
             ("n_strong_pairs", "Strong pairs (|r|>threshold): {}"),
             ("nonlinear_p", "Non-linearity p: {:.4f}"),
+            ("lrt_chi2", "LRT χ²: {:.2f}"),
+            ("lrt_df", "LRT df: {}"),
+            ("brier_score", "Brier score: {:.4f}"),
+            ("brier_skill_score", "Brier skill score: {:.4f}"),
+            ("calibration_intercept", "Calibration intercept: {:.4f}"),
+            ("calibration_slope", "Calibration slope: {:.4f}"),
+            ("n_test_samples", "Test samples: {}"),
             ("best_predictor", "Best predictor: {}"),
         ]:
             val = metrics.get(key)
@@ -217,6 +277,20 @@ class ContextBuilder:
             if parts:
                 lines.append("C-indices: " + "; ".join(parts[:5]))
 
+        # Uno C-index (IPCW-corrected)
+        cindices = metrics.get("c_indices")
+        if cindices and isinstance(cindices, dict):
+            parts = []
+            for stratum, mdict in cindices.items():
+                if isinstance(mdict, dict):
+                    for model, cinfo in mdict.items():
+                        if isinstance(cinfo, dict):
+                            uno = cinfo.get("uno")
+                            if uno is not None:
+                                parts.append(f"{stratum}/{model}: UnoC={uno:.3f}")
+            if parts:
+                lines.append("Uno C-index: " + "; ".join(parts[:5]))
+
         # Time-dependent AUC
         tauc = metrics.get("time_auc")
         if tauc and isinstance(tauc, dict):
@@ -267,12 +341,14 @@ class ContextBuilder:
                     auc_val = r.get("auc", 0)
                     se = r.get("sensitivity", 0)
                     sp = r.get("specificity", 0)
+                    opt = r.get("optimal_threshold")
                     ci_low = r.get("ci_low")
                     ci_high = r.get("ci_high")
+                    opt_str = f", threshold={opt:.2f}" if opt is not None else ""
                     if ci_low is not None and ci_high is not None:
-                        lines.append(f"{pred}: AUC={auc_val:.3f} (95% CI {ci_low:.3f}-{ci_high:.3f}), Se={se:.2f}, Sp={sp:.2f}")
+                        lines.append(f"{pred}: AUC={auc_val:.3f} (95% CI {ci_low:.3f}-{ci_high:.3f}), Se={se:.2f}, Sp={sp:.2f}{opt_str}")
                     else:
-                        lines.append(f"{pred}: AUC={auc_val:.3f}, Se={se:.2f}, Sp={sp:.2f}")
+                        lines.append(f"{pred}: AUC={auc_val:.3f}, Se={se:.2f}, Sp={sp:.2f}{opt_str}")
 
         # ROC best vs others
         bvo = metrics.get("best_vs_others")
@@ -338,6 +414,15 @@ class ContextBuilder:
                 imp = f.get("importance", 0)
                 lines.append(f"  {var}: {imp:.4f}")
 
+        permf = metrics.get("permutation_importance")
+        if permf and isinstance(permf, list) and len(permf) > 0:
+            lines.append("Permutation importance:")
+            for f in permf[:8]:
+                var = f.get("variable", "?")
+                imp = f.get("importance", 0)
+                sd = f.get("sd", 0)
+                lines.append(f"  {var}: {imp:.4f} ± {sd:.4f}")
+
         shapf = metrics.get("shap_features")
         if shapf and isinstance(shapf, list) and len(shapf) > 0:
             lines.append("SHAP importance:")
@@ -345,6 +430,11 @@ class ContextBuilder:
                 feat = f.get("feature", "?")
                 imp = f.get("importance", 0)
                 lines.append(f"  {feat}: {imp:.4f}")
+
+        # Class distribution
+        cd = metrics.get("class_distribution")
+        if cd and isinstance(cd, dict):
+            lines.append("Class distribution: " + ", ".join(f"{k}={v}" for k, v in cd.items()))
 
         # Correlation pairs
         pairs = metrics.get("pairs")
@@ -405,6 +495,13 @@ class ContextBuilder:
                 lines.append(f"Post-hoc significant pairs: {pairs_str}")
             elif not metrics.get("significant"):
                 lines.append("Post-hoc: no significant pairwise differences")
+
+        # Levene / Bartlett (numeric_compare, anova)
+        if metrics.get("levene_p") is not None:
+            lp = metrics["levene_p"]
+            eq = metrics.get("equal_var")
+            label = f", equal_var={eq}" if eq is not None else ""
+            lines.append(f"Levene: p={lp:.4f}{label}")
 
         # T-test / Mann-Whitney (numeric_compare)
         test_name = metrics.get("test_name", "")

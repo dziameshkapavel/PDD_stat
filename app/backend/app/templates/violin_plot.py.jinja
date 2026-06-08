@@ -106,12 +106,26 @@ print("---")
 print("**Violin plot complete**")
 
 # JSON метрики
+group_stats = []
+for g in groups:
+    data = df_plot[df_plot[group_col] == g][value_col]
+    gs = {"group": str(g), "n": int(len(data))}
+    if len(data) > 0:
+        gs["mean"] = round(float(data.mean()), 4)
+        gs["median"] = round(float(data.median()), 4)
+        gs["std"] = round(float(data.std()), 4)
+        gs["q1"] = round(float(data.quantile(0.25)), 4)
+        gs["q3"] = round(float(data.quantile(0.75)), 4)
+        gs["iqr"] = round(float(gs["q3"] - gs["q1"]), 4)
+    group_stats.append(gs)
+
 output_metrics = {
     "model_type": "violin_plot",
     "value_col": value_col,
     "group_col": group_col,
     "n_groups": len(groups),
-    "n_total": n_total
+    "n_total": n_total,
+    "group_stats": group_stats
 }
 if len(groups) == 2:
     output_metrics["mann_whitney_p"] = float(u_p)

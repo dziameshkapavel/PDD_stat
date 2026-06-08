@@ -33,6 +33,10 @@ try:
 except:
     pass
 
+lasso_warnings = []
+c_1se_val = None
+n_1se_val = None
+
 print("## Logistic LASSO: Feature Selection\n")
 
 target_col = "{{ target_col }}"
@@ -155,8 +159,40 @@ if len(df_model) < 20:
 
 n_total = len(df_model)
 n_positive = int(df_model[target_col].sum())
+n_negative = n_total - n_positive
 print(f"**Observations:** {n_total}")
-print(f"**Events (1):** {n_positive} ({n_positive/n_total*100:.1f}%)\n")
+print(f"**Events (1):** {n_positive} ({n_positive/n_total*100:.1f}%)")
+print(f"**Non-events (0):** {n_negative} ({n_negative/n_total*100:.1f}%)\n")
+
+# LAS-107: Small sample warning
+n_covariates = len(encoded_covs)
+if n_total < 50 or n_positive < 10:
+    msg = f"Small sample: N={n_total}, events={n_positive}, covariates={n_covariates}. LASSO results may be unstable."
+    print(f"⚠️ {msg}\n")
+    lasso_warnings.append(msg)
+elif n_covariates > n_total / 2:
+    msg = f"High dimensionality: {n_covariates} covariates for {n_total} observations. Selection stability may be reduced."
+    print(f"⚠️ {msg}\n")
+    lasso_warnings.append(msg)
+
+# LAS-104: Correlated group detection
+if n_covariates >= 2:
+    try:
+        corr_matrix = df_model[encoded_covs].corr().abs()
+        high_corr_pairs = []
+        for i in range(len(encoded_covs)):
+            for j in range(i+1, len(encoded_covs)):
+                if corr_matrix.iloc[i, j] > 0.8:
+                    high_corr_pairs.append((encoded_covs[i], encoded_covs[j], corr_matrix.iloc[i, j]))
+        if high_corr_pairs:
+            print("**High correlation clusters detected:**")
+            for v1, v2, r in high_corr_pairs[:5]:
+                print(f"   * `{v1}` ↔ `{v2}` (|r|={r:.2f}) — LASSO may select arbitrarily")
+            if len(high_corr_pairs) > 5:
+                print(f"   * ... and {len(high_corr_pairs)-5} more pairs")
+            print()
+    except Exception:
+        pass
 
 # Подготовка данных
 X = df_model[encoded_covs].values
@@ -167,6 +203,8 @@ scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
 # Logistic LASSO (L1 penalty)
+best_C = C_value
+c_1se = None
 if auto_select_C:
     from sklearn.model_selection import GridSearchCV
     param_grid = {'C': np.logspace(-4, 0, 20)}
@@ -178,6 +216,24 @@ if auto_select_C:
     if model.n_iter_[0] >= 10000:
         print("⚠ Warning: solver did not converge. Increase max_iter.")
     print(f"**Best C (inverse of λ):** {best_C:.4f} (selected by 5-fold CV)\n")
+    # LAS-102: 1-SE rule
+    cv_means = grid.cv_results_['mean_test_score']
+    cv_stds = grid.cv_results_['std_test_score']
+    best_idx = np.argmax(cv_means)
+    best_score = cv_means[best_idx]
+    one_se_threshold = best_score - cv_stds[best_idx]
+    one_se_idx = np.where(cv_means >= one_se_threshold)[0][0]
+    c_1se = grid.param_grid['C'][one_se_idx]
+    if c_1se < best_C:
+        print(f"**1-SE rule C:** {c_1se:.4f} (simpler model)")
+        model_1se = LogisticRegression(penalty='l1', C=c_1se, solver='saga', max_iter=10000, tol=1e-8, random_state=42, class_weight='balanced')
+        model_1se.fit(X_scaled, y)
+        n_1se = int((model_1se.coef_[0] != 0).sum())
+        print(f"   Features selected at 1-SE: ~{n_1se} (using C=0→{best_C:.4f}→{c_1se:.4f})")
+        lasso_warnings.append(f"1-SE C={c_1se:.4f}, ~{n_1se} features)")
+        c_1se_val = float(c_1se)
+        n_1se_val = n_1se
+        print()
 else:
     model = LogisticRegression(penalty='l1', C=C_value, solver='saga', max_iter=10000, tol=1e-8, random_state=42, class_weight='balanced')
     model.fit(X_scaled, y)
@@ -210,6 +266,17 @@ n_zeroed = len(zeroed_features)
 n_cov_total = len(encoded_covs)
 print(f"**Features selected:** {n_selected}/{n_cov_total}")
 print(f"**Features zeroed (LASSO):** {n_zeroed}/{n_cov_total}\n")
+
+# LAS-103: EPV after selection
+if n_selected > 0:
+    epv = min(n_positive, n_negative) / n_selected
+    epv_grade = "Good" if epv >= 20 else ("Acceptable" if epv >= 10 else ("Risk of overfitting" if epv >= 5 else "Unacceptable"))
+    print(f"**Events per parameter (EPV) after selection:** min(events,non-events)/features = {epv:.1f} — {epv_grade}")
+    if epv < 10:
+        lasso_warnings.append(f"Low EPV after LASSO selection: {epv:.1f} ({n_selected} features for {int(min(n_positive, n_negative))} minority class)")
+    print()
+else:
+    print("**No features selected by LASSO.**\n")
 
 # Таблица выбранных признаков
 if n_selected > 0:
@@ -352,6 +419,7 @@ print(f"![LASSO Calibration](/plots/{cal_fn}.png)\n")
 
 # ========== JSON METRICS FOR AI ==========
 output_metrics = {
+    "warnings": lasso_warnings,
     "model_type": "logistic_lasso",
     "target": target_col,
     "n_total": n_total,
@@ -361,6 +429,7 @@ output_metrics = {
     "n_features_zeroed": n_zeroed,
     "auc": float(auc),
     "accuracy": float(accuracy),
+    "brier_score": float(brier),
     "intercept": float(intercept),
     "best_C": float(best_C) if auto_select_C else C_value,
     "auto_select_C": auto_select_C,
@@ -374,7 +443,9 @@ output_metrics = {
         for _, row in selected_features.iterrows()
     ] if n_selected > 0 else [],
     "zeroed_features": [display_name(f) for f in zeroed_features['Feature'].tolist()] if n_zeroed > 0 else [],
-    "encoding_map": {col: {'categories': info['categories'], 'reference': info['reference']} for col, info in encoding_map.items()}
+    "encoding_map": {col: {'categories': info['categories'], 'reference': info['reference']} for col, info in encoding_map.items()},
+    "c_1se": c_1se_val,
+    "n_features_1se": n_1se_val
 }
 
 def make_json_serializable(obj):

@@ -147,35 +147,71 @@ def prepare_dummies(df_in, covariates_list, ref_groups, cov_types):
 df_cox, encoded_covs, encoding_map, dummy_to_info = prepare_dummies(df_work, valid_cov, reference_groups, covariate_types)
 
 n_params = len(encoded_covs)
-if n_params > 0 and n_events / n_params < 10:
+if n_params > 0:
+    epv = n_events / n_params
+    if epv < 5:
+        epv_grade = "Unacceptable — risk of severe overfitting"
+        output_metrics["warnings"].append(f"Critical EPV: {n_events}/{n_params}={epv:.1f}")
+    elif epv < 10:
+        epv_grade = "Risk of overfitting"
+        output_metrics["warnings"].append(f"Low EPV: {n_events}/{n_params}={epv:.1f}")
+    elif epv < 20:
+        epv_grade = "Acceptable"
+    else:
+        epv_grade = "Good"
     n_unique_vars = len(valid_cov)
-    print(f"⚠️ **Warning:** Low events per parameter ({n_events} events / {n_params} parameters = {n_events/n_params:.1f})")
-    print(f"   ({n_unique_vars} original covariates, expanded to {n_params} parameters due to dummy-coding)")
-    print("   At least 10 events per parameter recommended.\n")
-    output_metrics["warnings"].append(f"Low EPV: {n_events} events / {n_params} parameters ({n_unique_vars} original covariates)")
+    print(f"**Events per parameter (EPV):** {n_events} / {n_params} = {epv:.1f} — {epv_grade}  ")
+    if n_unique_vars != n_params:
+        print(f"   ({n_unique_vars} original covariates, expanded to {n_params} parameters due to dummy-coding)")
 
+# Диагностика редких категорий (COX-003) и separation (COX-004)
 if encoding_map:
     print(f"**Categorical variables (dummy-coded):**")
     for col, info in encoding_map.items():
         print(f"   * `{col}`: Reference group = `{info['reference']}`, Compared = {info['categories']}")
+        for cat in info['categories']:
+            if cat == info['reference']:
+                continue
+            dummy = f"{col}_{cat}"
+            mask = df_cox[dummy] == 1
+            n_cat = int(mask.sum())
+            events_cat = int(df_cox.loc[mask, event_col].sum())
+            if n_cat < 10:
+                msg = f"Rare category: {col}={cat} (N={n_cat}, events={events_cat}) — HR may be unstable"
+                print(f"     ⚠️ {msg}")
+                output_metrics["warnings"].append(msg)
+            if n_cat > 0 and (events_cat == 0 or events_cat == n_cat):
+                msg = f"Complete separation in {col}={cat} ({events_cat}/{n_cat} events) — HR may be extreme"
+                print(f"     ⚠️ {msg}")
+                output_metrics["warnings"].append(msg)
     print()
 
 def fit_cox(covariates_to_fit, label=""):
     if not covariates_to_fit:
         return None
     cph = CoxPHFitter()
-    try:
-        cph.fit(df_cox[[time_col, event_col] + covariates_to_fit], duration_col=time_col, event_col=event_col)
-        if hasattr(cph, 'converged_') and not cph.converged_:
-            msg = f"Model did not converge {label}({len(covariates_to_fit)} params)"
+    convergence_warnings = []
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        try:
+            cph.fit(df_cox[[time_col, event_col] + covariates_to_fit], duration_col=time_col, event_col=event_col)
+            for warning in w:
+                if "convergen" in str(warning.message).lower():
+                    convergence_warnings.append(str(warning.message))
+        except Exception as e:
+            msg = f"Model fitting failed {label}: {str(e)}"
             output_metrics["warnings"].append(msg)
-            print(f"⚠️ {msg}")
             return None
-        return cph
-    except Exception as e:
-        msg = f"Model fitting failed {label}: {str(e)}"
+    if convergence_warnings:
+        for cw in convergence_warnings[:3]:
+            output_metrics["warnings"].append(f"Convergence issue {label}: {cw[:200]}")
+        print(f"⚠️ Model convergence issues detected {label}. See warnings.")
+    if hasattr(cph, 'converged_') and not cph.converged_:
+        msg = f"Model did not converge {label}({len(covariates_to_fit)} params)"
         output_metrics["warnings"].append(msg)
+        print(f"⚠️ {msg}")
         return None
+    return cph
 
 def build_table_data(cph):
     if cph is None:
@@ -269,6 +305,60 @@ def calculate_vif(covariates_list):
     except Exception as e:
         output_metrics["warnings"].append(f"VIF error: {str(e)}")
         return {}
+
+def check_linearity(cph, covariates_list, continuous_vars):
+    warnings_list = []
+    if not continuous_vars or cph is None:
+        return warnings_list
+    try:
+        resids = cph.compute_residuals(df_cox[[time_col, event_col] + covariates_list], kind='martingale')
+        for var in continuous_vars[:3]:
+            if var not in df_work.columns:
+                continue
+            x_vals = df_work[var]
+            y_vals = resids['martingale']
+            mask = x_vals.notna() & y_vals.notna()
+            x_sub = x_vals[mask]
+            y_sub = y_vals[mask]
+            if len(x_sub) < 10:
+                continue
+            corr, _ = scipy.stats.spearmanr(x_sub, y_sub)
+            if abs(corr) > 0.15:
+                msg = f"Non-linearity possible: {var} (Spearman ρ={corr:.3f} between predictor and Martingale residuals)"
+                warnings_list.append(msg)
+        try:
+            import statsmodels.api as sm_api
+            lowess = sm_api.nonparametric.lowess
+            smoothed = lowess(y_sub, x_sub, frac=0.66)
+            if len(smoothed) > 10:
+                max_dev = np.max(np.abs(smoothed[:, 1]))
+                if max_dev > 0.5:
+                    msg = f"LOWESS deviation detected for {var} (max residual dev={max_dev:.2f}) — consider spline transformation"
+                    if msg not in warnings_list:
+                        warnings_list.append(msg)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return warnings_list
+
+def check_influential_observations(cph, covariates_list):
+    warnings_list = []
+    try:
+        dfbeta = cph.compute_residuals(df_cox[[time_col, event_col] + covariates_list], kind='dfbeta')
+        for col in dfbeta.columns:
+            vals = dfbeta[col].abs().dropna()
+            if len(vals) < 5:
+                continue
+            threshold = 2 * np.sqrt(len(covariates_list) / len(vals)) if len(vals) > 0 else 0.5
+            influential = vals[vals > threshold]
+            if len(influential) > 0:
+                top_idx = influential.index[0]
+                top_val = influential.iloc[0]
+                warnings_list.append(f"Influential observation for {col}: index {top_idx} (dfbeta={top_val:.3f})")
+    except Exception:
+        pass
+    return warnings_list
 
 def run_schoenfeld_multivariate(cph, covariates_list):
     try:
@@ -366,6 +456,16 @@ elif regression_type in ["multi", "enter"]:
     output_metrics["schoenfeld_test"] = run_schoenfeld_multivariate(cph, encoded_covs)
     output_metrics["vif"] = calculate_vif(encoded_covs)
     output_metrics["table"] = build_table_data(cph)
+    
+    cont_vars = [c for c in valid_cov if c not in encoding_map]
+    lin_warnings = check_linearity(cph, encoded_covs, cont_vars)
+    for lw in lin_warnings:
+        print(f"⚠️ {lw}")
+        output_metrics["warnings"].append(lw)
+    inf_warnings = check_influential_observations(cph, encoded_covs)
+    for iw in inf_warnings[:5]:
+        print(f"⚠️ {iw}")
+        output_metrics["warnings"].append(iw)
     
     print("| Variable | beta (coef) | SE | z | HR | 95% CI | p-value |")
     print("|------------|-------------|----|---|----|--------|--------|")
@@ -528,6 +628,16 @@ elif regression_type in ["forward", "backward"]:
             output_metrics["schoenfeld_test"] = run_schoenfeld_multivariate(final_cph, final_covs)
             output_metrics["vif"] = calculate_vif(final_covs)
             output_metrics["table"] = build_table_data(final_cph)
+            
+            cont_vars = [c for c in selected_vars if c not in encoding_map]
+            lin_warnings = check_linearity(final_cph, final_covs, cont_vars)
+            for lw in lin_warnings:
+                print(f"⚠️ {lw}")
+                output_metrics["warnings"].append(lw)
+            inf_warnings = check_influential_observations(final_cph, final_covs)
+            for iw in inf_warnings[:5]:
+                print(f"⚠️ {iw}")
+                output_metrics["warnings"].append(iw)
             
             print(f"\n**Final model ({len(selected_vars)} predictors):**\n")
             print("| Variable | beta (coef) | SE | z | HR | 95% CI | p-value |")

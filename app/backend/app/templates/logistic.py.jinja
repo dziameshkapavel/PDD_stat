@@ -1,20 +1,23 @@
 # logistic.py.jinja
 # Логистическая регрессия
 # regression_type: "uni" | "multi" | "forward" | "backward"
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.metrics import roc_curve, auc, accuracy_score, confusion_matrix, roc_auc_score
 import json
 import time
-from pathlib import Path
 import warnings
-from sklearn.model_selection import train_test_split, cross_val_predict, StratifiedKFold
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import auc, confusion_matrix, roc_auc_score, roc_curve
+from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+
 warnings.filterwarnings('ignore')
 
 from sklearn.calibration import calibration_curve
+
 
 def net_benefit(y_true, y_pred, threshold):
     if threshold <= 0 or threshold >= 1:
@@ -89,7 +92,7 @@ var_labels = {}
 try:
     labels_path = Path(project_path) / "state" / "variable_labels.json"
     if labels_path.exists():
-        with open(labels_path, 'r', encoding='utf-8') as f:
+        with open(labels_path, encoding='utf-8') as f:
             var_labels = json.load(f)
 except:
     pass
@@ -101,6 +104,8 @@ covariate_types = {{ covariate_types|default({})|tojson }}
 reference_groups = {{ reference_groups|default({})|tojson }}
 validation_strategy = "{{ validation|default('none') }}"
 save_pred_col = "{{ save_pred_col|default('') }}"
+use_balanced = {{ use_balanced|default('false')|lower == 'true' }}
+cw = 'balanced' if use_balanced else None
 
 def make_json_serializable(obj):
     if isinstance(obj, dict):
@@ -117,9 +122,7 @@ def make_json_serializable(obj):
         return obj.tolist()
     elif isinstance(obj, (np.bool_, bool)):
         return bool(obj)
-    elif obj is None:
-        return None
-    elif pd.isna(obj):
+    elif obj is None or pd.isna(obj):
         return None
     else:
         try:
@@ -134,7 +137,8 @@ def save_predictions_to_df(col_name, predictors_list):
     X_full = df_log[get_expanded(predictors_list)].values
     scaler = StandardScaler()
     X_full_scaled = scaler.fit_transform(X_full)
-    model = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced')
+    cw = 'balanced' if use_balanced else None
+    model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
     model.fit(X_full_scaled, y_all)
     df[col_name] = np.nan
     df.loc[df_log.index, col_name] = model.predict_proba(X_full_scaled)[:, 1]
@@ -155,8 +159,8 @@ output_metrics = {
     "model_steps": []
 }
 
-print(f"## Logistic Regression\n")
-print(f"**Analysis type:** ", end="")
+print("## Logistic Regression\n")
+print("**Analysis type:** ", end="")
 if regression_type == "uni":
     print("Univariate (each predictor separately)")
 elif regression_type in ["multi", "enter"]:
@@ -235,7 +239,7 @@ def get_expanded(pred_list):
     return covs
 
 if encoding_map:
-    print(f"**Categorical variables (dummy encoding):**")
+    print("**Categorical variables (dummy encoding):**")
     for col, info in encoding_map.items():
         print(f"   * `{col}`: Reference = `{info['reference']}`, Categories = {info['categories']}")
     print()
@@ -262,6 +266,37 @@ print(f"**Observations (complete cases):** {len(df_log)}  ")
 print(f"**Events (1):** {int(n_cases)}  ")
 print(f"**Non-events (0):** {int(n_controls)}  \n")
 
+# EPV check (LOG-103)
+n_params = len(encoded_covs)
+if n_params > 0:
+    epv = min(n_cases, n_controls) / n_params
+    if epv < 5:
+        epv_grade = "Unacceptable — risk of severe overfitting"
+        output_metrics["warnings"].append(f"Critical EPV: min({int(n_cases)},{int(n_controls)})/{n_params}={epv:.1f}")
+    elif epv < 10:
+        epv_grade = "Risk of overfitting"
+        output_metrics["warnings"].append(f"Low EPV: min({int(n_cases)},{int(n_controls)})/{n_params}={epv:.1f}")
+    elif epv < 20:
+        epv_grade = "Acceptable"
+    else:
+        epv_grade = "Good"
+    print(f"**Events per parameter (EPV):** min(cases,controls)/params = {epv:.1f} — {epv_grade}  ")
+
+# Separation diagnostics for categorical variables (LOG-104)
+if encoding_map:
+    for col, info in encoding_map.items():
+        for cat in info['categories']:
+            if cat == info.get('reference', ''):
+                continue
+            dummy = f"{col}_{cat}"
+            mask = df_log[dummy] == 1
+            n_cat = int(mask.sum())
+            events_cat = int(df_log.loc[mask, target_col].sum())
+            if n_cat > 0 and (events_cat == 0 or events_cat == n_cat):
+                msg = f"Complete separation in {col}={cat} ({events_cat}/{n_cat} events) — OR may be extreme"
+                print(f"     ⚠️ {msg}")
+                output_metrics["warnings"].append(msg)
+
 if len(df_log) < 20:
     raise ValueError("Insufficient data")
 
@@ -283,7 +318,8 @@ def fit_logistic(pred_list):
     X = df_log[expanded].values
     y = df_log[target_col].values
     X_scaled = scaler.fit_transform(X)
-    model = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced')
+    cw = 'balanced' if use_balanced else None
+    model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
     model.fit(X_scaled, y)
     return model, X_scaled, y, expanded
 
@@ -296,7 +332,8 @@ def evaluate_final(pred_list):
         scaler = StandardScaler()
         Xf_train_scaled = scaler.fit_transform(Xf_train)
         Xf_test_scaled = scaler.transform(Xf_test)
-        model = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced')
+        cw = 'balanced' if use_balanced else None
+        model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
         model.fit(Xf_train_scaled, y_train)
         y_pred = model.predict(Xf_test_scaled)
         y_proba = model.predict_proba(Xf_test_scaled)[:, 1]
@@ -316,7 +353,8 @@ def evaluate_final(pred_list):
         Xf = X_all[:, col_idx]
         scaler = StandardScaler()
         Xf_scaled = scaler.fit_transform(Xf)
-        model = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced')
+        cw = 'balanced' if use_balanced else None
+        model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
         cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         y_proba_2d = cross_val_predict(model, Xf_scaled, y_all, cv=cv, method='predict_proba')
         y_proba = y_proba_2d[:, 1] if y_proba_2d.ndim == 2 and y_proba_2d.shape[1] == 2 else y_proba_2d
@@ -339,6 +377,30 @@ def evaluate_final(pred_list):
         y_proba = model.predict_proba(X)[:, 1]
         fpr, tpr, _ = roc_curve(y, y_proba)
         return model, metrics, fpr, tpr, y, y_proba
+
+def check_logit_linearity(continuous_vars):
+    warnings_list = []
+    if not continuous_vars:
+        return warnings_list
+    continuous_vars = [v for v in continuous_vars if v in df_log.columns]
+    if not continuous_vars:
+        return warnings_list
+    for var in continuous_vars[:3]:
+        try:
+            x_vals = df_log[var]
+            y_vals = df_log[target_col]
+            # Box-Tidwell: check if x * log(x) term is significant
+            import statsmodels.api as sm_api
+            x_log = x_vals * np.log(x_vals + 1e-10)
+            X_bt = sm_api.add_constant(np.column_stack([x_vals, x_log]))
+            bt_model = sm_api.Logit(y_vals, X_bt).fit(disp=False, maxiter=100)
+            bt_p = bt_model.pvalues.iloc[2]
+            if bt_p < 0.05:
+                msg = f"Non-linearity detected for {var}: Box-Tidwell p={bt_p:.4f} — consider spline or polynomial transformation"
+                warnings_list.append(msg)
+        except Exception:
+            pass
+    return warnings_list
 
 def calculate_vif(col_list):
     if len(col_list) < 2:
@@ -441,7 +503,7 @@ def get_model_summary(model, pred_list, X_scaled=None):
         from scipy import stats
         se = np.ones(len(coefs) + 1)
         p_values = np.ones(len(coefs) + 1)
-    
+
     summary = []
     summary.append({
         "variable": "Intercept",
@@ -507,26 +569,25 @@ def build_equation(model, pred_list):
         eq = "-" + eq[1:].strip()
     return f"logit(P) = {intercept:.4f} {eq}"
 
-from scipy import stats
 
 # ==================== UNIVARIATE ====================
 if regression_type == "uni":
     print("### Univariate Analysis\n")
-    
+
     roc_data = []
     dca_data = []
-    
+
     for pred in valid_pred:
         expanded = get_expanded([pred])
         col_idx = [encoded_covs.index(e) for e in expanded]
-        
+
         if validation_strategy == "split":
             Xp_train = X_train[:, col_idx]
             Xp_test = X_test[:, col_idx]
             scaler = StandardScaler()
             Xp_train_scaled = scaler.fit_transform(Xp_train)
             Xp_test_scaled = scaler.transform(Xp_test)
-            model = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced')
+            model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
             model.fit(Xp_train_scaled, y_train)
             y_proba = model.predict_proba(Xp_test_scaled)[:, 1]
             y_pred = model.predict(Xp_test_scaled)
@@ -539,7 +600,7 @@ if regression_type == "uni":
             Xp = X_all[:, col_idx]
             scaler = StandardScaler()
             Xp_scaled = scaler.fit_transform(Xp)
-            model = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced')
+            model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
             cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
             y_proba_2d = cross_val_predict(model, Xp_scaled, y_all, cv=cv, method='predict_proba')
             y_proba = y_proba_2d[:, 1] if y_proba_2d.ndim == 2 and y_proba_2d.shape[1] == 2 else y_proba_2d
@@ -562,19 +623,19 @@ if regression_type == "uni":
             fpr, tpr, _ = roc_curve(y, y_proba)
             roc_auc = auc(fpr, tpr)
             dca_data.append((pred, y, y_proba))
-        
+
         roc_data.append((pred, fpr, tpr, roc_auc))
-    
+
     # Один график ROC со всеми кривыми
     if roc_data:
         timestamp = str(int(time.time()))
         fig, ax = plt.subplots(1, 1, figsize=(10, 8))
-        
+
         colors = plt.cm.tab10(np.linspace(0, 1, len(roc_data)))
-        
+
         for i, (pred, fpr, tpr, roc_auc) in enumerate(roc_data):
             ax.plot(fpr, tpr, color=colors[i], lw=2, label=f'{pred} (AUC = {roc_auc:.3f})')
-        
+
         ax.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', alpha=0.5)
         ax.set_xlim([0.0, 1.0])
         ax.set_ylim([0.0, 1.05])
@@ -583,7 +644,7 @@ if regression_type == "uni":
         ax.set_title('ROC Curves - Univariate Analysis')
         ax.legend(loc="lower right", fontsize=9)
         ax.grid(True, alpha=0.3)
-        
+
         plt.tight_layout()
         plot_filename = f"logistic_uni_{timestamp}"
         save_plot(plot_filename, fig)
@@ -600,9 +661,9 @@ if regression_type == "uni":
 # ==================== MULTIVARIATE ====================
 elif regression_type in ["multi", "enter"]:
     print("### Multivariate Model\n")
-    
+
     expanded = get_expanded(valid_pred)
-    
+
     if validation_strategy == "split":
         col_idx = [encoded_covs.index(e) for e in expanded]
         Xm_train = X_train[:, col_idx]
@@ -610,9 +671,9 @@ elif regression_type in ["multi", "enter"]:
         scaler = StandardScaler()
         Xm_train_scaled = scaler.fit_transform(Xm_train)
         Xm_test_scaled = scaler.transform(Xm_test)
-        model = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced')
+        model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
         model.fit(Xm_train_scaled, y_train)
-        
+
         y_pred = model.predict(Xm_test_scaled)
         y_proba = model.predict_proba(Xm_test_scaled)[:, 1]
         fpr, tpr, _ = roc_curve(y_test, y_proba)
@@ -626,20 +687,26 @@ elif regression_type in ["multi", "enter"]:
         output_metrics["vif"] = calculate_vif(expanded)
         output_metrics["hosmer_lemeshow"] = hosmer_lemeshow_test(model, Xm_train_scaled, y_train)
         output_metrics["equation_html"] = build_equation(model, valid_pred)
-        
+
+        cont_vars = [c for c in valid_pred if c not in encoding_map]
+        lin_warnings = check_logit_linearity(cont_vars)
+        for lw in lin_warnings:
+            print(f"  ⚠️ {lw}")
+            output_metrics["warnings"].append(lw)
+
         summary = get_model_summary(model, expanded, Xm_train_scaled)
         print_summary_table(summary)
         print(f"\n**AUC (test):** {output_metrics['auc']:.4f}")
         print(f"**Accuracy (test):** {output_metrics['accuracy']:.4f}")
         print(f"**Sensitivity (test):** {output_metrics['sensitivity']:.4f}")
         print(f"**Specificity (test):** {output_metrics['specificity']:.4f}")
-    
+
     elif validation_strategy == "cv":
         col_idx = [encoded_covs.index(e) for e in expanded]
         Xm = X_all[:, col_idx]
         scaler = StandardScaler()
         Xm_scaled = scaler.fit_transform(Xm)
-        model = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced')
+        model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
         cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         y_proba_2d = cross_val_predict(model, Xm_scaled, y_all, cv=cv, method='predict_proba')
         y_proba = y_proba_2d[:, 1] if y_proba_2d.ndim == 2 and y_proba_2d.shape[1] == 2 else y_proba_2d
@@ -653,17 +720,21 @@ elif regression_type in ["multi", "enter"]:
         metrics = {"auc": roc_auc, "accuracy": accuracy, "sensitivity": sensitivity, "specificity": specificity}
         output_metrics.update(metrics)
         output_metrics["vif"] = calculate_vif(expanded)
-        # Fit final model on all data for coefficients
         model.fit(Xm_scaled, y_all)
         output_metrics["hosmer_lemeshow"] = hosmer_lemeshow_test(model, Xm_scaled, y_all)
         output_metrics["equation_html"] = build_equation(model, valid_pred)
+        cont_vars = [c for c in valid_pred if c not in encoding_map]
+        lin_warnings = check_logit_linearity(cont_vars)
+        for lw in lin_warnings:
+            print(f"  ⚠️ {lw}")
+            output_metrics["warnings"].append(lw)
         summary = get_model_summary(model, expanded, Xm_scaled)
         print_summary_table(summary)
         print(f"\n**AUC (5-fold CV):** {output_metrics['auc']:.4f}")
         print(f"**Accuracy (5-fold CV):** {output_metrics['accuracy']:.4f}")
         print(f"**Sensitivity (5-fold CV):** {output_metrics['sensitivity']:.4f}")
         print(f"**Specificity (5-fold CV):** {output_metrics['specificity']:.4f}")
-    
+
     else:  # none
         model, X, y, expanded = fit_logistic(valid_pred)
         if model is None:
@@ -673,6 +744,11 @@ elif regression_type in ["multi", "enter"]:
         output_metrics["vif"] = calculate_vif(expanded)
         output_metrics["hosmer_lemeshow"] = hosmer_lemeshow_test(model, X, y)
         output_metrics["equation_html"] = build_equation(model, valid_pred)
+        cont_vars = [c for c in valid_pred if c not in encoding_map]
+        lin_warnings = check_logit_linearity(cont_vars)
+        for lw in lin_warnings:
+            print(f"  ⚠️ {lw}")
+            output_metrics["warnings"].append(lw)
         summary = get_model_summary(model, expanded, X)
         print_summary_table(summary)
         print("⚠️ **Metrics on training data (optimistic)**")
@@ -683,18 +759,18 @@ elif regression_type in ["multi", "enter"]:
         y_proba = model.predict_proba(X)[:, 1]
         fpr, tpr, _ = roc_curve(y, y_proba)
         roc_auc = output_metrics['auc']
-    
+
     hl = output_metrics.get('hosmer_lemeshow', {})
     if 'p_value' in hl:
         print(f"\n**Hosmer-Lemeshow:** p = {fmt_p(hl['p_value'])} {'⚠️' if hl['p_value'] < 0.05 else '✓'}")
-    
+
     if len(valid_pred) > 1 and output_metrics.get("vif"):
         print("\n**VIF:**")
         for var, res in output_metrics["vif"].items():
             if isinstance(res, dict):
                 vname = display_name(var)
                 print(f"   `{vname}`: {res.get('value', 0):.2f}")
-    
+
     # ROC
     timestamp = str(int(time.time()))
     fig, ax = plt.subplots(1, 1, figsize=(8, 8))
@@ -707,7 +783,7 @@ elif regression_type in ["multi", "enter"]:
     ax.set_title('ROC Curve - Multivariate Model')
     ax.legend(loc="lower right")
     ax.grid(True, alpha=0.3)
-    
+
     plt.tight_layout()
     plot_filename = f"logistic_multi_{timestamp}"
     save_plot(plot_filename, fig)
@@ -728,7 +804,7 @@ elif regression_type in ["multi", "enter"]:
 # ==================== FORWARD ====================
 elif regression_type == "forward":
     print("### Forward Selection\n")
-    
+
     if validation_strategy == "split":
         print("⚠️ **Note:** Stepwise selection uses all data for variable selection (max power).")
         print("   Final metrics are computed on the test set.\n")
@@ -738,15 +814,15 @@ elif regression_type == "forward":
         if validation_strategy == "none":
             print("   Metrics on training data are **optimistic**. Use split or CV.")
         print("   Consider LASSO or Random Forest for more robust selection.\n")
-    
+
     selected = []
     remaining = valid_pred.copy()
     step = 1
-    
+
     while remaining:
         best_pval = 1.0
         best_pred = None
-        
+
         for pred in remaining:
             test_preds = selected + [pred]
             model, X, y, expanded = fit_logistic(test_preds)
@@ -762,7 +838,7 @@ elif regression_type == "forward":
             if min_pval < best_pval:
                 best_pval = min_pval
                 best_pred = pred
-        
+
         if best_pval < 0.05 and best_pred:
             selected.append(best_pred)
             remaining.remove(best_pred)
@@ -774,7 +850,7 @@ elif regression_type == "forward":
             step += 1
         else:
             break
-    
+
     if selected:
         print(f"\n**Final model:** {', '.join(selected)}")
         model, metrics, fpr, tpr, y_true, y_proba = evaluate_final(selected)
@@ -782,26 +858,32 @@ elif regression_type == "forward":
         expanded = get_expanded(selected)
         output_metrics["vif"] = calculate_vif(expanded)
         output_metrics["equation_html"] = build_equation(model, selected)
-        
+
         # H-L test: fit on all data
         hl_expanded = get_expanded(selected)
         hl_idx = [encoded_covs.index(e) for e in hl_expanded]
         X_hl = X_all[:, hl_idx]
         X_hl_scaled = StandardScaler().fit_transform(X_hl)
-        hl_model = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced')
+        hl_model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
         hl_model.fit(X_hl_scaled, y_all)
         output_metrics["hosmer_lemeshow"] = hosmer_lemeshow_test(hl_model, X_hl_scaled, y_all)
-        
+
+        cont_vars = [c for c in selected if c not in encoding_map]
+        lin_warnings = check_logit_linearity(cont_vars)
+        for lw in lin_warnings:
+            print(f"  ⚠️ {lw}")
+            output_metrics["warnings"].append(lw)
+
         # Summary table from full-data model (avoids scaler inconsistency)
         summary_model, summary_X, summary_y, summary_exp = fit_logistic(selected)
         summary = get_model_summary(summary_model, summary_exp, summary_X)
         if summary:
             print_summary_table(summary)
-        
+
         auc_val = metrics['auc']
         label_suffix = " (test)" if validation_strategy == "split" else " (5-fold CV)" if validation_strategy == "cv" else ""
         print(f"\n**AUC{label_suffix}:** {auc_val:.4f}")
-        
+
         # ROC
         timestamp = str(int(time.time()))
         fig, ax = plt.subplots(1, 1, figsize=(8, 8))
@@ -829,7 +911,7 @@ elif regression_type == "forward":
 # ==================== BACKWARD ====================
 elif regression_type == "backward":
     print("### Backward Elimination\n")
-    
+
     if validation_strategy == "split":
         print("⚠️ **Note:** Backward elimination uses all data for variable removal (max power).")
         print("   Final metrics are computed on the test set.\n")
@@ -839,10 +921,10 @@ elif regression_type == "backward":
         if validation_strategy == "none":
             print("   Metrics on training data are **optimistic**. Use split or CV.")
         print("   Consider LASSO or Random Forest for more robust selection.\n")
-    
+
     current = valid_pred.copy()
     step = 1
-    
+
     while len(current) > 1:
         expanded = get_expanded(current)
         model, X, y, _ = fit_logistic(current)
@@ -872,7 +954,7 @@ elif regression_type == "backward":
             step += 1
         else:
             break
-    
+
     if current:
         print(f"\n**Final model:** {', '.join(current)}")
         model, metrics, fpr, tpr, y_true, y_proba = evaluate_final(current)
@@ -880,26 +962,26 @@ elif regression_type == "backward":
         expanded = get_expanded(current)
         output_metrics["vif"] = calculate_vif(expanded)
         output_metrics["equation_html"] = build_equation(model, current)
-        
+
         # H-L test: fit on all data
         hl_expanded = get_expanded(current)
         hl_idx = [encoded_covs.index(e) for e in hl_expanded]
         X_hl = X_all[:, hl_idx]
         X_hl_scaled = StandardScaler().fit_transform(X_hl)
-        hl_model = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced')
+        hl_model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
         hl_model.fit(X_hl_scaled, y_all)
         output_metrics["hosmer_lemeshow"] = hosmer_lemeshow_test(hl_model, X_hl_scaled, y_all)
-        
+
         # Summary table from full-data model (avoids scaler inconsistency)
         summary_model, summary_X, summary_y, summary_exp = fit_logistic(current)
         summary = get_model_summary(summary_model, summary_exp, summary_X)
         if summary:
             print_summary_table(summary)
-        
+
         auc_val = metrics['auc']
         label_suffix = " (test)" if validation_strategy == "split" else " (5-fold CV)" if validation_strategy == "cv" else ""
         print(f"\n**AUC{label_suffix}:** {auc_val:.4f}")
-        
+
         # ROC
         timestamp = str(int(time.time()))
         fig, ax = plt.subplots(1, 1, figsize=(8, 8))
@@ -944,6 +1026,8 @@ def build_coef_list(summary_rows):
             "display_name": display_name(row['variable']),
             "coef": row['coef'],
             "or": row['or'],
+            "ci_lower": row['ci_lower'],
+            "ci_upper": row['ci_upper'],
             "p_value": row['p_value']
         })
     return result

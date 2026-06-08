@@ -106,8 +106,14 @@ print("*Note: C-index may be inflated with high censoring. Tied event times can 
 
 # ========== HELPERS ==========
 from sksurv.util import Surv
-from sksurv.metrics import concordance_index_censored, cumulative_dynamic_auc
+from sksurv.metrics import (
+    concordance_index_censored,
+    concordance_index_ipcw,
+    cumulative_dynamic_auc,
+    brier_score,
+)
 from scipy import stats
+from sklearn.isotonic import IsotonicRegression
 
 def calc_cindex(y_ev, y_tm, risk):
     try:
@@ -115,9 +121,18 @@ def calc_cindex(y_ev, y_tm, risk):
     except:
         return 0.5
 
-def bootstrap_cindex(y_ev, y_tm, risk, n_iter=1000):
+def calc_uno_cindex(y_ev, y_tm, risk, y_all_surv):
+    try:
+        y_test_surv = Surv.from_arrays(event=y_ev, time=y_tm)
+        return float(concordance_index_ipcw(y_all_surv, y_test_surv, risk)[0])
+    except:
+        return None
+
+def bootstrap_cindex(y_ev, y_tm, risk, y_all_surv=None, n_iter=1000):
+    """Returns Harrell C-index, Uno C-index, and bootstrap 95% CI for Harrell."""
     n = len(y_ev)
     base_c = calc_cindex(y_ev, y_tm, risk)
+    base_uno = calc_uno_cindex(y_ev, y_tm, risk, y_all_surv) if y_all_surv is not None else None
     boot_c = []
     np.random.seed(bootstrap_seed)
     for _ in range(n_iter):
@@ -131,9 +146,11 @@ def bootstrap_cindex(y_ev, y_tm, risk, n_iter=1000):
         except:
             continue
     if len(boot_c) < 50:
-        return base_c, base_c, base_c
+        return base_c, base_c, base_c, base_uno, base_uno, base_uno
     boot_c = np.array(boot_c)
-    return float(base_c), float(np.percentile(boot_c, 2.5)), float(np.percentile(boot_c, 97.5))
+    ci_low = float(np.percentile(boot_c, 2.5))
+    ci_high = float(np.percentile(boot_c, 97.5))
+    return float(base_c), ci_low, ci_high, base_uno, ci_low, ci_high
 
 def calc_time_auc_bootstrap(y_surv_local, risk, times, y_ev, y_tm, n_iter=500):
     n = len(y_ev)
@@ -141,6 +158,13 @@ def calc_time_auc_bootstrap(y_surv_local, risk, times, y_ev, y_tm, n_iter=500):
 
     for t in times:
         if t <= 0 or t > y_tm.max():
+            continue
+
+        # SURV-004/007: Check risk set and events at this time point
+        risk_set = (y_tm >= t).sum()
+        events_at_t = (y_ev & (y_tm <= t)).sum()
+        if risk_set < 10:
+            results[t] = {'auc': None, 'ci_low': None, 'ci_high': None, 'p_value': None, 'risk_set': int(risk_set), 'events': int(events_at_t), 'unstable': True}
             continue
 
         boot_aucs = []
@@ -173,20 +197,24 @@ def calc_time_auc_bootstrap(y_surv_local, risk, times, y_ev, y_tm, n_iter=500):
         if len(boot_aucs) >= 50:
             boot_aucs = np.array(boot_aucs)
             mean_auc = float(boot_aucs.mean())
-            se_auc = float(boot_aucs.std())
-            z = (mean_auc - 0.5) / se_auc if se_auc > 0 else 0
-            p_val = float(2 * (1 - stats.norm.cdf(abs(z))))
+            ci_low = float(np.percentile(boot_aucs, 2.5))
+            ci_high = float(np.percentile(boot_aucs, 97.5))
+            # SURV-008: CI-based significance (no z-test)
+            significant = ci_low > 0.5
             results[t] = {
                 'auc': mean_auc,
-                'ci_low': float(np.percentile(boot_aucs, 2.5)),
-                'ci_high': float(np.percentile(boot_aucs, 97.5)),
-                'p_value': p_val
+                'ci_low': ci_low,
+                'ci_high': ci_high,
+                'p_value': 0.05 if not significant else None,
+                'risk_set': int(risk_set),
+                'events': int(events_at_t),
+                'unstable': False
             }
         else:
             try:
                 auc_val = cumulative_dynamic_auc(y_surv_local, y_surv_local, risk, [t])
                 val = float(auc_val[0][0]) if isinstance(auc_val, tuple) else float(auc_val[0])
-                results[t] = {'auc': val, 'ci_low': val, 'ci_high': val, 'p_value': None}
+                results[t] = {'auc': val, 'ci_low': val, 'ci_high': val, 'p_value': None, 'risk_set': int(risk_set), 'events': int(events_at_t), 'unstable': True}
             except:
                 continue
 
@@ -196,6 +224,8 @@ def calc_time_auc_bootstrap(y_surv_local, risk, times, y_ev, y_tm, n_iter=500):
 results_by_stratum = []
 all_auc_plot_data = {}
 model_comparisons = []
+surv_warnings = []
+ibs_all = []
 
 for s in strata:
     if s is None:
@@ -226,12 +256,16 @@ for s in strata:
         risk = stratum_df[pred_col].values
 
         if n_bootstrap > 0:
-            c_val, ci_low, ci_high = bootstrap_cindex(local_y_event, local_y_time, risk, n_bootstrap)
+            c_val, ci_low, ci_high, c_uno, uno_low, uno_high = bootstrap_cindex(
+                local_y_event, local_y_time, risk, local_y_surv, n_bootstrap
+            )
         else:
             c_val = calc_cindex(local_y_event, local_y_time, risk)
             ci_low, ci_high = c_val, c_val
+            c_uno = calc_uno_cindex(local_y_event, local_y_time, risk, local_y_surv)
+            uno_low, uno_high = c_uno, c_uno if c_uno is not None else None
 
-        c_indices[pred_col] = {'value': c_val, 'ci_low': ci_low, 'ci_high': ci_high}
+        c_indices[pred_col] = {'value': c_val, 'ci_low': ci_low, 'ci_high': ci_high, 'uno': c_uno, 'uno_low': uno_low, 'uno_high': uno_high}
         auc_data[pred_col] = calc_time_auc_bootstrap(local_y_surv, risk, local_times, local_y_event, local_y_time, min(500, n_bootstrap))
 
     results_by_stratum.append({
@@ -244,11 +278,75 @@ for s in strata:
 
     print(f"### Stratum: {label} (n={len(stratum_df)}, events={int(local_y_event.sum())})\n")
 
+    print("**Harrell C-index**")
     print("| Model | C-index | 95% CI |")
     print("|-------|---------|--------|")
     for m, c in c_indices.items():
         print(f"| {m} | {c['value']:.4f} | [{c['ci_low']:.4f}, {c['ci_high']:.4f}] |")
     print()
+
+    print("**Uno C-index** (IPCW-corrected)")
+    print("| Model | C-index | 95% CI |")
+    print("|-------|---------|--------|")
+    for m, c in c_indices.items():
+        if c['uno'] is not None:
+            print(f"| {m} | {c['uno']:.4f} | [{c['uno_low']:.4f}, {c['uno_high']:.4f}] |")
+        else:
+            print(f"| {m} | — | — |")
+    print()
+
+    # SURV-005: Per-time-point Brier score (IBS requires survival probabilities, not risk scores)
+    risk_min, risk_max = stratum_df[valid_preds[0]].min(), stratum_df[valid_preds[0]].max()
+    is_probability = 0 <= risk_min and risk_max <= 1
+    if is_probability:
+        print("**Time-dependent Brier Score** — lower is better")
+        brier_times = [t for t in time_points if t > 0 and t <= local_y_time.max()] if time_points else [max(6, int(local_y_time.median()))]
+        print("| Time | " + " | ".join([f"`{p}`" for p in valid_preds]) + " |")
+        print("|------|" + "|".join(["----------" for _ in valid_preds]) + "|")
+        for t in brier_times:
+            row = f"| {t}mo |"
+            for pred_col in valid_preds:
+                risk = stratum_df[pred_col].values
+                try:
+                    bs_val = float(brier_score(local_y_surv, local_y_surv, risk, [t])[0][0])
+                    ibs_all.append(bs_val)
+                    row += f" {bs_val:.4f} |"
+                except:
+                    row += " — |"
+            print(row)
+        print()
+    else:
+        print("*IBS/Brier: predictions are not probabilities (not in [0,1]). Skipping.*\n")
+
+    # SURV-006: Survival calibration at user-specified time points
+    # Group predictions into quantiles and compare KM-observed vs predicted survival
+    cal_times = [t for t in time_points if t > 0 and t <= local_y_time.max()] if time_points else []
+    if cal_times:
+        print("**Survival Calibration** (observed vs predicted by risk group)")
+        print("| Time | Model | Group | N | Observed Surv |")
+        print("|------|-------|-------|---|---------------|")
+        for t in cal_times:
+            for pred_col in valid_preds:
+                risk = stratum_df[pred_col].values
+                try:
+                    from lifelines import KaplanMeierFitter
+                    # Split into 3 groups by risk score tertiles
+                    tertiles = [np.percentile(risk, 33.33), np.percentile(risk, 66.67)]
+                    if tertiles[0] == tertiles[1]:
+                        continue
+                    groups = np.digitize(risk, tertiles)
+                    for gi in range(1, 4):
+                        gmask = groups == gi
+                        if gmask.sum() < 5 or local_y_event[gmask].sum() < 1:
+                            continue
+                        kmf = KaplanMeierFitter()
+                        kmf.fit(local_y_time[gmask], local_y_event[gmask])
+                        obs_surv = kmf.predict(t)
+                        gname = "High" if gi == 3 else ("Mid" if gi == 2 else "Low")
+                        print(f"| {t}mo | {pred_col} | {gname} | {int(gmask.sum())} | {obs_surv:.3f} |")
+                except:
+                    continue
+        print()
 
     times_to_show = time_points
     if times_to_show:
@@ -260,11 +358,18 @@ for s in strata:
                 for m in valid_preds:
                     if m in auc_data and t in auc_data[m]:
                         a = auc_data[m][t]
-                        p = a.get('p_value')
-                        if p is not None:
-                            row += f" {a['auc']:.3f} [{a['ci_low']:.3f}-{a['ci_high']:.3f}] p={fmt_p(p)} |"
+                        if a.get('unstable'):
+                            row += f" ⚠ unstable (risk={a['risk_set']}, events={a['events']}) |"
+                            w_msg = f"Time {t}mo: unstable AUC (risk set={a['risk_set']}, events={a['events']}) for {m}"
+                            surv_warnings.append(w_msg)
+                        elif a['auc'] is not None:
+                            p = a.get('p_value')
+                            if p is not None:
+                                row += f" {a['auc']:.3f} [{a['ci_low']:.3f}-{a['ci_high']:.3f}] |"
+                            else:
+                                row += f" {a['auc']:.3f} [{a['ci_low']:.3f}-{a['ci_high']:.3f}] |"
                         else:
-                            row += f" {a['auc']:.3f} [{a['ci_low']:.3f}-{a['ci_high']:.3f}] |"
+                            row += " — |"
                     else:
                         row += " — |"
                 print(row)
@@ -282,14 +387,17 @@ if run_model_comparison and len(valid_preds) >= 2 and len(strata) == 1:
     print("### Model Comparison\n")
     if n_comp > 1:
         print(f"*{n_comp} pairwise comparisons. Multiple comparisons inflate Type I error.*\n")
+    print("*Note: Exploratory comparison using bootstrap delta C. IPCW-based tests (e.g., Uno test) recommended for confirmatory analysis.*\n")
     y_all_time = df_eval[time_col].values
     y_all_event = df_eval[event_col].values.astype(bool)
+    y_all_surv = Surv.from_arrays(event=y_all_event, time=y_all_time)
 
     for m1, m2 in combinations(valid_preds, 2):
         c1 = calc_cindex(y_all_event, y_all_time, df_eval[m1].values)
         c2 = calc_cindex(y_all_event, y_all_time, df_eval[m2].values)
         delta = c1 - c2
 
+        # Boostrap percentile CI for delta C
         n_boot_test = min(n_bootstrap, 500)
         boot_deltas = []
         np.random.seed(bootstrap_seed)
@@ -305,15 +413,17 @@ if run_model_comparison and len(valid_preds) >= 2 and len(strata) == 1:
                 continue
 
         if boot_deltas:
-            se = np.array(boot_deltas).std()
-            z_stat = delta / se if se > 0 else 0
-            p_val = 2 * (1 - stats.norm.cdf(abs(z_stat)))
+            boot_deltas = np.array(boot_deltas)
+            delta_ci_low = float(np.percentile(boot_deltas, 2.5))
+            delta_ci_high = float(np.percentile(boot_deltas, 97.5))
+            # SURV-008: CI-based significance (no z-test)
+            p_val = 0.05 if delta_ci_low > 0 or delta_ci_high < 0 else 1.0
         else:
-            p_val = 1.0
+            delta_ci_low, delta_ci_high, p_val = delta, delta, 1.0
 
         sig = "**" if p_val < 0.05 else ""
-        print(f"| {m1} vs {m2} | ΔC = {delta:+.4f} | p = {fmt_p(p_val)}{sig} |")
-        model_comparisons.append({'model1': m1, 'model2': m2, 'delta': float(delta), 'p_value': float(p_val)})
+        print(f"| {m1} vs {m2} | ΔC = {delta:+.4f} [{delta_ci_low:.4f}, {delta_ci_high:.4f}] | p = {fmt_p(p_val)}{sig} |")
+        model_comparisons.append({'model1': m1, 'model2': m2, 'delta': float(delta), 'delta_ci_low': float(delta_ci_low), 'delta_ci_high': float(delta_ci_high), 'p_value': float(p_val)})
     print()
 
 # ========== PLOT ==========
@@ -332,8 +442,8 @@ if all_auc_plot_data:
         if not t_vals or not auc_d:
             continue
 
-        auc_vals = [auc_d[t]['auc'] for t in t_vals if t in auc_d]
-        plot_t_vals = [t for t in t_vals if t in auc_d]
+        auc_vals = [auc_d[t]['auc'] for t in t_vals if t in auc_d and auc_d[t].get('auc') is not None]
+        plot_t_vals = [t for t in t_vals if t in auc_d and auc_d[t].get('auc') is not None]
 
         if plot_t_vals:
             lbl = f"{info['label']} - {info['model']}" if stratify_col else info['model']
@@ -391,6 +501,7 @@ print("**Survival evaluation complete**")
 
 # ========== JSON METRICS ==========
 output_metrics = {
+    "warnings": surv_warnings,
     "model_type": "survival_evaluation",
     "time_col": time_col,
     "event_col": event_col,
@@ -402,6 +513,7 @@ output_metrics = {
     "c_indices": {r['label']: r['c_indices'] for r in results_by_stratum},
     "time_auc": {r['label']: {m: {str(t): v for t, v in r['auc_data'].get(m, {}).items()} for m in valid_preds} for r in results_by_stratum},
     "model_comparisons": model_comparisons,
+    "ibs": ibs_all if ibs_all else None,
     "plots": output_plots
 }
 

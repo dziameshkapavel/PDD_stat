@@ -120,6 +120,9 @@ X = df_model[all_preds].copy()
 X_scaled = scaler.fit_transform(X)
 X_scaled = pd.DataFrame(X_scaled, columns=all_preds)
 
+lrt_chi2 = None
+lrt_df = None
+
 if is_survival:
     # COX MODEL
     from lifelines import CoxPHFitter
@@ -169,6 +172,8 @@ if is_survival:
             ll_null = null_cph.log_likelihood_
             lr_stat = 2 * (ll_full - ll_null)
             nonlin_p = float(1 - chi2.cdf(lr_stat, len(spline_cols)))
+            lrt_chi2 = float(lr_stat)
+            lrt_df = len(spline_cols)
             print(f"\n**Non-linearity test (LRT):** χ² = {lr_stat:.2f}, df = {len(spline_cols)}, p = {fmt_p(nonlin_p)}{' **' if nonlin_p < 0.05 else ''}")
             if nonlin_p < 0.05:
                 print("**Conclusion:** Significant non-linear association detected.")
@@ -338,7 +343,9 @@ output_metrics = {
     "knots": [float(k) for k in knots],
     "n_total": n_total,
     "nonlinear_p": float(nonlin_p) if 'nonlin_p' in dir() else None,
-    "significant_nonlinear": bool(nonlin_p < 0.05) if 'nonlin_p' in dir() else None
+    "significant_nonlinear": bool(nonlin_p < 0.05) if 'nonlin_p' in dir() else None,
+    "lrt_chi2": lrt_chi2,
+    "lrt_df": lrt_df
 }
 
 if is_survival:

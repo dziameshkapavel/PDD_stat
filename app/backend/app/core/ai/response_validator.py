@@ -67,6 +67,36 @@ NUM_PATTERNS = {
         r"([0-9]+[.][0-9]+)\s*[-–]\s*([0-9]+[.][0-9]+)",
         re.IGNORECASE
     ),
+    "mean": re.compile(
+        r"(?:mean|Mean|среднее)\s*(?:[a-zа-яё]+\s+)*?([0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
+    "median": re.compile(
+        r"(?:median|Median|медиана)\s*(?:[a-zа-яё]+\s+)*?([0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
+    "std": re.compile(
+        r"(?:std|Std|SD|standard\s*deviation|σ)\s*(?:[a-zа-яё]+\s+)*?([0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
+    "kappa": re.compile(r"(?:[κκ]\s*[=:≈]?\s*|kappa\s*[=:≈]?\s*|коэффицент\s+каппа\s*[=:≈]?\s*)([0-9]+[.][0-9]+)", re.IGNORECASE),
+    "z_stat": re.compile(r"\bz\s*[=:≈]?\s*(-?[0-9]+[.][0-9]+)", re.IGNORECASE),
+    "brier": re.compile(
+        r"(?:Brier|brier)\s*(?:score)?\s*(?:was|is|=|:)\s*([0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
+    "threshold": re.compile(
+        r"(?:threshold|cut.?off|порог)\s*(?:value)?\s*(?:was|is|=|:)\s*([0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
+    "cal_intercept": re.compile(
+        r"(?:calibration\s*intercept|intercept)\s*(?:of|was|is|=|:)\s*(-?[0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
+    "cal_slope": re.compile(
+        r"(?:calibration\s*slope|slope)\s*(?:of|was|is|=|:)\s*(-?[0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
 }
 
 # Check for CI presence near HR/OR

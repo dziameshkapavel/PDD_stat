@@ -120,11 +120,57 @@ print("---")
 print("**Descriptive statistics complete**")
 
 # JSON метрики для AI
+from numbers import Number
+
+def _safe_num(v):
+    if isinstance(v, Number) and not np.isnan(v):
+        return round(float(v), 4)
+    return None
+
+variables_stats = []
+for col in valid_vars:
+    data = df[col].dropna()
+    n = len(data)
+    if n == 0:
+        variables_stats.append({"variable": col, "n": 0})
+        continue
+    mean_val = data.mean()
+    median_val = data.median()
+    std_val = data.std()
+    min_val = data.min()
+    max_val = data.max()
+    q1 = data.quantile(0.25)
+    q3 = data.quantile(0.75)
+    skew_val = stats.skew(data) if n > 2 else np.nan
+    kurt_val = stats.kurtosis(data) if n > 3 else np.nan
+    iqr = q3 - q1
+    lower = q1 - 1.5 * iqr
+    upper = q3 + 1.5 * iqr
+    outliers = int(((data < lower) | (data > upper)).sum())
+    shapiro_w, shapiro_p = (None, None)
+    if 3 <= n <= 5000:
+        try:
+            shapiro_w, shapiro_p = stats.shapiro(data)
+        except Exception:
+            pass
+    variables_stats.append({
+        "variable": col, "n": n,
+        "mean": _safe_num(mean_val), "median": _safe_num(median_val),
+        "std": _safe_num(std_val), "min": _safe_num(min_val),
+        "max": _safe_num(max_val), "q1": _safe_num(q1), "q3": _safe_num(q3),
+        "skew": _safe_num(skew_val), "kurtosis": _safe_num(kurt_val),
+        "missing": int(df[col].isna().sum()),
+        "outliers": outliers,
+        "shapiro_w": round(shapiro_w, 4) if shapiro_w else None,
+        "shapiro_p": round(shapiro_p, 4) if shapiro_p else None,
+    })
+
 output_metrics = {
     "model_type": "descriptive_stats",
     "n_variables": len(valid_vars),
     "n_observations": len(df),
-    "variables": valid_vars
+    "variables": valid_vars,
+    "variables_stats": variables_stats
 }
 
 print("\n<!-- JSON_METRICS_START -->")

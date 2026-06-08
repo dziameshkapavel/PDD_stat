@@ -66,7 +66,7 @@ output_metrics = {
     "oob_score": None,
     "feature_importance": {},
     "top_n": top_n,
-    "shap_calculated": False,
+    "shap_features": [],
     "warnings": [],
     "plots": []
 }
@@ -245,8 +245,6 @@ try:
             explainer = shap.TreeExplainer(rsf, feature_perturbation="tree_path_dependent")
             shap_values = explainer.shap_values(X_shap)
             
-            output_metrics["shap_calculated"] = True
-            
             # Summary Plot
             fig, ax = plt.subplots(figsize=(12, 8))
             shap.summary_plot(shap_values, X_shap, show=False)
@@ -278,6 +276,12 @@ try:
             for i, row in enumerate(shap_df.itertuples(), 1):
                 print(f"| {i} | {row.Feature} | {row._2:.4f} |")
             print()
+            
+            shap_features_list = [
+                {"feature": str(row.Feature), "importance": float(row._2)}
+                for row in shap_df.itertuples()
+            ][:10]
+            output_metrics["shap_features"] = shap_features_list
             
         except Exception as e:
             output_metrics["warnings"].append(f"SHAP analysis failed: {str(e)}")

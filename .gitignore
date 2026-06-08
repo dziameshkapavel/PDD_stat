@@ -26,3 +26,4 @@ active_project.txt
 
 # Linter
 .ruff_cache/
+*.xlsx

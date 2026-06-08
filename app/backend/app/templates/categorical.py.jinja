@@ -184,6 +184,15 @@ else:
 if 'p_value' in output_metrics:
     output_metrics["significant"] = bool(output_metrics["p_value"] < 0.05)
 
+if n_rows == 2 and n_cols == 2:
+    contingency_table = []
+    for row_name, row_data in ct.iterrows():
+        entry = {"row_name": str(row_name)}
+        for col_name in ct.columns:
+            entry[str(col_name)] = int(row_data[col_name])
+        contingency_table.append(entry)
+    output_metrics["contingency_table"] = contingency_table
+
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (np.bool_, bool)):

@@ -231,13 +231,15 @@ output_metrics = {
     "n_total": sum(len(v) for v in data_by_group.values()),
     "n_groups": n_groups,
     "groups": [str(g) for g in groups],
-    "descriptive_stats": [
+    "group_stats": [
         {
             "group": str(g),
-            "n": len(vals),
-            "median": float(vals.median()),
-            "q1": float(vals.quantile(0.25)),
-            "q3": float(vals.quantile(0.75))
+            "n": int(len(vals)),
+            "mean": round(float(vals.mean()), 4),
+            "median": round(float(vals.median()), 4),
+            "std": round(float(vals.std()), 4),
+            "q1": round(float(vals.quantile(0.25)), 4),
+            "q3": round(float(vals.quantile(0.75)), 4)
         }
         for g, vals in data_by_group.items()
     ],

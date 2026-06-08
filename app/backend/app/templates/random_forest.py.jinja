@@ -10,6 +10,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 import time
+timestamp = str(int(time.time()))
 from pathlib import Path
 import json
 
@@ -26,7 +27,7 @@ except:
 target = "{{ target_col }}"
 covariates = {{ covariates|default([])|tojson }}
 top_n = {{ top_n|default(15)|int }}
-calculate_shap = "{{ calculate_shap|default('false') }}" == "True"
+calculate_shap = "{{ calculate_shap|default('True') }}" == "True"
 shap_metrics = None
 
 print("## Random Forest\n")
@@ -86,9 +87,49 @@ if y.dtype == 'object' or y.dtype.name == 'category':
     print(f"**Target encoded:** {le.classes_.tolist()}  ")
 
 is_binary = len(set(y)) == 2
+auc = None
+brier = None
+brier_null = None
+cal_intercept = None
+cal_slope = None
 print(f"**Observations:** {len(X)}  ")
 print(f"**Features:** {X.shape[1]}  ")
 print(f"**Task type:** {'binary' if is_binary else 'multiclass'}  \n")
+
+rf_warnings = []
+
+# RF-101: Class imbalance detection
+if is_binary:
+    class_counts = pd.Series(y).value_counts()
+    minority_class = class_counts.min()
+    majority_class = class_counts.max()
+    minority_pct = minority_class / len(y) * 100
+    majority_pct = majority_class / len(y) * 100
+    print(f"**Class distribution:** {class_counts.to_dict()}")
+    print(f"**Minority class:** {minority_pct:.1f}% / **Majority class:** {majority_pct:.1f}%  ")
+    if minority_pct < 20:
+        msg = f"Class imbalance detected: minority class = {minority_pct:.1f}% (< 20%). class_weight='balanced' is set, but predictions may still favor the majority class."
+        print(f"⚠ {msg}\n")
+        rf_warnings.append(msg)
+    print()
+else:
+    print(f"**Class distribution:** {pd.Series(y).value_counts().to_dict()}\n")
+
+# RF-105: Low event count warning
+if is_binary:
+    n_events = int(minority_class)
+    if n_events < 20:
+        msg = f"Low event count: {n_events} events. RF results may be unstable."
+        print(f"⚠ {msg}\n")
+        rf_warnings.append(msg)
+elif len(y) < 50:
+    msg = f"Small sample: {len(y)} observations for {X.shape[1]} features. RF results may be unstable."
+    print(f"⚠ {msg}\n")
+    rf_warnings.append(msg)
+
+# Medical disclaimer
+print("**Note:** Random Forest feature importance does not imply causal or independent association.")
+print("  RF is an exploratory model; confirmatory analysis requires dedicated inferential methods.\n")
 
 # Разделение
 X_train, X_test, y_train, y_test = train_test_split(
@@ -97,6 +138,28 @@ X_train, X_test, y_train, y_test = train_test_split(
 
 print(f"**Training set:** {len(X_train)}  ")
 print(f"**Test set:** {len(X_test)}  \n")
+
+# RF-108: Enhanced leakage detection
+if is_binary:
+    for col in valid_cov:
+        col_lower = col.lower()
+        if target.lower() in col_lower and col_lower != target.lower():
+            if any(p in col_lower for p in ['event', 'status', 'outcome', 'death', 'survival', 'response']):
+                msg = f"Potential data leakage: '{col}' contains target-related keywords. Consider excluding it."
+                print(f"⚠ {msg}\n")
+                rf_warnings.append(msg)
+    # Check for unrealistically high AUC via perfect separation
+    from sklearn.tree import DecisionTreeClassifier
+    dt = DecisionTreeClassifier(max_depth=3, random_state=42)
+    dt.fit(X_train, y_train)
+    dt_proba = dt.predict_proba(X_test)[:, 1]
+    if is_binary and len(set(y_test)) == 2:
+        from sklearn.metrics import roc_auc_score
+        dt_auc = roc_auc_score(y_test, dt_proba)
+        if dt_auc > 0.98:
+            msg = f"Near-perfect AUC ({dt_auc:.3f}) detected with shallow tree. Possible data leakage — review predictors."
+            print(f"⚠ {msg}\n")
+            rf_warnings.append(msg)
 
 # Обучение
 print("Training Random Forest model...\n")
@@ -128,6 +191,49 @@ if is_binary:
     y_proba = rf.predict_proba(X_test)[:, 1]
     auc = roc_auc_score(y_test, y_proba)
     print(f"| **AUC** | **{auc:.4f}** |")
+    
+    # RF-102: Calibration metrics
+    from sklearn.metrics import brier_score_loss
+    from sklearn.isotonic import IsotonicRegression
+    from scipy import stats
+    brier = brier_score_loss(y_test, y_proba)
+    print(f"| **Brier score** | **{brier:.4f}** |")
+    print()
+    print(f"**Brier score:** {brier:.4f} (0=perfect, >0.25=poor)")
+    brier_null = (y_test.mean()) * (1 - y_test.mean())
+    print(f"**Brier null model (always predict mean):** {brier_null:.4f}")
+    print(f"**Brier skill score:** {1 - brier/brier_null:.4f} (1=perfect, 0=no better than mean)\n")
+    
+    # Calibration curve via isotonic regression
+    iso_reg = IsotonicRegression(out_of_bounds='clip')
+    iso_reg.fit(y_proba, y_test)
+    calibrated_probs = iso_reg.predict(y_proba)
+    from sklearn.linear_model import LogisticRegression
+    logit_cal = LogisticRegression(solver='lbfgs')
+    logit_cal.fit(y_proba.reshape(-1, 1), y_test)
+    cal_intercept = float(logit_cal.intercept_[0])
+    cal_slope = float(logit_cal.coef_[0][0])
+    print(f"**Calibration intercept:** {cal_intercept:.4f} (0=perfect)")
+    print(f"**Calibration slope:** {cal_slope:.4f} (1=perfect)")
+    if abs(cal_intercept) > 0.5 or abs(cal_slope - 1) > 0.3:
+        msg = f"Poor calibration: intercept={cal_intercept:.2f}, slope={cal_slope:.2f}. Predicted probabilities may be biased."
+        print(f"⚠ {msg}\n")
+        rf_warnings.append(msg)
+    
+    # Calibration plot
+    from sklearn.calibration import calibration_curve
+    prob_true, prob_pred = calibration_curve(y_test, y_proba, n_bins=10, strategy='uniform')
+    fig_cal, ax_cal = plt.subplots(figsize=(8, 7))
+    ax_cal.plot(prob_pred, prob_true, marker='o', linewidth=2, label='RF')
+    ax_cal.plot([0, 1], [0, 1], 'k--', linewidth=1, label='Perfect')
+    ax_cal.set_xlabel('Mean predicted probability')
+    ax_cal.set_ylabel('Observed proportion')
+    ax_cal.set_title('Calibration Plot')
+    ax_cal.legend()
+    ax_cal.grid(True, alpha=0.3)
+    plt.tight_layout()
+    save_plot(f"rf_calibration_{timestamp}")
+    print(f"![Calibration Plot](/plots/rf_calibration_{timestamp}.png)\n")
 
 # Важность признаков (RF)
 importances = pd.Series(rf.feature_importances_, index=X.columns).sort_values(ascending=False)
@@ -139,8 +245,22 @@ print("|---|----------|------------|")
 for i, (feat, imp) in enumerate(top_features.items(), 1):
     print(f"| {i} | {feat} | {imp:.4f} |")
 
+# RF-103: Permutation Importance (corrects impurity bias)
+from sklearn.inspection import permutation_importance
+perm_result = permutation_importance(rf, X_test, y_test, n_repeats=10, random_state=42, n_jobs=-1)
+perm_importances = pd.DataFrame({
+    'feature': X.columns,
+    'importance_mean': perm_result.importances_mean,
+    'importance_std': perm_result.importances_std
+}).sort_values('importance_mean', ascending=False)
+top_perm = perm_importances.head(top_n if top_n > 0 else 15)
+print(f"\n### Top-{len(top_perm)} features by Permutation Importance\n")
+print("| # | Feature | Importance (mean) | SD |")
+print("|---|---------|------------------|----|")
+for i, (_, row) in enumerate(top_perm.iterrows(), 1):
+    print(f"| {i} | {row['feature']} | {row['importance_mean']:.4f} | {row['importance_std']:.4f} |")
+
 # График важности RF
-timestamp = str(int(time.time()))
 fig, ax = plt.subplots(figsize=(10, 8))
 colors = plt.cm.Blues(np.linspace(0.4, 0.9, len(top_features)))
 bars = ax.barh(range(len(top_features)), top_features.values[::-1], color=colors[::-1])
@@ -152,6 +272,19 @@ ax.grid(True, alpha=0.3, axis='x')
 plt.tight_layout()
 save_plot(f"rf_importance_{timestamp}")
 print(f"\n![Feature Importance](/plots/rf_importance_{timestamp}.png)\n")
+
+# Permutation importance plot
+fig_perm, ax_perm = plt.subplots(figsize=(10, 8))
+colors_perm = plt.cm.Oranges(np.linspace(0.4, 0.9, len(top_perm)))
+ax_perm.barh(range(len(top_perm)), top_perm['importance_mean'].values[::-1], xerr=top_perm['importance_std'].values[::-1], color=colors_perm[::-1], capsize=3)
+ax_perm.set_yticks(range(len(top_perm)))
+ax_perm.set_yticklabels(top_perm['feature'].values[::-1])
+ax_perm.set_xlabel('Permutation Importance (mean ± SD)')
+ax_perm.set_title(f'Permutation Importance (Top {len(top_perm)})')
+ax_perm.grid(True, alpha=0.3, axis='x')
+plt.tight_layout()
+save_plot(f"rf_perm_importance_{timestamp}")
+print(f"\n![Permutation Importance](/plots/rf_perm_importance_{timestamp}.png)\n")
 
 # SHAP анализ
 if calculate_shap:
@@ -269,20 +402,31 @@ if save_model:
 
 # JSON метрики
 output_metrics = {
+    "warnings": rf_warnings,
     "model_type": "random_forest",
     "target": target,
     "is_binary": is_binary,
     "oob_score": float(rf.oob_score_),
     "accuracy": float(accuracy_score(y_test, y_pred)),
     "auc": float(auc) if is_binary else None,
+    "brier_score": float(brier) if is_binary else None,
+    "brier_skill_score": float(1 - brier/brier_null) if is_binary else None,
+    "calibration_intercept": float(cal_intercept) if is_binary else None,
+    "calibration_slope": float(cal_slope) if is_binary else None,
     "precision": float(precision_score(y_test, y_pred, average='binary', zero_division=0)) if is_binary else None,
     "recall": float(recall_score(y_test, y_pred, average='binary')) if is_binary else None,
     "f1": float(f1_score(y_test, y_pred, average='binary', zero_division=0)) if is_binary else None,
     "n_samples": int(len(X)),
     "n_features": int(X.shape[1]),
+    "n_test_samples": int(len(X_test)),
+    "class_distribution": {str(k): int(v) for k, v in pd.Series(y).value_counts().to_dict().items()},
     "top_features": [
         {"variable": str(feat), "importance": float(imp)} 
         for feat, imp in top_features.items()
+    ],
+    "permutation_importance": [
+        {"variable": str(row['feature']), "importance": float(row['importance_mean']), "sd": float(row['importance_std'])}
+        for _, row in top_perm.iterrows()
     ],
     "shap_features": shap_metrics if shap_metrics else [],
     "model_saved": saved_model_path is not None,

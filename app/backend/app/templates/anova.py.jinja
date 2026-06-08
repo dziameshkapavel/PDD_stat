@@ -121,6 +121,7 @@ print()
 print("### Homogeneity of Variances\n")
 if n_groups >= 2:
     arrays = [data_by_group[g] for g in groups]
+    lev_p = None
     try:
         lev_stat, lev_p = levene(*arrays)
         print(f"Levene's test: W = {lev_stat:.4f}, p = {fmt_p(lev_p)}")
@@ -157,6 +158,7 @@ output_metrics = {
     "group_labels": {str(g): format_group_label(g) for g in groups},
     "all_normal": all_normal,
     "equal_var": equal_var,
+    "levene_p": lev_p,
     "descriptive": descriptive_stats,
     "posthoc": []
 }
