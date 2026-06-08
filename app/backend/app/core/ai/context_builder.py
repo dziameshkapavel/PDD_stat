@@ -519,9 +519,16 @@ class ContextBuilder:
         lines.append(f"Template: {template}")
         lines.append(f"Title: {title}")
 
+        output = item.get("output_preview", "")
+        if output:
+            lines.append("")
+            lines.append("### Output text")
+            lines.append(output[:3000])
+
         metric_text = self._format_metrics_text(metrics)
         if metric_text:
             lines.append("")
+            lines.append("### Metrics")
             lines.append(metric_text)
 
         return "\n".join(lines)

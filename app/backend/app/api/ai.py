@@ -87,7 +87,7 @@ def load_history(loader, limit: int = 5) -> list[dict[str, Any]]:
     with open(history_path, encoding='utf-8') as f:
         data = json.load(f)
     if isinstance(data, list):
-        return data[-limit:]
+        return data[:limit]
     return []
 
 
