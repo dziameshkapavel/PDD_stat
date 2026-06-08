@@ -21,3 +21,4 @@ autograd-gamma
 pyyaml
 pytest
 pytest-asyncio
+pytest-timeout
