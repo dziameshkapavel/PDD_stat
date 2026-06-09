@@ -54,34 +54,6 @@ export class AIChatModel extends BaseModel {
 
         if (!header || !cardActions) return;
 
-        const planBtn = document.createElement('button');
-        planBtn.className = 'plan-btn';
-        planBtn.textContent = '\u{1F9E0} \u0410\u043D\u0430\u043B\u0438\u0437';
-        planBtn.title = '\u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0438\u0442\u044C \u043F\u043B\u0430\u043D \u0430\u043D\u0430\u043B\u0438\u0437\u0430';
-        planBtn.style.cssText = `
-            font-size: 12px;
-            padding: 6px 12px;
-            background: rgba(50, 200, 100, 0.15);
-            border: 1px solid rgba(50, 200, 100, 0.3);
-            border-radius: 30px;
-            color: rgb(40, 160, 80);
-            cursor: pointer;
-            transition: all 0.2s ease;
-            backdrop-filter: blur(5px);
-            -webkit-backdrop-filter: blur(5px);
-            font-weight: 500;
-            margin-right: 4px;
-        `;
-        planBtn.addEventListener('click', () => {
-            const prompt = `You are a clinical biostatistician. Read the project context and dataset. Based on the research aim and data, propose a complete analysis pipeline (3-5 steps). For each step, specify the template and parameters. End with a clinical summary. Use the language matching the project context.`;
-            const input = card.querySelector('.chat-input');
-            if (input) {
-                input.value = prompt;
-                input.focus();
-                this._sendMessage(card);
-            }
-        });
-
         const coderBtn = document.createElement('button');
         coderBtn.className = 'coder-btn';
         coderBtn.textContent = 'Coder';
@@ -115,7 +87,6 @@ export class AIChatModel extends BaseModel {
         });
 
         const closeBtn = cardActions.querySelector('.card-close-btn');
-        cardActions.insertBefore(planBtn, closeBtn);
         cardActions.insertBefore(coderBtn, closeBtn);
     }
 
