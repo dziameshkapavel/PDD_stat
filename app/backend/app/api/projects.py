@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import os
 import shutil
@@ -44,7 +42,10 @@ def get_loader() -> DataLoader:
     else:
         files = loader.find_data_files()
         if files:
-            loader.load_file(files[0])
+            try:
+                loader.load_file(files[0])
+            except Exception:
+                raise HTTPException(status_code=400, detail="Cannot load data file")
     return loader
 
 
@@ -56,6 +57,9 @@ async def list_projects():
 
 @router.post("/create")
 async def create_project(name: str):
+    name = name.strip().replace('/', '_').replace('\\', '_').replace('..', '_')
+    if not name:
+        raise HTTPException(status_code=422, detail="Project name cannot be empty")
     pm = ProjectManager()
     try:
         project_path = pm.create_project(name)

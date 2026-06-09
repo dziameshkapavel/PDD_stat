@@ -2,7 +2,6 @@
 Детерминированные правила классификации колонок для очистки.
 Выделены из PlannerAgent.
 """
-from __future__ import annotations
 
 from typing import Any
 

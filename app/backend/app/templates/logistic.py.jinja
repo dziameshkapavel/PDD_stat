@@ -297,6 +297,9 @@ if encoding_map:
                 print(f"     ⚠️ {msg}")
                 output_metrics["warnings"].append(msg)
 
+if len(encoded_covs) == 0:
+    raise ValueError("No usable predictor columns after encoding — all predictors may be single-category categorical")
+
 if len(df_log) < 20:
     raise ValueError("Insufficient data")
 
@@ -306,6 +309,8 @@ X_all = df_log[encoded_covs].values
 y_all = df_log[target_col].values
 
 if validation_strategy == "split":
+    if y_all.sum() < 2 or (len(y_all) - y_all.sum()) < 2:
+        raise ValueError("Too few events or non-events for stratified split (need ≥2 each)")
     X_train, X_test, y_train, y_test = train_test_split(
         X_all, y_all, test_size=0.2, random_state=42, stratify=y_all
     )
@@ -340,7 +345,8 @@ def evaluate_final(pred_list):
         y_true = y_test
         fpr, tpr, _ = roc_curve(y_true, y_proba)
         roc_auc = auc(fpr, tpr)
-        tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+        cm = confusion_matrix(y_true, y_pred)
+        tn, fp, fn, tp = cm.ravel() if cm.size == 4 else (0, 0, 0, 0)
         metrics = {
             "auc": roc_auc,
             "accuracy": (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0,
@@ -362,7 +368,8 @@ def evaluate_final(pred_list):
         y_true = y_all
         fpr, tpr, _ = roc_curve(y_true, y_proba)
         roc_auc = roc_auc_score(y_true, y_proba)
-        tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+        cm = confusion_matrix(y_true, y_pred)
+        tn, fp, fn, tp = cm.ravel() if cm.size == 4 else (0, 0, 0, 0)
         metrics = {
             "auc": roc_auc,
             "accuracy": (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0,
@@ -435,8 +442,9 @@ def calculate_metrics(model, X, y):
     y_proba = model.predict_proba(X)[:, 1]
     fpr, tpr, _ = roc_curve(y, y_proba)
     auc_score = auc(fpr, tpr)
-    tn, fp, fn, tp = confusion_matrix(y, y_pred).ravel()
-    accuracy = (tp + tn) / (tp + tn + fp + fn)
+    cm = confusion_matrix(y, y_pred)
+    tn, fp, fn, tp = cm.ravel() if cm.size == 4 else (0, 0, 0, 0)
+    accuracy = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0
     sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
     specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
     return {
@@ -678,8 +686,9 @@ elif regression_type in ["multi", "enter"]:
         y_proba = model.predict_proba(Xm_test_scaled)[:, 1]
         fpr, tpr, _ = roc_curve(y_test, y_proba)
         roc_auc = auc(fpr, tpr)
-        tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
-        accuracy = (tp + tn) / (tp + tn + fp + fn)
+        cm = confusion_matrix(y_test, y_pred)
+        tn, fp, fn, tp = cm.ravel() if cm.size == 4 else (0, 0, 0, 0)
+        accuracy = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0
         sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
         specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
         metrics = {"auc": roc_auc, "accuracy": accuracy, "sensitivity": sensitivity, "specificity": specificity}

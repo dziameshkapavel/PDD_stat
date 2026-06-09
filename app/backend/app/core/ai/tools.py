@@ -82,6 +82,7 @@ TEMPLATE_PARAMS = {
         "covariates: list of predictor columns, auto if empty (default=[])",
         "top_n: number of top features to show (default=15)",
         "calculate_shap: compute SHAP explanations (default='false')",
+        "bootstrap_n: bootstrap iterations for importance stability (default=20, 0 to disable)",
     ],
     "lasso_regression": [
         "target_col (required): binary target column",

@@ -1,7 +1,6 @@
 """
 Executor for safe Python code execution.
 """
-from __future__ import annotations
 
 import io
 import traceback

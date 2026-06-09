@@ -86,17 +86,23 @@ def hanley_mcneil_ci(y_true, y_pred):
     if n_pos == 0 or n_neg == 0:
         return 0.5, 0.5, 0.5
 
-    auc_val = roc_auc_score(y_true, y_pred)
+    try:
+        auc_val = roc_auc_score(y_true, y_pred)
+    except ValueError:
+        return 0.5, 0.5, 0.5
+
+    if np.isnan(auc_val):
+        return 0.5, 0.5, 0.5
 
     q1 = auc_val / (2 - auc_val) if auc_val < 1 else 1.0
     q2 = 2 * auc_val**2 / (1 + auc_val) if auc_val > 0 else 0.0
 
-    se_auc = np.sqrt(
-        (auc_val * (1 - auc_val) +
-         (n_pos - 1) * (q1 - auc_val**2) +
-         (n_neg - 1) * (q2 - auc_val**2)) /
-        (n_pos * n_neg)
-    )
+    se_val = (auc_val * (1 - auc_val) +
+              (n_pos - 1) * (q1 - auc_val**2) +
+              (n_neg - 1) * (q2 - auc_val**2)) / (n_pos * n_neg)
+    if se_val <= 0:
+        return 0.5, 0.5, 0.5
+    se_auc = np.sqrt(se_val)
 
     ci_low = max(0.0, auc_val - 1.96 * se_auc)
     ci_high = min(1.0, auc_val + 1.96 * se_auc)
@@ -260,11 +266,24 @@ def make_json_serializable(obj):
         return bool(obj)
     elif isinstance(obj, (np.integer, np.int64)):
         return int(obj)
-    elif isinstance(obj, (np.floating, np.float64)):
-        return float(obj) if not np.isnan(obj) else None
+    elif isinstance(obj, (np.floating, np.float64, np.float32)):
+        return float(obj) if not (np.isnan(obj) or np.isinf(obj)) else None
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
+    elif isinstance(obj, float):
+        return None if (np.isnan(obj) or np.isinf(obj)) else obj
+    elif obj is None or (hasattr(pd, 'isna') and pd.isna(obj)):
+        return None
     return obj
+
+def safe_float(v):
+    if v is None:
+        return None
+    if isinstance(v, (float, np.floating)):
+        if np.isnan(v) or np.isinf(v):
+            return None
+        return float(v)
+    return float(v)
 
 output_metrics = {
     "model_type": "roc_analysis",
@@ -275,16 +294,16 @@ output_metrics = {
     "n_predictors": len(results),
     "ci_method": "Hanley-McNeil",
     "best_predictor": results[0]['predictor'] if results else None,
-    "best_auc": float(results[0]['auc']) if results else None,
+    "best_auc": safe_float(results[0]['auc']) if results else None,
     "results": [
         {
             "predictor": r['predictor'],
-            "auc": float(r['auc']),
-            "ci_low": float(r['ci_low']),
-            "ci_high": float(r['ci_high']),
-            "sensitivity": float(r['sensitivity']),
-            "optimal_threshold": float(r['optimal_threshold']),
-            "specificity": float(r['specificity']),
+            "auc": safe_float(r['auc']),
+            "ci_low": safe_float(r['ci_low']),
+            "ci_high": safe_float(r['ci_high']),
+            "sensitivity": safe_float(r['sensitivity']),
+            "optimal_threshold": safe_float(r['optimal_threshold']),
+            "specificity": safe_float(r['specificity']),
             "note": r['note']
         }
         for r in results

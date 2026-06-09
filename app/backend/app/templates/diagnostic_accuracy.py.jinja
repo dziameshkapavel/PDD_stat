@@ -117,8 +117,18 @@ for test in valid_tests:
     n_dropped = len(df) - len(data)
     if n_dropped > 0:
         print(f"⚠️ Removed {n_dropped} rows ({n_dropped/len(df)*100:.1f}%) with missing data for test `{test}`")
-    ref = data[target_col].astype(int)
-    pred = data[test].astype(int)
+    ref_raw = data[target_col]
+    if ref_raw.dtype == object:
+        uniq_ref = sorted(ref_raw.unique())
+        ref = ref_raw.map({v: i for i, v in enumerate(uniq_ref)}).astype(int)
+    else:
+        ref = ref_raw.astype(int)
+    pred_raw = data[test]
+    if pred_raw.dtype == object:
+        uniq_pred = sorted(pred_raw.unique())
+        pred = pred_raw.map({v: i for i, v in enumerate(uniq_pred)}).astype(int)
+    else:
+        pred = pred_raw.astype(int)
 
     tp = ((pred == 1) & (ref == 1)).sum()
     fp = ((pred == 1) & (ref == 0)).sum()
@@ -159,9 +169,24 @@ if len(valid_tests) > 1:
             n_dropped = len(df) - len(data_pair)
             if n_dropped > 0:
                 print(f"⚠️ Removed {n_dropped} rows ({n_dropped/len(df)*100:.1f}%) with missing data for pairwise test")
-            ref = data_pair[target_col].astype(int)
-            p1 = data_pair[t1].astype(int)
-            p2 = data_pair[t2].astype(int)
+            ref_raw = data_pair[target_col]
+            if ref_raw.dtype == object:
+                uniq_ref = sorted(ref_raw.unique())
+                ref = ref_raw.map({v: i for i, v in enumerate(uniq_ref)}).astype(int)
+            else:
+                ref = ref_raw.astype(int)
+            p1_raw = data_pair[t1]
+            if p1_raw.dtype == object:
+                uniq_p1 = sorted(p1_raw.unique())
+                p1 = p1_raw.map({v: i for i, v in enumerate(uniq_p1)}).astype(int)
+            else:
+                p1 = p1_raw.astype(int)
+            p2_raw = data_pair[t2]
+            if p2_raw.dtype == object:
+                uniq_p2 = sorted(p2_raw.unique())
+                p2 = p2_raw.map({v: i for i, v in enumerate(uniq_p2)}).astype(int)
+            else:
+                p2 = p2_raw.astype(int)
             mask_d = (ref == 1)
             b = ((p1[mask_d] == 0) & (p2[mask_d] == 1)).sum()
             c = ((p1[mask_d] == 1) & (p2[mask_d] == 0)).sum()

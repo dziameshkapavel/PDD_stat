@@ -78,7 +78,12 @@ for i in range(len(valid_vars)):
         if abs(r) >= threshold:
             try:
                 mask = df[valid_vars[i]].notna() & df[valid_vars[j]].notna()
-                _, p_val = stats.pearsonr(df.loc[mask, valid_vars[i]], df.loc[mask, valid_vars[j]])
+                if method == "pearson":
+                    _, p_val = stats.pearsonr(df.loc[mask, valid_vars[i]], df.loc[mask, valid_vars[j]])
+                elif method == "spearman":
+                    _, p_val = stats.spearmanr(df.loc[mask, valid_vars[i]], df.loc[mask, valid_vars[j]])
+                else:
+                    _, p_val = stats.kendalltau(df.loc[mask, valid_vars[i]], df.loc[mask, valid_vars[j]])
             except:
                 p_val = 1.0
             pairs.append((valid_vars[i], valid_vars[j], r, p_val))
@@ -129,8 +134,10 @@ def make_json_serializable(obj):
         return [make_json_serializable(item) for item in obj]
     elif isinstance(obj, (np.integer, np.int64)):
         return int(obj)
-    elif isinstance(obj, (np.floating, np.float64)):
-        return float(obj) if not np.isnan(obj) else None
+    elif isinstance(obj, (np.floating, np.float64, np.float32)):
+        return float(obj) if not (np.isnan(obj) or np.isinf(obj)) else None
+    elif isinstance(obj, float):
+        return None if (np.isnan(obj) or np.isinf(obj)) else obj
     return obj
 
 output_metrics = make_json_serializable(output_metrics)

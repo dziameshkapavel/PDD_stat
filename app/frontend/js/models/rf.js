@@ -107,13 +107,8 @@ export class RandomForestModel extends BaseModel {
             loadingDiv.remove();
             this.renderResults(block, result, card);
             
-            // RF importance plot
-            await this.displayPlots(block, 'rf_importance');
-            
-            // SHAP plots if enabled
-            if (this.lastShapEnabled) {
-                await this._appendShapPlots(block);
-            }
+            // RF plots (importance, calibration, permutation, SHAP)
+            await this.displayPlots(block, 'rf_');
             
         } catch (error) {
             loadingDiv.remove();
@@ -125,41 +120,6 @@ export class RandomForestModel extends BaseModel {
         }
     }
     
-async _appendShapPlots(block) {
-        console.log('Appending SHAP plots, shap enabled:', this.lastShapEnabled);
-        await new Promise(r => setTimeout(r, 2000));
-        try {
-            const resp = await fetch(API_BASE + '/analysis/charts');
-            const data = await resp.json();
-            const charts = data.charts || [];
-            
-            const shapCharts = charts
-                .filter(c => c.startsWith('rf_shap'))
-                .sort()
-                .reverse();
-            
-            console.log('All SHAP charts:', shapCharts);
-            
-            const plotsDiv = block.querySelector('.results-plots');
-            if (!plotsDiv || shapCharts.length === 0) {
-                return;
-            }
-
-            const uniqueCharts = [...new Set(shapCharts)];
-            uniqueCharts.slice(0, 1).forEach(file => {
-                const img = document.createElement('img');
-                img.src = '/plots/' + file;
-                img.style.width = '100%';
-                img.style.marginTop = '16px';
-                img.style.borderRadius = '8px';
-                img.style.border = '1px solid var(--border-primary)';
-                plotsDiv.appendChild(img);
-                console.log('Added SHAP plot:', file);
-            });
-        } catch (e) {
-            console.error('Failed to load SHAP plots:', e);
-        }
-    }
     
     renderResults(block, result, card) {
         console.log('Rendering RF results...');

@@ -90,28 +90,35 @@ def calc_accuracy(y_true, y_pred):
     yp = fix_if_inverted(y_true, y_pred)
     return accuracy_score(y_true, (yp >= 0.5).astype(int))
 
+def _cm_vals(y_true, y_pred):
+    y_pred_bin = (y_pred >= 0.5).astype(int)
+    cm = confusion_matrix(y_true, y_pred_bin)
+    if cm.size == 4:
+        tn, fp, fn, tp = cm.ravel()
+    elif cm.size == 1:
+        val = cm.ravel()[0]
+        if val == 0:
+            tn, fp, fn, tp = len(y_true), 0, 0, 0
+        else:
+            tn, fp, fn, tp = 0, 0, 0, len(y_true)
+    else:
+        tn, fp, fn, tp = 0, 0, 0, 0
+    return tn, fp, fn, tp
+
 def calc_sensitivity(y_true, y_pred):
-    yp = fix_if_inverted(y_true, y_pred)
-    y_pred_bin = (yp >= 0.5).astype(int)
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred_bin).ravel()
+    tn, fp, fn, tp = _cm_vals(y_true, y_pred)
     return tp / (tp + fn) if (tp + fn) > 0 else 0
 
 def calc_specificity(y_true, y_pred):
-    yp = fix_if_inverted(y_true, y_pred)
-    y_pred_bin = (yp >= 0.5).astype(int)
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred_bin).ravel()
+    tn, fp, fn, tp = _cm_vals(y_true, y_pred)
     return tn / (tn + fp) if (tn + fp) > 0 else 0
 
 def calc_ppv(y_true, y_pred):
-    yp = fix_if_inverted(y_true, y_pred)
-    y_pred_bin = (yp >= 0.5).astype(int)
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred_bin).ravel()
+    tn, fp, fn, tp = _cm_vals(y_true, y_pred)
     return tp / (tp + fp) if (tp + fp) > 0 else 0
 
 def calc_npv(y_true, y_pred):
-    yp = fix_if_inverted(y_true, y_pred)
-    y_pred_bin = (yp >= 0.5).astype(int)
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred_bin).ravel()
+    tn, fp, fn, tp = _cm_vals(y_true, y_pred)
     return tn / (tn + fn) if (tn + fn) > 0 else 0
 
 def calc_f1(y_true, y_pred):
@@ -260,12 +267,13 @@ if run_dca:
     ax.spines['right'].set_visible(False)
 
     plt.tight_layout()
-    timestamp = str(int(time.time()))
-    dca_plot = f"binary_eval_dca_{timestamp}"
+    dca_ts = str(int(time.time()))
+    dca_plot = f"binary_eval_dca_{dca_ts}"
     save_plot(dca_plot, fig)
     print(f"![DCA Curves](/plots/{dca_plot}.png)\n")
 
 # ========== CALIBRATION PLOTS ==========
+cal_ts = str(int(time.time()))
 if run_calibration:
     n_cols = min(3, len(valid_preds))
     n_rows = (len(valid_preds) + n_cols - 1) // n_cols if len(valid_preds) > 0 else 1
@@ -297,7 +305,7 @@ if run_calibration:
         axes[i].set_visible(False)
 
     plt.tight_layout()
-    cal_plot = f"binary_eval_calibration_{timestamp}"
+    cal_plot = f"binary_eval_calibration_{cal_ts}"
     save_plot(cal_plot, fig)
     print(f"![Calibration Plots](/plots/{cal_plot}.png)\n")
 
@@ -400,8 +408,10 @@ def make_json_serializable(obj):
         return bool(obj)
     elif isinstance(obj, (np.integer, np.int64)):
         return int(obj)
-    elif isinstance(obj, (np.floating, np.float64)):
-        return float(obj) if not np.isnan(obj) else None
+    elif isinstance(obj, (np.floating, np.float64, np.float32)):
+        return float(obj) if not (np.isnan(obj) or np.isinf(obj)) else None
+    elif isinstance(obj, float):
+        return None if (np.isnan(obj) or np.isinf(obj)) else obj
     return obj
 
 output_metrics = make_json_serializable(output_metrics)

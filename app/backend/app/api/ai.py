@@ -1,9 +1,8 @@
-from __future__ import annotations
-
 import json
 import re
 import traceback
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +36,8 @@ class ConfigRequest(BaseModel):
     ollama_model: str | None = "llama3:8b"
     groq_api_key: str | None = ""
     groq_model: str | None = "llama3-70b-8192"
+    pubmed_api_key: str | None = ""
+    pubmed_email: str | None = "app@pdd-stat.local"
     temperature: float | None = 0.7
     max_tokens: int | None = 2000
     system_prompt: str | None = None
@@ -46,6 +47,26 @@ class ContextRequest(BaseModel):
     description: str | None = None
     aim: str | None = None
     notes: str | None = None
+
+
+class PubMedSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    years: int | None = 5
+    max_results: int | None = 50
+    append: bool = False
+
+
+class PubMedDeleteRequest(BaseModel):
+    pmid: str = Field(..., min_length=1)
+
+
+class PubMedClearRequest(BaseModel):
+    pass
+
+
+class PubMedSuggestRequest(BaseModel):
+    topic: str = ""
+    additional_hints: str | None = ""
 
 
 class PipelineStep(BaseModel):
@@ -99,7 +120,11 @@ async def get_config():
     config = load_config(loader)
     if 'groq' in config and 'api_key' in config['groq'] and config['groq']['api_key']:
         config['groq']['api_key'] = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'
+    if config.get('pubmed'):
+        config['pubmed']['api_key'] = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' if config['pubmed'].get('api_key') else ''
     return {"config": config}
+
+MASKED_PLACEHOLDER = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'
 
 @router.post("/config")
 async def save_config(req: ConfigRequest):
@@ -110,10 +135,20 @@ async def save_config(req: ConfigRequest):
         'url': req.ollama_url, 'default_model': req.ollama_model,
         'temperature': req.temperature or 0.7, 'max_tokens': req.max_tokens or 2000
     }
+    new_groq_key = req.groq_api_key
+    if not new_groq_key or new_groq_key == MASKED_PLACEHOLDER:
+        new_groq_key = config.get('groq', {}).get('api_key', '')
     config['groq'] = {
-        'api_key': req.groq_api_key or config.get('groq', {}).get('api_key', ''),
+        'api_key': new_groq_key,
         'default_model': req.groq_model,
         'temperature': req.temperature or 0.7, 'max_tokens': req.max_tokens or 2000
+    }
+    new_pubmed_key = req.pubmed_api_key
+    if not new_pubmed_key or new_pubmed_key == MASKED_PLACEHOLDER:
+        new_pubmed_key = config.get('pubmed', {}).get('api_key', '')
+    config['pubmed'] = {
+        'api_key': new_pubmed_key,
+        'email': req.pubmed_email or config.get('pubmed', {}).get('email', 'app@pdd-stat.local'),
     }
     config['temperature'] = req.temperature or 0.7
     config['max_tokens'] = req.max_tokens or 2000
@@ -141,12 +176,209 @@ async def test_connection(req: dict):
         if 'groq' not in test_config:
             test_config['groq'] = {}
         test_config['groq']['api_key'] = req['groq_api_key']
+    if test_provider == 'pubmed':
+        pubmed_cfg = test_config.get('pubmed', {})
+        pubmed_key = req.get('pubmed_api_key', pubmed_cfg.get('api_key', ''))
+        from app.core.pubmed_api import PubMedAPI
+        pubmed = PubMedAPI(api_key=pubmed_key)
+        pmids = pubmed.search('test', max_results=1, years=1)
+        return {"status": "ok" if pmids is not None else "error", "message": f"PubMed API responded: {len(pmids)} results"}
     try:
         client = ai_clients.AIClientFactory.create(test_config)
         result = await client.test_connection()
         return result
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+def _save_pubmed_context(loader, articles: list[dict], query: str = ""):
+    """Сохраняет статьи в project context."""
+    project_context = load_context(loader)
+    project_context['pubmed_articles'] = articles
+    if query:
+        project_context['pubmed_query'] = query
+    project_context['pubmed_timestamp'] = str(datetime.now())
+    context_path = get_context_path(loader)
+    with open(context_path, 'w', encoding='utf-8') as f:
+        json.dump(project_context, f, indent=2, ensure_ascii=False)
+
+
+@router.post("/pubmed_search")
+async def pubmed_search(req: PubMedSearchRequest):
+    """Поиск статей в PubMed: AI генерирует 5 запросов, ищет по всем, агрегирует."""
+    loader = get_loader()
+    config = load_config(loader)
+    pubmed_cfg = config.get('pubmed', {})
+    model = (config.get('last_used_model') or 'llama3:8b').strip()
+    client = ai_clients.AIClientFactory.create(config)
+
+    from app.core.pubmed_api import PubMedAPI, format_articles_for_context
+    pubmed = PubMedAPI(
+        api_key=pubmed_cfg.get('api_key', ''),
+        email=pubmed_cfg.get('email', 'app@pdd-stat.local'),
+    )
+
+    # 1. AI generates 5 PubMed query variants
+    prompt = (
+        "You are a PubMed search expert. Convert this query into 5 precise PubMed search queries.\n\n"
+        f"USER QUERY: \"{req.query}\"\n\n"
+        "RULES:\n"
+        "1. Translate to English if the query is not in English\n"
+        "2. Use appropriate MeSH terms, Boolean operators (AND, OR), and quotes for phrases\n"
+        "3. Create 5 different variations to maximize relevant results\n\n"
+        "FORMAT:\n"
+        "TRANSLATION: [English translation of the original query]\n"
+        "QUERIES:\n"
+        "1. [first PubMed query]\n"
+        "2. [second PubMed query]\n"
+        "3. [third PubMed query]\n"
+        "4. [fourth PubMed query]\n"
+        "5. [fifth PubMed query]\n"
+        "Only output the translation and queries. No other text."
+    )
+
+    ai_result = await client.chat(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+        max_tokens=1000,
+    )
+
+    translation = req.query
+    variants: list[str] = []
+    if ai_result.get('success'):
+        content = ai_result.get('content', '')
+        for line in content.split('\n'):
+            line = line.strip()
+            if line.startswith('TRANSLATION:'):
+                translation = line.replace('TRANSLATION:', '').strip()
+            elif re.match(r'^\d+\.', line):
+                q = re.sub(r'^\d+\.\s*', '', line).strip()
+                if q and len(q) > 3:
+                    variants.append(q)
+    if not variants:
+        variants = [req.query]
+
+    # 2. Search each variant, aggregate PMIDs
+    all_pmids: list[str] = []
+    for variant in variants[:5]:
+        try:
+            pmids = pubmed.search(variant, max_results=20, years=req.years)
+            all_pmids.extend(pmids)
+        except Exception:
+            pass
+
+    unique_pmids = list(dict.fromkeys(all_pmids))[:req.max_results]
+    new_articles = pubmed.fetch_details(unique_pmids) if unique_pmids else []
+
+    # 3. Append or replace in context
+    existing = load_context(loader).get('pubmed_articles', [])
+    if req.append and existing:
+        seen = {a["pmid"] for a in existing}
+        merged = existing[:]
+        for a in new_articles:
+            if a["pmid"] not in seen:
+                merged.append(a)
+                seen.add(a["pmid"])
+        articles = merged
+    else:
+        articles = new_articles
+
+    _save_pubmed_context(loader, articles, query=req.query)
+
+    formatted = format_articles_for_context(articles)
+    return {
+        "success": True,
+        "count": len(articles),
+        "new_count": len(new_articles),
+        "query": req.query,
+        "translation": translation,
+        "variants": variants,
+        "articles": articles,
+        "formatted_context": formatted,
+    }
+
+
+@router.post("/pubmed_delete")
+async def pubmed_delete(req: PubMedDeleteRequest):
+    """Удаляет статью из PubMed контекста по PMID."""
+    loader = get_loader()
+    existing = load_context(loader).get('pubmed_articles', [])
+    articles = [a for a in existing if a.get("pmid") != req.pmid]
+    removed = len(existing) - len(articles)
+    _save_pubmed_context(loader, articles)
+    return {"success": True, "removed": removed, "count": len(articles), "articles": articles}
+
+
+@router.post("/pubmed_clear")
+async def pubmed_clear():
+    """Очищает все PubMed статьи из контекста."""
+    loader = get_loader()
+    _save_pubmed_context(loader, [])
+    return {"success": True, "count": 0, "articles": []}
+
+
+@router.post("/pubmed_suggest")
+async def pubmed_suggest(req: PubMedSuggestRequest):
+    """Генерация 5 вариантов PubMed-запросов из текста пользователя через AI."""
+    if not req.topic.strip():
+        return {"success": False, "error": "Query is empty"}
+    loader = get_loader()
+    config = load_config(loader)
+    model = (config.get('last_used_model') or 'llama3:8b').strip()
+    client = ai_clients.AIClientFactory.create(config)
+
+    prompt = (
+        "You are a PubMed search expert. Convert this query into 5 precise PubMed search queries.\n\n"
+        f"USER QUERY: \"{req.topic}\"\n"
+        f"ADDITIONAL HINTS: \"{req.additional_hints or 'none'}\"\n\n"
+        "RULES:\n"
+        "1. Translate to English if the query is not in English\n"
+        "2. Use MeSH terms, Boolean operators (AND, OR), and quotes for phrases\n"
+        "3. Create 5 different variations to maximize relevant results\n\n"
+        "FORMAT:\n"
+        "TRANSLATION: [English translation of the original query]\n"
+        "QUERIES:\n"
+        "1. [first PubMed query]\n"
+        "2. [second PubMed query]\n"
+        "3. [third PubMed query]\n"
+        "4. [fourth PubMed query]\n"
+        "5. [fifth PubMed query]\n"
+        "Only output the translation and queries. No other text."
+    )
+
+    result = await client.chat(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+        max_tokens=1000,
+    )
+
+    if not result.get('success'):
+        return {"success": False, "error": result.get("error")}
+
+    content = result.get("content", "")
+    translation = ""
+    queries: list[str] = []
+
+    for line in content.split('\n'):
+        line = line.strip()
+        if line.startswith('TRANSLATION:'):
+            translation = line.replace('TRANSLATION:', '').strip()
+        elif re.match(r'^\d+\.', line):
+            q = re.sub(r'^\d+\.\s*', '', line).strip()
+            if q and len(q) > 3:
+                queries.append(q)
+
+    if not queries:
+        queries = [req.topic]
+
+    return {
+        "success": True,
+        "translation": translation,
+        "queries": queries[:5],
+        "raw": content[:500],
+    }
+
 
 @router.post("/chat")
 async def chat(req: ChatRequest):
@@ -164,7 +396,14 @@ async def chat(req: ChatRequest):
 
     project_path = loader.project_path
     context_builder = ContextBuilder(project_path)
-    context = context_builder.build_full_context(loader)
+
+    last_user_msg = ""
+    for m in reversed(req.messages):
+        if m.get("role") == "user":
+            last_user_msg = m.get("content", "")
+            break
+
+    context = context_builder.build_full_context(loader, user_query=last_user_msg)
     project_context = load_context(loader)
     if project_context.get('description'):
         context += f"\n\n## Project\n{project_context['description'][:500]}"
@@ -229,12 +468,15 @@ async def chat(req: ChatRequest):
                 )
                 return corr_result.get("content", "")
 
+            pubmed_articles = project_context.get('pubmed_articles', [])
+
             validated_text, passed, v_result = await ResponseValidator.auto_retry(
                 response=result["content"],
                 metrics=metrics,
                 llm_rewrite_fn=rewrite_fn,
                 max_retries=2,
                 response_language=response_language,
+                pubmed_articles=pubmed_articles,
             )
 
             validated_text = ResponseValidator.add_validation_notice(
@@ -244,6 +486,8 @@ async def chat(req: ChatRequest):
             result["validation_passed"] = passed
             result["numbers_checked"] = v_result.numbers_checked
             result["numbers_matched"] = v_result.numbers_matched
+            result["citations_checked"] = v_result.citations_checked
+            result["citations_matched"] = v_result.citations_matched
             if not passed:
                 result["validation_errors"] = v_result.errors[:3]
 

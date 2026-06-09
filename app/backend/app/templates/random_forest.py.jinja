@@ -28,6 +28,7 @@ target = "{{ target_col }}"
 covariates = {{ covariates|default([])|tojson }}
 top_n = {{ top_n|default(15)|int }}
 calculate_shap = "{{ calculate_shap|default('True') }}" == "True"
+bootstrap_n = {{ bootstrap_n|default(20)|int }}
 shap_metrics = None
 
 print("## Random Forest\n")
@@ -38,13 +39,8 @@ if target not in df.columns:
 print(f"**Target variable:** `{target}`  ")
 
 # Ковариаты - все числовые колонки кроме исключений
-user_excl_raw = "{{ exclusions }}"
-if user_excl_raw and user_excl_raw.lower() not in ['none', 'нет', '', '[]']:
-    try:
-        user_exclusions = json.loads(user_excl_raw)
-    except:
-        user_exclusions = [x.strip() for x in user_excl_raw.split(',') if x.strip()]
-else:
+user_exclusions = {{ exclusions|default([])|tojson }}
+if not isinstance(user_exclusions, list):
     user_exclusions = []
 
 # Автоисключение очевидных мета-колонок
@@ -286,6 +282,66 @@ plt.tight_layout()
 save_plot(f"rf_perm_importance_{timestamp}")
 print(f"\n![Permutation Importance](/plots/rf_perm_importance_{timestamp}.png)\n")
 
+# Bootstrap Importance Stability
+if bootstrap_n > 0:
+    print(f"\n### Bootstrap Importance Stability ({bootstrap_n} iterations)\n")
+    print("Training bootstrap models...")
+    all_importances = []
+    for i in range(bootstrap_n):
+        rf_boot = RandomForestClassifier(
+            n_estimators=200,
+            max_depth=10,
+            min_samples_leaf=5,
+            oob_score=True,
+            random_state=i,
+            n_jobs=-1,
+            class_weight='balanced'
+        )
+        rf_boot.fit(X_train, y_train)
+        all_importances.append(rf_boot.feature_importances_)
+    imp_array = np.array(all_importances)
+    imp_mean = imp_array.mean(axis=0)
+    imp_std = imp_array.std(axis=0)
+    imp_cv = imp_std / np.maximum(imp_mean, 1e-10)
+    bootstrap_df = pd.DataFrame({
+        'feature': X.columns,
+        'mean': imp_mean,
+        'sd': imp_std,
+        'cv': imp_cv
+    }).sort_values('mean', ascending=False)
+    bootstrap_df['stability'] = bootstrap_df['cv'].apply(
+        lambda x: 'Stable' if x < 0.3 else ('Moderate' if x < 0.5 else 'Unstable')
+    )
+    n_display = top_n if top_n > 0 else 15
+    print(f"\n**Top {min(n_display, len(bootstrap_df))} features by importance stability**\n")
+    print("| # | Feature | Mean | SD | CV | Stability |")
+    print("|---|---------|------|----|----|-----------|")
+    for i, (_, row) in enumerate(bootstrap_df.head(n_display).iterrows(), 1):
+        print(f"| {i} | {row['feature']} | {row['mean']:.4f} | {row['sd']:.4f} | {row['cv']:.2f} | {row['stability']} |")
+    unstable = bootstrap_df[bootstrap_df['stability'] == 'Unstable']
+    if len(unstable) > 0:
+        print(f"\n⚠ **Unstable features (CV > 0.5):** {', '.join(unstable['feature'].values)}")
+    # Plot
+    fig_boot, ax_boot = plt.subplots(figsize=(10, 8))
+    plot_df = bootstrap_df.head(n_display).iloc[::-1]
+    colors_boot = []
+    for s in plot_df['stability'].values:
+        if s == 'Unstable':
+            colors_boot.append('#d62728')
+        elif s == 'Moderate':
+            colors_boot.append('#ff7f0e')
+        else:
+            colors_boot.append('#2ca02c')
+    ax_boot.barh(range(len(plot_df)), plot_df['mean'].values, xerr=plot_df['sd'].values, color=colors_boot, capsize=3)
+    ax_boot.set_yticks(range(len(plot_df)))
+    ax_boot.set_yticklabels(plot_df['feature'].values)
+    ax_boot.set_xlabel('Mean Importance (± SD)')
+    ax_boot.set_title(f'Bootstrap Importance Stability ({bootstrap_n} iterations)')
+    ax_boot.grid(True, alpha=0.3, axis='x')
+    plt.tight_layout()
+    save_plot(f"rf_bootstrap_importance_{timestamp}")
+    print(f"\n![Bootstrap Importance Stability](/plots/rf_bootstrap_importance_{timestamp}.png)\n")
+
 # SHAP анализ
 if calculate_shap:
     try:
@@ -429,6 +485,11 @@ output_metrics = {
         for _, row in top_perm.iterrows()
     ],
     "shap_features": shap_metrics if shap_metrics else [],
+    "bootstrap_importance": [
+        {"variable": str(row['feature']), "mean": float(row['mean']), "sd": float(row['sd']), "cv": float(row['cv']), "stability": str(row['stability'])}
+        for _, row in bootstrap_df.head(n_display).iterrows()
+    ] if bootstrap_n > 0 else [],
+    "bootstrap_n": bootstrap_n,
     "model_saved": saved_model_path is not None,
     "model_path": saved_model_path if saved_model_path else None,
 }

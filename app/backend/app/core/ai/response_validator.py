@@ -1,7 +1,6 @@
 """
 ResponseValidator — проверка ответа ИИ на соответствие исходным данным.
 """
-from __future__ import annotations
 
 import re
 from collections.abc import Callable
@@ -17,6 +16,8 @@ CINDEX_CI_PATTERN = re.compile(
     r"[0-9]+[.][0-9]+\s*[-–]\s*[0-9]+[.][0-9]+\)?",
     re.IGNORECASE
 )
+
+PMID_PATTERN = re.compile(r'(?:PMID|PubMed\s*ID|pmid)\s*:?\s*(\d{8})', re.IGNORECASE)
 
 FORBIDDEN_PHRASES = [
     "almost significant",
@@ -122,6 +123,11 @@ class ValidationResult:
     numbers_found: int = 0
     numbers_checked: int = 0
     numbers_matched: int = 0
+    citations_checked: int = 0
+    citations_matched: int = 0
+    total_decimals: int = 0
+    decimals_matched: int = 0
+    unknown_decimals: int = 0
 
 
 class ResponseValidator:
@@ -238,18 +244,208 @@ class ResponseValidator:
         return CINDEX_CI_PATTERN.sub(_replace, response)
 
     @staticmethod
+    def _extract_all_decimals(text: str) -> list[float]:
+        """Извлекает ВСЕ десятичные числа (вида 0.73, 14.2) из текста, игнорируя PMID."""
+        pattern = re.compile(r'(?<!\d)(\d+\.\d+)(?!\d)')
+        result = []
+        seen = set()
+        for m in pattern.finditer(text):
+            val = round(float(m.group(1)), 6)
+            if val in seen:
+                continue
+            seen.add(val)
+            # Skip PMIDs (8-digit identifiers)
+            if 10000000 <= val <= 99999999:
+                continue
+            result.append(val)
+        return result
+
+    @staticmethod
+    def _check_unlabeled_numbers(
+        response: str,
+        source_rounded: set,
+        labeled_values: set,
+    ) -> tuple[list[str], int, int, int]:
+        """
+        Проверяет ВСЕ десятичные числа в ответе против source-метрик.
+        Пропускает числа, уже проверенные через parse_numbers.
+        Возвращает (errors, total_decimals, decimals_matched, unknown_decimals).
+        """
+        errors = []
+        all_decimals = ResponseValidator._extract_all_decimals(response)
+        total = len(all_decimals)
+        matched = 0
+        unknown = 0
+
+        for val in all_decimals:
+            # Skip if already caught by parse_numbers (within tolerance)
+            if any(abs(val - lv) <= 0.01 for lv in labeled_values):
+                matched += 1
+                continue
+            if ResponseValidator._check_number_in_source(val, source_rounded):
+                matched += 1
+            else:
+                unknown += 1
+                # Find context
+                str_val = str(val) if val == int(val) else f"{val:.6g}"
+                response_lower = response.lower()
+                idx = response_lower.find(str_val)
+                if idx == -1:
+                    str_val = f"{val:.2f}"
+                    idx = response_lower.find(str_val)
+                if idx == -1:
+                    str_val = f"{val:.4f}"
+                    idx = response_lower.find(str_val)
+                ctx = ""
+                if idx >= 0:
+                    start = max(0, idx - 50)
+                    end = min(len(response), idx + len(str_val) + 50)
+                    ctx = response[start:end].strip()
+                errors.append(
+                    f"Unlabeled number '{val}' not found in source metrics"
+                    + (f": ...{ctx}..." if ctx else "")
+                )
+
+        return errors, total, matched, unknown
+
+    @staticmethod
+    def _extract_pmids(text: str) -> list[str]:
+        """Извлекает все PMID из текста."""
+        return [m.group(1) for m in PMID_PATTERN.finditer(text)]
+
+    @staticmethod
+    def _check_number_in_abstract(
+        number: float, article_text: str
+    ) -> bool:
+        """Проверяет, встречается ли число в тексте статьи."""
+        text = article_text.lower()
+
+        # Check integer/float representation
+        for fmt in [
+            f"{number:.0f}", f"{number:.1f}", f"{number:.2f}",
+            f"{number:.0f}.0",
+        ]:
+            val = float(fmt)
+            if val == number and fmt in text:
+                return True
+
+        # Check percentage: 78% or 78 % or 0.78 (as proportion)
+        if 0 < number <= 100:
+            pct_str = f"{number:.0f}%"
+            if pct_str in text or pct_str.replace("%", " %") in text:
+                return True
+            # Also check as proportion e.g. 0.78 for 78%
+            as_proportion = f"{number / 100:.2f}"
+            if as_proportion in text:
+                return True
+
+        # Check as percent if it's a small decimal (e.g. 0.78)
+        if 0 < number < 10:
+            as_pct = f"{number * 100:.0f}%"
+            if as_pct in text or as_pct.replace("%", " %") in text:
+                return True
+
+        return False
+
+    @staticmethod
+    def _check_citations(
+        response: str, pubmed_articles: list[dict]
+    ) -> list[str]:
+        """Проверяет числа в предложениях с PMID против текста статей."""
+        errors = []
+        pmids = ResponseValidator._extract_pmids(response)
+        if not pmids:
+            return errors
+
+        article_map = {a.get("pmid", ""): a for a in pubmed_articles}
+        # Pattern to find any number (int or float) in text
+        any_number = re.compile(r'(?<!\d)(\d+[.]?\d*)(?!\d)')
+
+        for pmid in set(pmids):
+            article = article_map.get(pmid)
+            if not article:
+                errors.append(
+                    f"Cited PMID {pmid} not found in project PubMed articles"
+                )
+                continue
+
+            article_text = f"{article.get('title', '')} {article.get('abstract', '')}"
+
+            # Find citation positions in response
+            for match in PMID_PATTERN.finditer(response):
+                if match.group(1) != pmid:
+                    continue
+                idx = match.start()
+                sentence = ResponseValidator._extract_sentence(response, idx)
+                if not sentence:
+                    continue
+
+                # 1. Check labeled numbers via parse_numbers
+                from_numbers = ResponseValidator.parse_numbers(sentence)
+                for fn in from_numbers:
+                    if not ResponseValidator._check_number_in_abstract(
+                        fn.value, article_text
+                    ):
+                        errors.append(
+                            f"Number '{fn.raw}' ({fn.label}) in sentence "
+                            f"citing PMID {pmid} not found in article abstract: "
+                            f"'{sentence[:120]}'"
+                        )
+
+                # 2. Check ANY number in the citation sentence
+                #    (including standalone numbers without labels)
+                for num_match in any_number.finditer(sentence):
+                    try:
+                        value = float(num_match.group(1))
+                    except ValueError:
+                        continue
+                    # Skip the PMID itself (8-digit identifier)
+                    if 10000000 <= value <= 99999999:
+                        continue
+                    # Skip if already checked via parse_numbers
+                    already = any(
+                        abs(fn.value - value) < 0.001 for fn in from_numbers
+                    )
+                    if already:
+                        continue
+                    if not ResponseValidator._check_number_in_abstract(
+                        value, article_text
+                    ):
+                        errors.append(
+                            f"Number '{value}' in sentence citing PMID {pmid} "
+                            f"not found in article abstract: "
+                            f"'{sentence[:120]}'"
+                        )
+
+        return errors
+
+    @staticmethod
     def add_validation_notice(response: str, v_result: ValidationResult) -> str:
         """Добавляет в конец ответа уведомление о проверке чисел."""
-        if v_result.numbers_checked == 0:
-            return response
-        checked = v_result.numbers_checked
-        matched = v_result.numbers_matched
         lang = ResponseValidator._detect_language(response)
-        if lang == "ru":
-            notice = f"\n\n✅ Проверено: {matched}/{checked} чисел совпадают с источником"
-        else:
-            notice = f"\n\n✅ Verified: {matched}/{checked} numbers match source data"
-        return response + notice
+
+        parts = []
+        if v_result.numbers_checked > 0:
+            if lang == "ru":
+                parts.append(f"✅ Проверено: {v_result.numbers_matched}/{v_result.numbers_checked} чисел совпадают с источником")
+            else:
+                parts.append(f"✅ Verified: {v_result.numbers_matched}/{v_result.numbers_checked} numbers match source data")
+
+        if v_result.citations_checked > 0:
+            if lang == "ru":
+                parts.append(f"📖 Цитаты: {v_result.citations_matched}/{v_result.citations_checked} проверены")
+            else:
+                parts.append(f"📖 Citations: {v_result.citations_matched}/{v_result.citations_checked} verified")
+
+        if v_result.total_decimals > 0:
+            if lang == "ru":
+                parts.append(f"🔢 Все числа: {v_result.decimals_matched}/{v_result.total_decimals} совпадают с источником")
+            else:
+                parts.append(f"🔢 All numbers: {v_result.decimals_matched}/{v_result.total_decimals} match source data")
+
+        if parts:
+            return response + "\n\n" + "\n".join(parts)
+        return response
 
     @staticmethod
     def _flatten_metrics(metrics: dict[str, Any], prefix: str = "") -> list[tuple[str, float]]:
@@ -331,7 +527,12 @@ class ResponseValidator:
                     )
         return errors
 
-    def validate(self, response: str, metrics: dict[str, Any]) -> ValidationResult:
+    def validate(
+        self,
+        response: str,
+        metrics: dict[str, Any],
+        pubmed_articles: list[dict] | None = None,
+    ) -> ValidationResult:
         """
         Проверяет ответ ИИ на соответствие исходным метрикам.
 
@@ -339,6 +540,7 @@ class ResponseValidator:
         - Сверяет с source-метриками (с допуском ±TOLERANCE)
         - Ищет запрещённые фразы
         - Проверяет полноту CI
+        - Проверяет цитаты PubMed (если передан pubmed_articles)
         """
         errors = []
 
@@ -371,6 +573,12 @@ class ResponseValidator:
                 f"Numbers not found in source metrics (potential hallucination): {examples}"
             )
 
+        # 3b. Systematic check: check ALL decimal numbers against source
+        labeled_values = {round(fn.value, 2) for fn in found_numbers}
+        unlabeled_errors, total_decimals, decimals_matched, unknown = \
+            self._check_unlabeled_numbers(response, source_rounded, labeled_values)
+        errors.extend(unlabeled_errors)
+
         # 4. Check forbidden phrases
         lower_resp = response.lower()
         for phrase in FORBIDDEN_PHRASES:
@@ -385,12 +593,28 @@ class ResponseValidator:
         p_errors = self._check_p_value_interpretation(response)
         errors.extend(p_errors)
 
+        # 7. Check PubMed citations
+        citations_checked = 0
+        citations_matched = 0
+        if pubmed_articles:
+            citation_errors = self._check_citations(response, pubmed_articles)
+            pmids_checked = len(set(self._extract_pmids(response)))
+            if pmids_checked > 0:
+                citations_checked = pmids_checked
+                citations_matched = pmids_checked - len(citation_errors)
+            errors.extend(citation_errors)
+
         return ValidationResult(
             passed=len(errors) == 0,
             errors=errors,
             numbers_found=len(found_numbers),
             numbers_checked=numbers_checked,
             numbers_matched=matched,
+            citations_checked=citations_checked,
+            citations_matched=citations_matched,
+            total_decimals=total_decimals,
+            decimals_matched=decimals_matched,
+            unknown_decimals=unknown,
         )
 
     @classmethod
@@ -401,13 +625,14 @@ class ResponseValidator:
         llm_rewrite_fn: Callable[[str, Any], Any],
         max_retries: int = 2,
         response_language: str = "en",
+        pubmed_articles: list[dict] | None = None,
     ) -> tuple[str, bool, ValidationResult]:
         """
         Цикл: validate → при ошибке → correction_prompt + повторный вызов LLM.
         Возвращает (исправленный_ответ, validation_passed, последний_ValidationResult).
         """
         current_response = cls._filter_hallucinated_ci(response, metrics)
-        last_result = cls().validate(current_response, metrics)
+        last_result = cls().validate(current_response, metrics, pubmed_articles)
 
         for _attempt in range(max_retries):
             if last_result.passed:
@@ -421,6 +646,8 @@ class ResponseValidator:
                     f"{error_text}\n\n"
                     "Исправь ответ. Используй ТОЛЬКО числа из раздела "
                     '"LAST ANALYSIS". '
+                    "Для цитат статей используй ТОЛЬКО числа, "
+                    "которые реально есть в абстракте статьи. "
                     "Не извиняйся, не начинай с 'Прошу прощения' — "
                     "просто дай исправленный ответ. "
                     "Сохрани контекст вопроса пользователя и ответь на том же языке (русском)."
@@ -431,6 +658,8 @@ class ResponseValidator:
                     f"{error_text}\n\n"
                     "Correct the response. Use ONLY numbers from the "
                     '"LAST ANALYSIS" section. '
+                    "For cited articles, use ONLY numbers that actually "
+                    "appear in the article abstract. "
                     "Do NOT apologize or start with 'I'm sorry' — "
                     "just provide the corrected answer. "
                     "Keep the context of the user's question and respond in the same language."
@@ -450,6 +679,6 @@ class ResponseValidator:
             except Exception:
                 break
 
-            last_result = cls().validate(current_response, metrics)
+            last_result = cls().validate(current_response, metrics, pubmed_articles)
 
         return current_response, last_result.passed, last_result

@@ -30,6 +30,7 @@ import { IndividualPredictionModel } from './models/individualPrediction.js';
 import { SurvivalEvaluationModel } from './models/survivalEvaluation.js';
 import { ChartBuilderModel } from './models/chartBuilder.js';
 import { ChainPanel } from './ui/chain.js';
+import { PubMedSearchPanel } from './ui/pubmedSearch.js';
 
 class App {
     constructor() {
@@ -54,6 +55,7 @@ class App {
         this.reports = new ReportsPanel();
         this.chain = new ChainPanel();
         this.chain.init();
+        this.pubmedSearch = new PubMedSearchPanel();
         
         // Регистрация моделей
         this._registerModels();
@@ -147,6 +149,14 @@ class App {
             });
         }
         
+        // PubMed Search button
+        const pubmedBtn = document.getElementById('pubmedSearchBtn');
+        if (pubmedBtn) {
+            pubmedBtn.addEventListener('click', () => {
+                this.pubmedSearch.open();
+            });
+        }
+
         // AI Settings button
         const aiSettingsBtn = document.getElementById('aiSettingsBtn');
         if (aiSettingsBtn) {

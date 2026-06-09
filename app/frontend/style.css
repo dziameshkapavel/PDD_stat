@@ -533,6 +533,34 @@ body {
     margin-top: 8px;
 }
 
+/* PubMed Context */
+.pubmed-context {
+    display: flex;
+    gap: 6px;
+    padding: 6px 10px;
+    background: var(--bg-active);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    line-height: 1.4;
+    align-items: flex-start;
+}
+.pubmed-context-text {
+    flex: 1;
+    color: var(--text-primary);
+    font-size: 11px;
+}
+.pubmed-context-empty {
+    display: flex;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px dashed var(--border-color);
+    border-radius: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+    align-items: center;
+    justify-content: space-between;
+}
+
 /* Code Editor */
 .code-editor-container {
     background: var(--bg-card);

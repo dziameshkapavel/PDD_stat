@@ -4,7 +4,9 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 from lifelines import CoxPHFitter
+import scipy.stats
 from scipy.stats import chi2
 import json
 import time
@@ -176,10 +178,22 @@ if encoding_map:
             mask = df_cox[dummy] == 1
             n_cat = int(mask.sum())
             events_cat = int(df_cox.loc[mask, event_col].sum())
+            epv_cat = events_cat / 1 if events_cat > 0 else 0
             if n_cat < 10:
                 msg = f"Rare category: {col}={cat} (N={n_cat}, events={events_cat}) — HR may be unstable"
                 print(f"     ⚠️ {msg}")
                 output_metrics["warnings"].append(msg)
+            elif n_cat < 20:
+                if events_cat < 5:
+                    grade = "Unacceptable"
+                    msg = f"Low events in category {col}={cat}: {events_cat}/{n_cat} (EPV={epv_cat:.0f}) — {grade}"
+                    print(f"     🛑 {msg}")
+                    output_metrics["warnings"].append(msg)
+                elif events_cat < 10:
+                    grade = "Risk of unstable HR"
+                    msg = f"Low events in category {col}={cat}: {events_cat}/{n_cat} (EPV={epv_cat:.0f}) — {grade}"
+                    print(f"     ⚠️ {msg}")
+                    output_metrics["warnings"].append(msg)
             if n_cat > 0 and (events_cat == 0 or events_cat == n_cat):
                 msg = f"Complete separation in {col}={cat} ({events_cat}/{n_cat} events) — HR may be extreme"
                 print(f"     ⚠️ {msg}")
@@ -280,7 +294,10 @@ def build_table_data(cph):
             
     return rows
 
-def calculate_vif(covariates_list):
+def calculate_gvif(covariates_list):
+    """GVIF (Generalized VIF) — корректный VIF для категориальных с >2 уровней.
+    Для дамми-переменных одной категории группирует их и вычисляет GVIF.
+    """
     if len(covariates_list) < 2:
         return {}
     try:
@@ -288,22 +305,68 @@ def calculate_vif(covariates_list):
         X = df_cox[covariates_list].dropna()
         if X.shape[0] < 10 or X.shape[1] < 2:
             return {}
-        vif_data = {}
-        for i, col in enumerate(X.columns):
+        
+        # Группируем колонки по исходным переменным
+        var_groups = {}
+        for col in covariates_list:
+            if col in dummy_to_info:
+                orig = dummy_to_info[col]['original']
+                var_groups.setdefault(orig, []).append(col)
+            else:
+                var_groups[col] = [col]
+        
+        gvif_data = {}
+        corr_matrix = np.corrcoef(X.values.T) if X.shape[1] >= 2 else np.array([[1.0]])
+        
+        for var_name, cols in var_groups.items():
+            if not cols:
+                continue
+            indices = [list(X.columns).index(c) for c in cols if c in X.columns]
+            if not indices:
+                continue
+            df_var = len(cols) - 1
             try:
-                vif = float(variance_inflation_factor(X.values, i))
-                if np.isnan(vif) or np.isinf(vif):
-                    vif = 999.0
-                vif_data[str(col)] = {
-                    "value": vif,
-                    "high": bool(vif > 10),
-                    "moderate": bool(vif > 5 and vif <= 10)
+                if df_var == 0:
+                    # Непрерывная переменная — обычный VIF
+                    idx = indices[0]
+                    vif = float(variance_inflation_factor(X.values, idx))
+                    if np.isnan(vif) or np.isinf(vif):
+                        vif = 999.0
+                    gvif = vif
+                else:
+                    # Категориальная — GVIF
+                    R2_cov = 0.0
+                    other_indices = [i for i in range(X.shape[1]) if i not in indices]
+                    if len(other_indices) >= 1:
+                        y_block = X.values[:, indices]
+                        X_other = X.values[:, other_indices]
+                        X_other_const = np.column_stack([X_other, np.ones(len(X_other))])
+                        beta = np.linalg.lstsq(X_other_const, y_block, rcond=None)[0]
+                        y_pred = X_other_const @ beta
+                        ss_res = np.sum((y_block - y_pred) ** 2)
+                        ss_tot = np.sum((y_block - np.mean(y_block, axis=0)) ** 2)
+                        R2_cov = 1.0 - min(ss_res / (ss_tot + 1e-10), 1.0)
+                    gvif = float(1.0 / (1.0 - R2_cov)) if R2_cov < 0.999 else 999.0
+                    gvif_adjusted = float(gvif ** (1.0 / (2.0 * (df_var + 1))))
+                
+                is_high = bool(gvif > 10 if df_var == 0 else gvif_adjusted > 2.0)
+                is_moderate = bool(
+                    (5 < gvif <= 10) if df_var == 0 else (1.5 < gvif_adjusted <= 2.0)
+                )
+                
+                entry = {
+                    "value": float(f"{gvif:.3f}"),
+                    "gvif_adjusted": float(f"{gvif_adjusted:.3f}") if df_var > 0 else None,
+                    "df": df_var + 1,
+                    "high": is_high,
+                    "moderate": is_moderate
                 }
+                gvif_data[var_name] = entry
             except:
-                vif_data[str(col)] = {"value": 0.0, "high": False, "moderate": False}
-        return vif_data
+                gvif_data[var_name] = {"value": 0.0, "gvif_adjusted": None, "df": df_var + 1, "high": False, "moderate": False}
+        return gvif_data
     except Exception as e:
-        output_metrics["warnings"].append(f"VIF error: {str(e)}")
+        output_metrics["warnings"].append(f"GVIF error: {str(e)}")
         return {}
 
 def check_linearity(cph, covariates_list, continuous_vars):
@@ -454,7 +517,7 @@ elif regression_type in ["multi", "enter"]:
     output_metrics["equation_html"] = build_equation(cph)
     
     output_metrics["schoenfeld_test"] = run_schoenfeld_multivariate(cph, encoded_covs)
-    output_metrics["vif"] = calculate_vif(encoded_covs)
+    output_metrics["vif"] = calculate_gvif(encoded_covs)
     output_metrics["table"] = build_table_data(cph)
     
     cont_vars = [c for c in valid_cov if c not in encoding_map]
@@ -491,6 +554,8 @@ elif regression_type in ["forward", "backward"]:
     print("   P-values in the final model **do not account for the selection process** and may be inflated.")
     print("   C-index computed on training data and is **optimistic**.")
     print("   Consider LASSO (L1-regularization) or Random Survival Forest.\n")
+    output_metrics["warnings"].append("Stepwise selection: p-values do not account for the selection process and may be inflated.")
+    output_metrics["warnings"].append("Stepwise selection: C-index is computed on training data and is optimistic.")
     
     def get_model_info(vars_list):
         if not vars_list:
@@ -626,7 +691,7 @@ elif regression_type in ["forward", "backward"]:
             output_metrics["equation_html"] = build_equation(final_cph)
             
             output_metrics["schoenfeld_test"] = run_schoenfeld_multivariate(final_cph, final_covs)
-            output_metrics["vif"] = calculate_vif(final_covs)
+            output_metrics["vif"] = calculate_gvif(final_covs)
             output_metrics["table"] = build_table_data(final_cph)
             
             cont_vars = [c for c in selected_vars if c not in encoding_map]
@@ -664,26 +729,83 @@ elif regression_type in ["forward", "backward"]:
         cph = None
 
 
+# ==================== ФУНКЦИЯ ГРАФИКА ОСТАТКОВ ШЁНФЕЛЬДА ====================
+def plot_schoenfeld_residuals(cph, df_cox, time_col, event_col, encoded_covs, ax):
+    """Scaled Schoenfeld residuals — все ковариаты на одной оси."""
+    covs = list(cph.params_.index)
+    try:
+        schoenfeld = cph.compute_residuals(
+            df_cox[[time_col, event_col] + covs].dropna(),
+            kind='scaled_schoenfeld'
+        )
+        if schoenfeld.empty:
+            ax.text(0.5, 0.5, 'No Schoenfeld residuals', ha='center', va='center', transform=ax.transAxes)
+            return
+        
+        stats = output_metrics.get('schoenfeld_test', {})
+        colors = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#be185d', '#65a30d', '#0f766e']
+        
+        plot_vars = covs[:9]
+        for idx, var in enumerate(plot_vars):
+            if var not in schoenfeld.columns:
+                continue
+            times = schoenfeld.index.values
+            resid = schoenfeld[var].values
+            mask = np.isfinite(resid)
+            times_f, resid_f = times[mask], resid[mask]
+            if len(times_f) <= 5:
+                continue
+            
+            c = colors[idx % len(colors)]
+            ax.scatter(times_f, resid_f, color=c, alpha=0.3, s=10, edgecolors='none')
+            
+            sorted_idx = np.argsort(times_f)
+            t_sorted = times_f[sorted_idx]
+            r_sorted = resid_f[sorted_idx]
+            try:
+                import statsmodels.api as sm_api
+                lowess = sm_api.nonparametric.lowess
+                smoothed = lowess(r_sorted, t_sorted, frac=0.66, return_sorted=True)
+                ax.plot(smoothed[:, 0], smoothed[:, 1], color=c, linewidth=2, label=var)
+            except Exception:
+                pass
+        
+        ax.axhline(y=0, color='black', linestyle='--', alpha=0.5)
+        ax.set_xlabel('Time', fontsize=11, fontweight='semibold')
+        ax.set_ylabel('Scaled Schoenfeld Residuals', fontsize=11, fontweight='semibold')
+        
+        global_p = None
+        if isinstance(stats, dict):
+            global_p = stats.get('global_p', None) if isinstance(stats.get('global_p'), (int, float)) else None
+        gs = f' (global p={fmt_p(global_p)})' if global_p is not None else ''
+        ax.set_title(f'Schoenfeld Residuals{gs}', fontsize=13, fontweight='bold', pad=15)
+        ax.grid(True, linestyle=':', alpha=0.4)
+        ax.legend(loc='best', fontsize=8)
+    except Exception as e:
+        output_metrics["warnings"].append(f"Schoenfeld plot error: {str(e)}")
+        ax.text(0.5, 0.5, 'Schoenfeld plot error', ha='center', va='center', transform=ax.transAxes)
+
+
 # ==================== ОТРИСОВКА ГРАФИКОВ ====================
 if cph is not None and ('table' in output_metrics and output_metrics["table"]):
     timestamp = str(int(time.time()))
     
-    # Проверяем наличие непрерывных ковариат для графика остатков Мартингейла
     continuous_vars = [c for c in selected_vars if c not in encoding_map] if 'selected_vars' in dir() else [c for c in valid_cov if c not in encoding_map]
     has_continuous = len(continuous_vars) > 0
+    has_schoenfeld = output_metrics.get('schoenfeld_test') is not None
     
-    n_subplots = 3 if has_continuous else 2
-    fig, axes = plt.subplots(1, n_subplots, figsize=(5 * n_subplots, 5.5))
+    # 2×2 grid
+    fig = plt.figure(figsize=(14, 10))
+    gs = gridspec.GridSpec(2, 2, figure=fig, hspace=0.3, wspace=0.3)
     
-    ax1 = axes[0]
-    ax2 = axes[1]
+    ax1 = fig.add_subplot(gs[0, 0])  # Forest Plot
+    ax2 = fig.add_subplot(gs[0, 1])  # Survival / Baseline Hazard
     
-    # 1. Forest Plot
+    # Forest Plot
     try:
         plot_df = pd.DataFrame(output_metrics["table"])
         plot_df = plot_df[~plot_df['is_reference']].copy()
         
-        # Отфильтровываем строки с невалидными ДИ (NaN, Inf)
         valid_mask = (
             plot_df['ci_lower'].notna() & plot_df['ci_upper'].notna() &
             plot_df['hr'].notna() & np.isfinite(plot_df['hr']) &
@@ -724,7 +846,7 @@ if cph is not None and ('table' in output_metrics and output_metrics["table"]):
         output_metrics["warnings"].append(f"Forest plot error: {str(forest_err)}")
         ax1.text(0.5, 0.5, 'Forest plot error', ha='center', va='center', transform=ax1.transAxes)
                       
-    # 2. Выживаемость
+    # Survival
     if plot_adjust_var and plot_adjust_var in encoding_map:
         try:
             info = encoding_map[plot_adjust_var]
@@ -769,10 +891,15 @@ if cph is not None and ('table' in output_metrics and output_metrics["table"]):
         ax2.set_ylabel('Baseline Cumulative Hazard', fontsize=11, fontweight='semibold')
         ax2.set_title('Model Baseline Cumulative Hazard', fontsize=13, fontweight='bold', pad=15)
         ax2.grid(True, linestyle=':', alpha=0.6)
-        
-    # 3. Линейность (Martingale Residuals)
-    if has_continuous:
-        ax3 = axes[2]
+    
+    # Строка 1: Schoenfeld или Linearity
+    ax3 = fig.add_subplot(gs[1, :])  # Bottom row spans both columns
+    
+    if has_schoenfeld:
+        # Schoenfeld residuals plot
+        plot_schoenfeld_residuals(cph, df_cox, time_col, event_col, encoded_covs, ax3)
+    elif has_continuous:
+        # Martingale residuals (Linearity)
         cont_var = continuous_vars[0]
         try:
             resids = cph.compute_residuals(df_cox[[time_col, event_col] + encoded_covs], kind='martingale')
@@ -782,11 +909,11 @@ if cph is not None and ('table' in output_metrics and output_metrics["table"]):
             ax3.scatter(x_vals, y_vals, color='#4b5563', alpha=0.6, edgecolors='none', s=25)
             
             try:
-                import statsmodels.api as sm
-                lowess = sm.nonparametric.lowess
+                import statsmodels.api as sm_api
+                lowess = sm_api.nonparametric.lowess
                 smoothed = lowess(y_vals, x_vals, frac=0.66)
                 ax3.plot(smoothed[:, 0], smoothed[:, 1], color='#ef4444', linewidth=2.5, label='LOWESS trend')
-            except Exception as lowess_err:
+            except Exception:
                 m, b = np.polyfit(x_vals, y_vals, 1)
                 ax3.plot(x_vals, m*x_vals + b, color='#ef4444', linewidth=2, label='Linear trend')
                 
@@ -798,7 +925,10 @@ if cph is not None and ('table' in output_metrics and output_metrics["table"]):
             ax3.legend(loc='best')
         except Exception as mart_err:
             output_metrics["warnings"].append(f"Martingale plot error: {str(mart_err)}")
-            ax3.text(0.5, 0.5, 'Error plotting residuals', ha='center', va='center')
+            ax3.text(0.5, 0.5, 'Error plotting residuals', ha='center', va='center', transform=ax3.transAxes)
+    else:
+        ax3.text(0.5, 0.5, 'No PH diagnostics available', ha='center', va='center', transform=ax3.transAxes)
+        ax3.set_title('PH Assumption Diagnostics', fontsize=13, fontweight='bold', pad=15)
         
     plt.tight_layout()
     plot_filename = f"cox_ph_{timestamp}"

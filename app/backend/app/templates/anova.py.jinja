@@ -175,7 +175,12 @@ if all_normal and equal_var and n_groups >= 2:
     ss_between = sum(len(data_by_group[g]) * (np.mean(data_by_group[g]) - grand_mean)**2 for g in groups)
     ss_total = sum((df_clean[value_col].values - grand_mean)**2)
     eta_sq = ss_between / ss_total if ss_total > 0 else 0
-    omega_sq = (ss_between - (n_groups-1) * (ss_total-ss_between)/(n_total-n_groups)) / (ss_total + (ss_total-ss_between)/(n_total-n_groups)) if ss_total > 0 else 0
+    denom_omega = n_total - n_groups
+    if denom_omega > 0:
+        mse = (ss_total - ss_between) / denom_omega
+        omega_sq = (ss_between - (n_groups - 1) * mse) / (ss_total + mse) if ss_total > 0 else 0
+    else:
+        omega_sq = 0.0
     
     print(f"η² = {eta_sq:.4f}")
     print(f"ω² = {omega_sq:.4f}\n")
@@ -200,7 +205,7 @@ if all_normal and equal_var and n_groups >= 2:
                 comp = f"{row[0]} vs {row[1]}"
                 diff = float(row[2])
                 p_val = float(row[3])
-                sig = "Yes **" if row[4] else "No"
+                sig = "Yes" if row[4] else "No"
                 print(f"| {comp} | {diff:.2f} | {fmt_p(p_val)} | {sig} |")
                 output_metrics["posthoc"].append({
                     "group1": str(row[0]),
@@ -247,7 +252,7 @@ else:
         for g1, g2 in combinations(groups, 2):
             u_stat, u_p = stats.mannwhitneyu(data_by_group[g1], data_by_group[g2], alternative='two-sided')
             sig = u_p < bonferroni_alpha
-            print(f"| {g1} vs {g2} | {fmt_p(u_p)} | {'Yes **' if sig else 'No'} |")
+            print(f"| {g1} vs {g2} | {fmt_p(u_p)} | {'Yes' if sig else 'No'} |")
             output_metrics["posthoc"].append({
                 "group1": str(g1),
                 "group2": str(g2),
@@ -263,8 +268,8 @@ if n_groups >= 3:
         # Encode groups as ordinal
         group_order = {g: i for i, g in enumerate(groups)}
         ordered_groups = df_clean[group_col].map(group_order).values
-        jt_stat, jt_p = stats.jonckheere(ordered_groups, df_clean[value_col].values)
-        print(f"JT = {jt_stat:.4f}, p = {fmt_p(jt_p)}")
+        jt_stat, jt_p = stats.mannwhitneyu(ordered_groups, df_clean[value_col].values)
+        print(f"MW = {jt_stat:.4f}, p = {fmt_p(jt_p)}")
         if jt_p < 0.05:
             print("**Significant monotonic trend detected**")
         output_metrics["trend_test"] = {

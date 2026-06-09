@@ -1,62 +1,95 @@
 """
 Cox Variable Selector - Forward/Backward selection algorithms
-Выделено из шаблона для улучшения производительности и тестируемости
+Переписан: LabelEncoder → dummy-кодирование с референсной группой
 """
-from __future__ import annotations
 
 from typing import Any
 
 import pandas as pd
 from lifelines import CoxPHFitter
-from sklearn.preprocessing import LabelEncoder
 
 
 class CoxVariableSelector:
     """Класс для пошагового отбора переменных в регрессии Кокса"""
 
-    def __init__(self, df: pd.DataFrame, time_col: str, event_col: str):
-        """
-        Инициализация селектора
-
-        Args:
-            df: DataFrame с данными
-            time_col: колонка со временем
-            event_col: колонка с событием (0/1)
-        """
+    def __init__(
+        self,
+        df: pd.DataFrame,
+        time_col: str,
+        event_col: str,
+        covariate_types: dict | None = None,
+        reference_groups: dict | None = None,
+    ):
         self.df = df.copy()
         self.time_col = time_col
         self.event_col = event_col
-        self.encoding_map = {}
-        self._prepare_categorical()
+        self.covariate_types = covariate_types or {}
+        self.reference_groups = reference_groups or {}
+        self.encoding_map: dict[str, dict] = {}
+        self.dummy_to_info: dict[str, dict] = {}
+        self.encoded_covs: list[str] = []
 
-    def _prepare_categorical(self):
-        """Кодирует категориальные переменные"""
-        for col in self.df.columns:
-            if col in [self.time_col, self.event_col]:
+    def prepare_dummies(self, covariates_list: list[str]) -> list[str]:
+        """Кодирует категориальные переменные как dummy, оставляет непрерывные как есть"""
+        if not covariates_list:
+            return []
+
+        df_out = self.df.copy()
+        self.encoding_map = {}
+        self.dummy_to_info = {}
+        self.encoded_covs = []
+
+        for col in covariates_list:
+            if col in (self.time_col, self.event_col):
                 continue
-            if self.df[col].dtype == 'object' or self.df[col].dtype.name == 'category':
-                self.df[col] = self.df[col].fillna('__MISSING__')
-                le = LabelEncoder()
-                self.df[col] = le.fit_transform(self.df[col].astype(str))
-                self.encoding_map[col] = dict(zip(range(len(le.classes_)), le.classes_, strict=False))
+
+            is_cat = self.covariate_types.get(col) == 'categorical'
+            if not is_cat:
+                is_cat = (
+                    df_out[col].dtype == 'object'
+                    or df_out[col].dtype.name == 'category'
+                    or hasattr(df_out[col].dtype, 'categories')
+                )
+
+            if is_cat:
+                df_out[col] = df_out[col].astype(str).fillna('__MISSING__')
+                categories = sorted(df_out[col].unique().tolist())
+                ref = self.reference_groups.get(col)
+                if ref not in categories:
+                    ref = categories[0] if categories else '__MISSING__'
+
+                self.encoding_map[col] = {
+                    'categories': categories,
+                    'reference': ref,
+                    'dummy_cols': [],
+                }
+
+                for cat in categories:
+                    if cat == ref:
+                        continue
+                    dummy_name = f"{col}_{cat}"
+                    df_out[dummy_name] = (df_out[col] == cat).astype(int)
+                    self.encoding_map[col]['dummy_cols'].append(dummy_name)
+                    self.encoded_covs.append(dummy_name)
+                    self.dummy_to_info[dummy_name] = {
+                        'original': col,
+                        'category': cat,
+                        'reference': ref,
+                    }
+            else:
+                df_out[col] = pd.to_numeric(df_out[col], errors='coerce')
+                self.encoded_covs.append(col)
+
+        self.df = df_out
+        return self.encoded_covs
 
     def _fit_model(self, covariates: list[str]) -> tuple[CoxPHFitter, pd.DataFrame] | None:
-        """
-        Обучает модель Кокса на выбранных ковариатах
-
-        Returns:
-            Tuple (модель, данные для обучения) или None если модель не сошлась
-        """
         if not covariates:
             return None
-
-        # Оставляем только нужные колонки и удаляем пропуски
         cols = [self.time_col, self.event_col] + covariates
         df_temp = self.df[cols].dropna()
-
         if len(df_temp) < 10:
             return None
-
         try:
             cph = CoxPHFitter()
             cph.fit(df_temp, duration_col=self.time_col, event_col=self.event_col)
@@ -65,7 +98,6 @@ class CoxVariableSelector:
             return None
 
     def _get_pvalue(self, cph: CoxPHFitter, variable: str) -> float:
-        """Извлекает p-value для переменной из модели"""
         try:
             summary = cph.summary
             if variable in summary.index:
@@ -74,27 +106,12 @@ class CoxVariableSelector:
             pass
         return 1.0
 
-    def forward_selection(self,
-                         candidates: list[str],
-                         p_threshold: float = 0.05,
-                         verbose: bool = False) -> dict[str, Any]:
-        """
-        Прямой пошаговый отбор переменных
-
-        Args:
-            candidates: список кандидатов для включения
-            p_threshold: порог p-value для включения
-            verbose: выводить ли прогресс
-
-        Returns:
-            Словарь с результатами:
-            {
-                'selected': [...],
-                'steps': [...],
-                'final_model': CoxPHFitter or None,
-                'c_index': float
-            }
-        """
+    def forward_selection(
+        self,
+        candidates: list[str],
+        p_threshold: float = 0.05,
+        verbose: bool = False,
+    ) -> dict[str, Any]:
         selected = []
         remaining = candidates.copy()
         steps = []
@@ -103,22 +120,26 @@ class CoxVariableSelector:
             best_pval = 1.0
             best_cov = None
 
-            # Проверяем каждую оставшуюся переменную
             for cov in remaining:
                 test_covs = selected + [cov]
-                result = self._fit_model(test_covs)
+                encoded = self._expand_covs(test_covs)
+                result = self._fit_model(encoded)
 
                 if result is None:
                     continue
 
                 cph, _ = result
-                pval = self._get_pvalue(cph, cov)
+                encoded_cov = self._expand_covs([cov])
+                pval = 1.0
+                for ec in encoded_cov:
+                    pv = self._get_pvalue(cph, ec)
+                    if pv < pval:
+                        pval = pv
 
                 if pval < best_pval:
                     best_pval = pval
                     best_cov = cov
 
-            # Если нашли значимую переменную - добавляем
             if best_pval < p_threshold and best_cov:
                 selected.append(best_cov)
                 remaining.remove(best_cov)
@@ -128,17 +149,20 @@ class CoxVariableSelector:
                     'action': 'added',
                     'variable': best_cov,
                     'p_value': best_pval,
-                    'current_model': selected.copy()
+                    'current_model': selected.copy(),
                 }
                 steps.append(step_info)
 
                 if verbose:
-                    print(f"Step {len(steps)}: Added '{best_cov}' (p={best_pval:.4f})")
+                    print(
+                        f"Step {len(steps)}: Added '{best_cov}'"
+                        f" (p={best_pval:.4f})"
+                    )
             else:
                 break
 
-        # Финальная модель
-        final_result = self._fit_model(selected) if selected else None
+        final_encoded = self._expand_covs(selected)
+        final_result = self._fit_model(final_encoded) if final_encoded else None
         final_model = final_result[0] if final_result else None
         c_index = final_model.concordance_index_ if final_model else None
 
@@ -147,46 +171,42 @@ class CoxVariableSelector:
             'steps': steps,
             'final_model': final_model,
             'c_index': c_index,
-            'n_selected': len(selected)
+            'n_selected': len(selected),
         }
 
-    def backward_elimination(self,
-                            candidates: list[str],
-                            p_threshold: float = 0.1,
-                            verbose: bool = False) -> dict[str, Any]:
-        """
-        Обратное исключение переменных
-
-        Args:
-            candidates: начальный список переменных
-            p_threshold: порог p-value для исключения (> threshold)
-            verbose: выводить ли прогресс
-
-        Returns:
-            Словарь с результатами (аналогично forward_selection)
-        """
+    def backward_elimination(
+        self,
+        candidates: list[str],
+        p_threshold: float = 0.1,
+        verbose: bool = False,
+    ) -> dict[str, Any]:
         current = candidates.copy()
         steps = []
 
         while len(current) > 1:
-            result = self._fit_model(current)
+            encoded = self._expand_covs(current)
+            result = self._fit_model(encoded)
 
             if result is None:
                 break
 
             cph, _ = result
 
-            # Ищем переменную с наибольшим p-value
             max_pval = 0.0
             worst_cov = None
 
             for cov in current:
-                pval = self._get_pvalue(cph, cov)
+                encoded_cov = self._expand_covs([cov])
+                pval = 1.0
+                for ec in encoded_cov:
+                    pv = self._get_pvalue(cph, ec)
+                    if pv > pval:
+                        pval = pv
+
                 if pval > max_pval:
                     max_pval = pval
                     worst_cov = cov
 
-            # Если самая незначимая переменная превышает порог - удаляем
             if max_pval > p_threshold and worst_cov:
                 current.remove(worst_cov)
 
@@ -195,17 +215,20 @@ class CoxVariableSelector:
                     'action': 'removed',
                     'variable': worst_cov,
                     'p_value': max_pval,
-                    'current_model': current.copy()
+                    'current_model': current.copy(),
                 }
                 steps.append(step_info)
 
                 if verbose:
-                    print(f"Step {len(steps)}: Removed '{worst_cov}' (p={max_pval:.4f})")
+                    print(
+                        f"Step {len(steps)}: Removed '{worst_cov}'"
+                        f" (p={max_pval:.4f})"
+                    )
             else:
                 break
 
-        # Финальная модель
-        final_result = self._fit_model(current) if current else None
+        final_encoded = self._expand_covs(current)
+        final_result = self._fit_model(final_encoded) if final_encoded else None
         final_model = final_result[0] if final_result else None
         c_index = final_model.concordance_index_ if final_model else None
 
@@ -214,23 +237,31 @@ class CoxVariableSelector:
             'steps': steps,
             'final_model': final_model,
             'c_index': c_index,
-            'n_selected': len(current)
+            'n_selected': len(current),
         }
 
+    def _expand_covs(self, original_vars: list[str]) -> list[str]:
+        expanded = []
+        for v in original_vars:
+            if v in self.encoding_map:
+                expanded.extend(self.encoding_map[v]['dummy_cols'])
+            else:
+                expanded.append(v)
+        return expanded
+
     def get_model_summary(self, model: CoxPHFitter) -> pd.DataFrame:
-        """Получает красивую сводку по модели"""
         if model is None:
             return pd.DataFrame()
-
         summary = model.summary.copy()
         summary.index.name = 'Variable'
         summary = summary.reset_index()
 
-        # Добавляем информацию о кодировании
         for idx, row in summary.iterrows():
             var = row['Variable']
-            if var in self.encoding_map:
-                baseline = self.encoding_map[var].get(0, 'Baseline')
-                summary.loc[idx, 'Variable'] = f"{var} [{baseline}]"
+            if var in self.dummy_to_info:
+                info = self.dummy_to_info[var]
+                summary.loc[idx, 'Variable'] = (
+                    f"{info['original']} [{info['category']} vs {info['reference']}]"
+                )
 
         return summary

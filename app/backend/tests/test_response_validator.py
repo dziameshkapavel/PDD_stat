@@ -294,3 +294,131 @@ def test_validation_notice_zero_numbers():
                           numbers_checked=0, numbers_matched=0)
     result = ResponseValidator.add_validation_notice("Hello", vr)
     assert result == "Hello"
+
+
+# ── _extract_all_decimals ──────────────────────────────────────────────────
+
+
+def test_extract_all_decimals_simple():
+    text = "AUC was 0.82 and HR was 1.45"
+    result = ResponseValidator._extract_all_decimals(text)
+    assert 0.82 in result
+    assert 1.45 in result
+    assert len(result) == 2
+
+
+def test_extract_all_decimals_no_duplicates():
+    text = "value 0.82 and another 0.82"
+    result = ResponseValidator._extract_all_decimals(text)
+    assert result.count(0.82) == 1
+
+
+def test_extract_all_decimals_skips_pmid():
+    text = "PMID 42256545 and AUC 0.82"
+    result = ResponseValidator._extract_all_decimals(text)
+    assert 42256545 not in result
+    assert 0.82 in result
+
+
+def test_extract_all_decimals_skips_integers():
+    text = "29 patients, 190 samples, AUC 0.82"
+    result = ResponseValidator._extract_all_decimals(text)
+    assert 0.82 in result
+    assert len(result) == 1
+
+
+# ── _check_unlabeled_numbers ───────────────────────────────────────────────
+
+
+def test_check_unlabeled_all_match():
+    text = "Importance was 0.4216 and OOB was 0.71"
+    source_rounded = {0.42, 0.71, 0.82}
+    errors, total, matched, unknown = ResponseValidator._check_unlabeled_numbers(
+        text, source_rounded, set()
+    )
+    assert errors == []
+    assert total == 2
+    assert matched == 2
+    assert unknown == 0
+
+
+def test_check_unlabeled_unknown_detected():
+    text = "Unknown metric: 0.99"
+    source_rounded = {0.42, 0.71, 0.82}
+    errors, total, matched, unknown = ResponseValidator._check_unlabeled_numbers(
+        text, source_rounded, set()
+    )
+    assert len(errors) == 1
+    assert "unlabeled" in errors[0].lower()
+    assert total == 1
+    assert matched == 0
+    assert unknown == 1
+
+
+def test_check_unlabeled_skips_labeled():
+    """Числа, уже проверенные через parse_numbers, не добавляют ошибок."""
+    text = "HR = 1.45 and AUC was 0.82"
+    source_rounded = {1.45, 0.82, 0.71}
+    labeled = {1.45, 0.82}
+    errors, total, matched, unknown = ResponseValidator._check_unlabeled_numbers(
+        text, source_rounded, labeled
+    )
+    # Both numbers are labeled = counted as matched, no errors
+    assert errors == []
+    assert total == 2
+    assert matched == 2
+    assert unknown == 0
+
+
+def test_check_unlabeled_mixed():
+    """Часть чисел совпадает, часть нет."""
+    text = "AUC 0.82, unknown 0.99, and OOB 0.71"
+    source_rounded = {0.82, 0.71}
+    errors, total, matched, unknown = ResponseValidator._check_unlabeled_numbers(
+        text, source_rounded, set()
+    )
+    assert len(errors) >= 1
+    assert any("0.99" in e for e in errors)
+    assert total == 3
+    assert matched == 2
+    assert unknown >= 1
+
+
+# ── validate with systematic check ──────────────────────────────────────────
+
+
+def test_validate_systematic_all_good():
+    """Все десятичные числа присутствуют в source-метриках."""
+    response = ("HR = 1.45 (95%CI 1.10-2.50), "
+                "model OOB score was 0.71")
+    metrics = {"hr": 1.45, "ci_lower": 1.10, "ci_upper": 2.50,
+               "oob_score": 0.71}
+    result = ResponseValidator().validate(response, metrics)
+    assert result.passed is True
+    assert result.total_decimals >= 1
+    assert result.unknown_decimals == 0
+
+
+def test_validate_systematic_finds_hallucinated_decimal():
+    """Галлюцинированное десятичное число (Importance=0.99) ловится."""
+    response = ("The most important feature was MTV_SUV>4 "
+                "with importance 0.99")
+    metrics = {"auc": 0.82, "oob_score": 0.71,
+               "top_features": [{"importance": 0.42}]}
+    result = ResponseValidator().validate(response, metrics)
+    assert result.passed is False
+    assert any("unlabeled" in e.lower() for e in result.errors)
+    assert result.total_decimals >= 1
+    assert result.unknown_decimals >= 1
+
+
+def test_validate_notice_has_total_decimals():
+    """Валидационное уведомление включает строку total_decimals."""
+    vr = ValidationResult(
+        passed=True, errors=[], numbers_found=2,
+        numbers_checked=2, numbers_matched=2,
+        total_decimals=3, decimals_matched=3, unknown_decimals=0,
+    )
+    result = ResponseValidator.add_validation_notice("HR=1.5, AUC=0.82", vr)
+    assert "Все числа" in result or "All numbers" in result
+    assert "3/3" in result

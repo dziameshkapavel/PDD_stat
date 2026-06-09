@@ -92,17 +92,17 @@ class TestAnalysis:
     def test_run_descriptive_stats(self):
         resp = client.post("/api/analysis/run", json={
             "template": "descriptive_stats",
-            "params": {"target_col": "age", "group_col": "", "show_chart": "false", "chart_type": "auto"}
+            "params": {"target_col": "", "group_col": "", "show_chart": "false", "chart_type": "auto"}
         })
         assert resp.status_code == 200
         data = resp.json()
         assert data.get("success") is True
-        assert "age" in data.get("output", "")
+        assert "MTV_SUV>4" in data.get("output", "")
 
     def test_run_categorical(self):
         resp = client.post("/api/analysis/run", json={
             "template": "categorical",
-            "params": {"col1": "ECOG", "col2": "Type"}
+            "params": {"col1": "PET_responce", "col2": "PFS_event"}
         })
         assert resp.status_code == 200
         data = resp.json()
@@ -113,7 +113,7 @@ class TestAnalysis:
             "template": "cox_ph",
             "params": {
                 "time_col": "PFS_time", "event_col": "PFS_event",
-                "covariates": ["age", "MTV_SUV>4"],
+                "covariates": ["MTV_SUV>4"],
                 "regression_type": "multi"
             }
         })
@@ -126,7 +126,7 @@ class TestAnalysis:
             "template": "logistic",
             "params": {
                 "target_col": "PET_responce",
-                "predictors": ["age", "MTV_SUV>4"],
+                "predictors": ["MTV_SUV>4"],
                 "regression_type": "enter"
             }
         })

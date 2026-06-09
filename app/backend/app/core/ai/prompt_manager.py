@@ -1,8 +1,6 @@
 """
 PromptManager — загрузка YAML-промптов и сборка системного промпта.
 """
-from __future__ import annotations
-
 import re
 from pathlib import Path
 from typing import Any

@@ -305,7 +305,8 @@ if stratify_col:
                         m_float = float(m)
                         if not np.isnan(m_float) and not np.isinf(m_float):
                             stratum_metrics["median_survival"] = {stratum: m_float}
-                            stratum_metrics["summary"][0]["median"] = f"{m_float:.1f}"
+                            if stratum_metrics["summary"]:
+                                stratum_metrics["summary"][0]["median"] = f"{m_float:.1f}"
                     except:
                         pass
             

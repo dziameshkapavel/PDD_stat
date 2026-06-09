@@ -26,6 +26,7 @@ export class AISettings {
             provider: 'ollama',
             ollama: { url: 'http://localhost:11434', default_model: 'llama3:8b', temperature: 0.7, max_tokens: 2000 },
             groq: { api_key: '', default_model: 'llama3-70b-8192', temperature: 0.7, max_tokens: 2000 },
+            pubmed: { api_key: '', email: 'app@pdd-stat.local' },
             system_prompt: 'You are PDD_STAT Assistant...',
             temperature: 0.7,
             max_tokens: 2000
@@ -69,6 +70,20 @@ export class AISettings {
                             <button class="btn-secondary provider-btn ${isGroq ? 'active' : ''}" data-provider="groq">
                                 Groq (Cloud)
                             </button>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group" style="border-top:1px solid var(--border-color);padding-top:12px;margin-top:4px;">
+                        <label class="form-label">PubMed API Key</label>
+                        <input type="password" class="form-input" id="pubmedApiKey"
+                               value="${(c.pubmed && c.pubmed.api_key) || ''}"
+                               placeholder="PubMed API key (optional)" style="width:100%;">
+                        <div style="display:flex;gap:4px;margin-top:4px;">
+                            <button class="btn-secondary" id="testPubmedBtn" style="font-size:11px;">Test PubMed</button>
+                            <span id="pubmedStatus" style="margin-left:8px;font-size:12px;"></span>
+                        </div>
+                        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">
+                            Get your free API key: NCBI Account &rarr; Settings &rarr; API Key Management
                         </div>
                     </div>
                     
@@ -238,6 +253,40 @@ export class AISettings {
             this.modal.querySelector('#tempValue').textContent = tempSlider.value;
         });
         
+        // Test PubMed
+        const testPubmedBtn = this.modal.querySelector('#testPubmedBtn');
+        if (testPubmedBtn) {
+            testPubmedBtn.addEventListener('click', async () => {
+                const status = this.modal.querySelector('#pubmedStatus');
+                const apiKey = this.modal.querySelector('#pubmedApiKey').value;
+                if (!apiKey) {
+                    status.textContent = 'Enter an API key first';
+                    status.style.color = 'var(--accent-red)';
+                    return;
+                }
+                status.textContent = 'Testing...';
+                status.style.color = 'var(--text-muted)';
+                try {
+                    const response = await fetch(`${API_BASE}/ai/test`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ provider: 'pubmed', pubmed_api_key: apiKey })
+                    });
+                    const result = await response.json();
+                    if (result.status === 'ok') {
+                        status.textContent = result.message || 'Connected';
+                        status.style.color = 'var(--accent-green)';
+                    } else {
+                        status.textContent = result.message || 'Connection failed';
+                        status.style.color = 'var(--accent-red)';
+                    }
+                } catch (e) {
+                    status.textContent = e.message;
+                    status.style.color = 'var(--accent-red)';
+                }
+            });
+        }
+        
         // Test Ollama
         this.modal.querySelector('#testOllamaBtn').addEventListener('click', async () => {
             const status = this.modal.querySelector('#ollamaStatus');
@@ -390,6 +439,8 @@ export class AISettings {
             ollama_model: this.modal.querySelector('#ollamaModel').value,
             groq_api_key: this.modal.querySelector('#groqApiKey').value,
             groq_model: this.modal.querySelector('#groqModel').value,
+            pubmed_api_key: this.modal.querySelector('#pubmedApiKey').value,
+            pubmed_email: 'app@pdd-stat.local',
             temperature: parseFloat(this.modal.querySelector('#temperature').value),
             max_tokens: parseInt(this.modal.querySelector('#maxTokens').value),
             system_prompt: this.modal.querySelector('#systemPrompt').value

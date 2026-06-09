@@ -40,7 +40,7 @@ n_1se_val = None
 print("## Logistic LASSO: Feature Selection\n")
 
 target_col = "{{ target_col }}"
-covariates = {{ covariates|default([]) }}
+covariates = {{ covariates|default([])|tojson }}
 C_value = {{ C_value|default(1.0)|float }}
 auto_select_C = {{ auto_select_C|default(True) }}
 

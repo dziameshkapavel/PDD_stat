@@ -1,8 +1,6 @@
 """
 AI Clients for Ollama (local) and Groq (cloud)
 """
-from __future__ import annotations
-
 import json
 import re
 import traceback

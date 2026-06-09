@@ -1,230 +1,180 @@
 # PDD STAT
 
-A web application for statistical analysis of medical data.  
+A web application for statistical analysis of medical data.
 **Backend:** FastAPI (Python) · **Frontend:** Vanilla HTML/JS (no build step)
-
----
-
-## Table of Contents
-
-- [Quick Start](#quick-start)
-- [Prerequisites](#prerequisites)
-  - [Check & Install Git](#1-git)
-  - [Check & Install Python](#2-python-39-or-later)
-  - [Check & Install Docker (optional)](#3-docker-optional)
-- [Installation Guide](#installation-guide)
-  - [Option A: Local (no Docker)](#option-a-local-run-without-docker)
-  - [Option B: Docker](#option-b-docker)
-- [Running the Application](#running-the-application)
-  - [macOS — One-click](#macos--one-click)
-  - [Windows — One-click](#windows--one-click)
-  - [Manual start (any OS)](#manual-start-any-os)
-  - [Docker start](#docker-start)
-- [Production](#production)
-- [Project Structure](#project-structure)
-- [Tests](#tests)
 
 ---
 
 ## Quick Start
 
 ```bash
-# 1. Clone
 git clone https://github.com/dziameshkapavel/PDD_stat.git
 cd PDD_stat
 
-# 2a. Local (requires Python 3.9+)
-cd app/backend
-pip install -r requirements.txt
-python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+# macOS — double-click or:
+./setup_mac.command && ./start_backend.command
 
-# 2b. Or Docker (requires Docker)
-docker compose up -d --build
-
-# 3. Open in browser
-open http://localhost:8000
+# Windows — double-click or:
+# setup.bat  (one-time install)
+# start.bat  (starts server)
 ```
+
+Open http://localhost:8000.
+
+---
+
+## Table of Contents
+
+- [Prerequisites](#prerequisites)
+- [Installation — macOS](#installation--macos)
+- [Installation — Windows](#installation--windows)
+- [Docker (alternative)](#docker-alternative)
+- [Project Structure](#project-structure)
+- [Tests](#tests)
 
 ---
 
 ## Prerequisites
 
-### 1. Git
+| What | Why | Check |
+|------|-----|-------|
+| **Git** | Clone the repo | `git --version` |
+| **Python 3.11+** | Run the app | `python3 --version` |
+| **Docker** (optional) | Run via container | `docker --version` |
 
-**Check if Git is installed:**
+### Git
+
 ```bash
 git --version
 ```
-If you see `git version x.y.z` — you're good.
 
-**If not installed:**
+- **macOS:** `xcode-select --install` or https://git-scm.com/download/mac
+- **Windows:** https://git-scm.com/download/win (defaults are fine)
 
-- **macOS:** Install Xcode Command Line Tools:
-  ```bash
-  xcode-select --install
-  ```
-  Or download from https://git-scm.com/download/mac
+### Python 3.11+
 
-- **Windows:** Download from https://git-scm.com/download/win  
-  Run the installer (defaults are fine). After install, restart your terminal.
-
-- **Linux:** `sudo apt install git` (Debian/Ubuntu) or `sudo dnf install git` (Fedora)
-
-### 2. Python 3.9 or later
-
-**Check if Python is installed:**
 ```bash
 python3 --version
-# or
-python --version
 ```
-You need **3.9 or newer**. If you see `Python 3.x.x` with x ≥ 9 — you're good.
 
-**If not installed:**
+Need **3.11 or newer**.
 
 - **macOS (Intel + Apple Silicon):**
   ```bash
-  # Using Homebrew (recommended)
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  brew install python@3.11
+  brew install python@3.12
   ```
   Or download from https://www.python.org/downloads/
 
 - **Windows:**
-  Download from https://www.python.org/downloads/  
-  **Important:** during installation, check **"Add Python to PATH"**.
+  Download from https://www.python.org/downloads/
+  **Important:** check **"Add Python to PATH"** during install.
 
 - **Linux:**
   ```bash
   sudo apt update && sudo apt install python3 python3-pip python3-venv
   ```
 
-**Verify after install:**
+---
+
+## Installation — macOS
+
+### One-time setup
+
+Double-click **`setup_mac.command`** (or run from terminal):
+
 ```bash
-python3 --version
-pip3 --version
+./setup_mac.command
 ```
 
-### 3. Docker (optional)
+This will:
+1. Find Python 3.12 → 3.11 → 3.10 → 3 (or install via Homebrew)
+2. Create `.venv` at the project root
+3. Install all dependencies (`pip install -r app/backend/requirements.txt`)
 
-Only needed if you want to run via Docker instead of locally.
+**Result:** all 70+ packages installed in `.venv/`.
 
-**Check:**
+### Start the app
+
+Double-click **`start_backend.command`** — it will:
+1. Auto-run setup if `.venv` is missing
+2. Launch the server in background
+3. Open http://localhost:8000 in your browser
+
+To stop: `Ctrl+C` in terminal.
+
+### Update
+
 ```bash
-docker --version
-docker compose version
+./update_mac.command
 ```
 
-**If not installed:**
-
-- **macOS:** Download [Docker Desktop for Mac](https://docs.docker.com/desktop/install/mac-install/)  
-  Apple Silicon users: choose the **Apple Chip** version.
-
-- **Windows:** Download [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/)  
-  Requires WSL 2 — the installer will guide you.
-
-- **Linux:** `sudo apt install docker.io docker-compose-v2`
+Pulls latest code and reinstalls dependencies.
 
 ---
 
-## Installation Guide
+## Installation — Windows
 
-### Option A: Local run (without Docker)
+### One-time setup
 
-**Step 1. Clone the repository**
-```bash
-git clone https://github.com/dziameshkapavel/PDD_stat.git
-cd PDD_stat
+Double-click **`setup.bat`** (or run from terminal):
+
+```batch
+setup.bat
 ```
 
-**Step 2. Install Python dependencies**
-```bash
-cd app/backend
-pip3 install -r requirements.txt
+This will:
+1. Check for 64-bit Python 3.11+
+2. Try `py -3.12` → `py -3.11` → `python` (with version check)
+3. Create `.venv` at the project root
+4. Install all dependencies
+
+### Start the app
+
+Double-click **`start.bat`** — it will:
+1. Auto-run setup if `.venv` is missing
+2. Launch the server
+3. Open http://localhost:8000 in your browser
+
+### Update
+
+```batch
+update.bat
 ```
-This installs all required packages: pandas, matplotlib, lifelines, scikit-learn, statsmodels, shap, scikit-survival, seaborn, etc.
 
-**Step 3. Start the server** (see [Running](#running-the-application) below)
+---
 
-### Option B: Docker
+## Docker (alternative)
 
-**Step 1. Clone the repository**
-```bash
-git clone https://github.com/dziameshkapavel/PDD_stat.git
-cd PDD_stat
-```
+Docker is **optional**. Use it if:
+- You already have Docker Desktop installed
+- You want a reproducible environment without host Python
+- You're deploying to a server
 
-**Step 2. Build and start**
+**Docker is not required** for the "download → double-click → use" flow.
+
 ```bash
 docker compose up -d --build
 ```
 
-The first build downloads dependencies and may take 3–5 minutes.  
-After completion, open http://localhost:8000.
+Then open http://localhost:8000.
 
----
+What it does:
+1. Builds a Python 3.11-slim image (first build: 3–5 min)
+2. Installs all dependencies
+3. Starts uvicorn with 2 workers
+4. Mounts `./projects/` and `./data/` as volumes (data persists across restarts)
+5. Includes healthcheck and auto-restart
 
-## Running the Application
-
-### macOS — One-click
-
-Double-click **`start_backend.command`** in the project root folder.
-
-This will:
-1. Launch the server in the background
-2. Wait 2 seconds
-3. Open the app in your default browser
-
-To stop the server: press `Ctrl+C` in the terminal window.
-
-### Windows — One-click
-
-Create a file `start_backend.bat` in the project root with:
-```bat
-@echo off
-cd /d "%~dp0app\backend"
-start python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-timeout /t 3 /nobreak >nul
-start http://localhost:8000
-```
-Double-click `start_backend.bat` to run.
-
-### Manual start (any OS)
-
+Stop:
 ```bash
-cd app/backend
-python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+docker compose down
 ```
-Then open http://localhost:8000 in your browser.  
-To stop: `Ctrl+C`.
 
-### Docker start
-
-```bash
-docker compose up -d
-```
-Then open http://localhost:8000.  
-To stop: `docker compose down`.
-
----
-
-## Production
-
-For production deployment, use `gunicorn` with multiple workers:
-
+With API key:
 ```bash
 PDD_STAT_API_KEY=my-secret-key docker compose up -d
 ```
-
-Or without Docker:
-
-```bash
-cd app/backend
-pip install gunicorn
-gunicorn -k uvicorn.workers.UvicornWorker -w 4 app.main:app
-```
-
-Set `PDD_STAT_API_KEY` environment variable to enable API key authentication (optional).
 
 ---
 
@@ -239,36 +189,33 @@ PDD_stat/
 │   │   │   ├── api/                 # API routers (projects, analysis, ai)
 │   │   │   ├── core/                # Business logic
 │   │   │   │   ├── executor.py      # Python code executor
-│   │   │   │   ├── modeling_orchestrator.py  # Template engine
-│   │   │   │   ├── data_loader.py   # File loading
+│   │   │   │   ├── modeling_orchestrator.py  # Template engine (Jinja2)
+│   │   │   │   ├── data_loader.py   # File upload & parsing
 │   │   │   │   ├── rule_engine.py   # Data cleaning rules
-│   │   │   │   ├── ai/              # AI chat module
-│   │   │   │   │   ├── ai_clients.py
-│   │   │   │   │   ├── context_builder.py
-│   │   │   │   │   ├── response_validator.py
-│   │   │   │   │   └── tools.py
-│   │   │   ├── templates/           # Analysis templates (*.py.jinja)
-│   │   │   └── core/auth.py         # Optional API key auth
-│   │   ├── tests/                   # Pytest tests (58 tests)
+│   │   │   │   ├── pubmed_api.py    # PubMed E-utilities wrapper
+│   │   │   │   ├── auth.py          # Optional API key auth
+│   │   │   │   └── ai/              # AI chat module
+│   │   │   │       ├── ai_clients.py      # Ollama / Groq providers
+│   │   │   │       ├── context_builder.py # Dataset + PubMed context
+│   │   │   │       ├── response_validator.py  # Zahl-check against metrics
+│   │   │   │       ├── prompt_manager.py     # YAML prompt loader
+│   │   │   │       └── tools.py             # Template metadata
+│   │   │   ├── templates/           # 20+ analysis templates (*.py.jinja)
+│   │   │   └── prompts/             # AI system prompts (YAML)
+│   │   ├── tests/                   # 69 tests (pytest)
 │   │   └── requirements.txt
-│   └── frontend/                    # Static frontend (no build step)
-├── projects/                        # User project data (gitignored)
+│   └── frontend/                    # Vanilla HTML/JS/CSS (no build)
+├── projects/                        # User data (gitignored)
 ├── Dockerfile
 ├── docker-compose.yml
-├── start_backend.command            # macOS one-click launcher
+├── setup_mac.command                # macOS one-time install
+├── start_backend.command            # macOS launcher
+├── update_mac.command               # macOS updater
+├── setup.bat                        # Windows one-time install
+├── start.bat                        # Windows launcher
+├── update.bat                       # Windows updater
 └── README.md
 ```
-
-### Audit status (implemented fixes)
-
-| Template | Fixes applied |
-|----------|--------------|
-| **Cox PH** | EPV grading, rare category check, separation detection, linearity (Spearman + LOWESS), dfbeta influential obs, convergence warning |
-| **Logistic Regression** | Optional `class_weight='balanced'`, EPV control, separation diagnostics, Box-Tidwell linearity, Brier score, **ROC plot**, Hosmer-Lemeshow, VIF, stepwise selection |
-| **LASSO** | Small sample warning, correlated cluster detection, 1-SE rule, EPV after selection |
-| **Random Forest** | Class imbalance detection, calibration (Brier + slope + intercept + plot), permutation importance, SHAP by default, leakage detection, low event warning |
-| **Survival Evaluation** | Uno C-index (IPCW), per-time-point Brier score, calibration by tertile groups, risk set / event count validation, bootstrap percentile CI (no z-test) |
-| **All 20 templates** | Structured JSON metrics (`JSON_METRICS_START` / `END`) for AI validation |
 
 ---
 
@@ -279,4 +226,4 @@ cd app/backend
 python3 -m pytest tests/ -v
 ```
 
-58 tests total: 38 unit (response validator) + 20 API (FastAPI TestClient).
+69 tests: 38 unit (response validator) + 20 API (FastAPI TestClient) + 11 systematic hallucination tests.

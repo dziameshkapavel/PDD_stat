@@ -129,11 +129,12 @@ def calc_uno_cindex(y_ev, y_tm, risk, y_all_surv):
         return None
 
 def bootstrap_cindex(y_ev, y_tm, risk, y_all_surv=None, n_iter=1000):
-    """Returns Harrell C-index, Uno C-index, and bootstrap 95% CI for Harrell."""
+    """Returns Harrell C-index, Uno C-index, and bootstrap 95% CI for both."""
     n = len(y_ev)
     base_c = calc_cindex(y_ev, y_tm, risk)
     base_uno = calc_uno_cindex(y_ev, y_tm, risk, y_all_surv) if y_all_surv is not None else None
     boot_c = []
+    boot_uno = []
     np.random.seed(bootstrap_seed)
     for _ in range(n_iter):
         idx = np.random.choice(n, n, replace=True)
@@ -145,12 +146,25 @@ def bootstrap_cindex(y_ev, y_tm, risk, y_all_surv=None, n_iter=1000):
                 boot_c.append(c)
         except:
             continue
+        if y_all_surv is not None:
+            try:
+                u = calc_uno_cindex(y_ev[idx], y_tm[idx], risk[idx], y_all_surv)
+                if u is not None and not np.isnan(u):
+                    boot_uno.append(u)
+            except:
+                continue
     if len(boot_c) < 50:
-        return base_c, base_c, base_c, base_uno, base_uno, base_uno
+        return base_c, base_c, base_c, base_uno, None, None
     boot_c = np.array(boot_c)
     ci_low = float(np.percentile(boot_c, 2.5))
     ci_high = float(np.percentile(boot_c, 97.5))
-    return float(base_c), ci_low, ci_high, base_uno, ci_low, ci_high
+    uno_ci_low = None
+    uno_ci_high = None
+    if len(boot_uno) >= 50:
+        boot_uno = np.array(boot_uno)
+        uno_ci_low = float(np.percentile(boot_uno, 2.5))
+        uno_ci_high = float(np.percentile(boot_uno, 97.5))
+    return float(base_c), ci_low, ci_high, base_uno, uno_ci_low, uno_ci_high
 
 def calc_time_auc_bootstrap(y_surv_local, risk, times, y_ev, y_tm, n_iter=500):
     n = len(y_ev)

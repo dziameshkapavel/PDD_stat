@@ -14,6 +14,8 @@ COPY app/frontend/ app/frontend/
 
 WORKDIR /app/app/backend
 
+RUN mkdir -p projects data
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \

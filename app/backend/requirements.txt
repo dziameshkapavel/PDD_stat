@@ -19,6 +19,7 @@ pyarrow
 autograd
 autograd-gamma
 pyyaml
+tabulate
 pytest
 pytest-asyncio
 pytest-timeout

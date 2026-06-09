@@ -187,21 +187,24 @@ export class CategoricalModel extends BaseModel {
             
             const matching = data.charts
                 .filter(c => c.startsWith(this.templatePrefix))
-                .sort()
-                .reverse();
+                .sort();
             
             if (matching.length > 0) {
                 const plotsDiv = block.querySelector('.results-plots');
                 if (plotsDiv) {
                     plotsDiv.innerHTML = '';
-                    const chartFile = matching[0];
-                    const img = document.createElement('img');
-                    img.src = `/plots/${chartFile}`;
-                    img.style.width = '100%';
-                    img.style.height = 'auto';
-                    img.style.borderRadius = '8px';
-                    img.style.border = '1px solid var(--border-primary)';
-                    plotsDiv.appendChild(img);
+                    const wrapper = document.createElement('div');
+                    wrapper.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:16px;';
+                    matching.forEach(chartFile => {
+                        const img = document.createElement('img');
+                        img.src = `/plots/${chartFile}`;
+                        img.style.width = '100%';
+                        img.style.height = 'auto';
+                        img.style.borderRadius = '8px';
+                        img.style.border = '1px solid var(--border-primary)';
+                        wrapper.appendChild(img);
+                    });
+                    plotsDiv.appendChild(wrapper);
                     
                     const toggleBtn = block.querySelector('.charts-toggle-btn');
                     if (toggleBtn) {

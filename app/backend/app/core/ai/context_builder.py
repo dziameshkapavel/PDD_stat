@@ -1,8 +1,6 @@
 """
 ContextBuilder — преобразует данные проекта в структурированный текст для ИИ.
 """
-from __future__ import annotations
-
 import json
 from pathlib import Path
 from typing import Any
@@ -635,13 +633,33 @@ class ContextBuilder:
 
         return "\n".join(lines)
 
-    def build_full_context(self, loader) -> str:
-        """Объединяет сводку датасета + последний анализ."""
+    def build_pubmed_context(self, loader, user_query: str = "") -> str:
+        """PubMed articles from project context, formatted for AI prompt."""
+        project_context_path = self.state_folder.parent / "state" / "project_context.json"
+        if not project_context_path.exists():
+            return ""
+        try:
+            with open(project_context_path, encoding="utf-8") as f:
+                context = json.load(f)
+        except Exception:
+            return ""
+        articles = context.get("pubmed_articles", [])
+        if not articles:
+            return ""
+        from app.core.pubmed_api import format_articles_for_context
+        return format_articles_for_context(articles)
+
+    def build_full_context(self, loader, user_query: str = "") -> str:
+        """Объединяет сводку датасета + последний анализ + PubMed."""
         parts = [self.build_dataset_summary(loader)]
         last = self.build_last_analysis_context(loader)
         if last:
             parts.append("")
             parts.append(last)
+        pubmed = self.build_pubmed_context(loader)
+        if pubmed:
+            parts.append("")
+            parts.append(pubmed)
         return "\n".join(parts)
 
     def build_context_for_report(self, loader, selected_ids: list[str]) -> str:

@@ -48,8 +48,7 @@ export class BaseModel {
             // Фильтруем графики по префиксу
             const matching = data.charts
                 .filter(c => c.startsWith(prefix))
-                .sort()
-                .reverse(); // Самые новые первыми
+                .sort();
             
             console.log(`Found ${matching.length} matching plots:`, matching);
             
@@ -61,19 +60,23 @@ export class BaseModel {
                 plotsDiv.style.marginTop = '16px';
                 plotsDiv.style.width = '100%';
                 
-                // Берём самый новый график с нужным префиксом
-                const chartFile = matching[0];
+                // Показываем все подходящие графики
+                const wrapper = document.createElement('div');
+                wrapper.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:16px;';
                 
-                const img = document.createElement('img');
-                img.src = `/plots/${chartFile}`;
-                img.style.width = '100%';
-                img.style.height = 'auto';
-                img.style.borderRadius = '8px';
-                img.style.border = '1px solid var(--border-primary)';
-                img.style.cursor = 'pointer';
-                img.onclick = () => window.open(`/plots/${chartFile}`);
-                plotsDiv.appendChild(img);
+                matching.forEach(chartFile => {
+                    const img = document.createElement('img');
+                    img.src = `/plots/${chartFile}`;
+                    img.style.width = '100%';
+                    img.style.height = 'auto';
+                    img.style.borderRadius = '8px';
+                    img.style.border = '1px solid var(--border-primary)';
+                    img.style.cursor = 'pointer';
+                    img.onclick = () => window.open(`/plots/${chartFile}`);
+                    wrapper.appendChild(img);
+                });
                 
+                plotsDiv.appendChild(wrapper);
                 this._setupPlotControls(block, plotsDiv);
             } else {
                 console.warn(`No plots found with prefix: ${prefix}`);

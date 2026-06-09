@@ -4,6 +4,8 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.venv/
+.venv311/
 
 # IDE / OS
 .DS_Store

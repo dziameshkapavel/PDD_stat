@@ -1,4 +1,5 @@
 import json
+import math
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -7,6 +8,16 @@ from app.api.projects import get_loader
 from app.core.executor import Executor
 
 router = APIRouter()
+
+
+def _sanitize_json(obj):
+    if isinstance(obj, dict):
+        return {k: _sanitize_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_json(v) for v in obj]
+    elif isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    return obj
 
 def _save_to_history(project_path, template, params, result):
     """Сохраняет результат анализа в историю проекта"""
@@ -51,9 +62,9 @@ def _save_to_history(project_path, template, params, result):
     # Добавляем в начало списка
     history.insert(0, record)
 
-    # Сохраняем (без ограничения)
+    # Сохраняем (без ограничения) — sanitize NaN/Inf to None
     with open(history_path, 'w', encoding='utf-8') as f:
-        json.dump(history, f, indent=2, ensure_ascii=False, default=str)
+        json.dump(_sanitize_json(history), f, indent=2, ensure_ascii=False, default=str)
 
     print(f"[HISTORY] Saved run {record['id']} to {history_path}")
 
@@ -572,7 +583,7 @@ async def get_history(limit: int = 50):
         with open(history_path, encoding='utf-8') as f:
             history = json.load(f)
         return {
-            "history": history[:limit],
+            "history": _sanitize_json(history[:limit]),
             "total": len(history)
         }
     return {"history": [], "total": 0}
@@ -590,7 +601,7 @@ async def get_history_item(run_id: str):
 
         for record in history:
             if record.get("id") == run_id:
-                return record
+                return _sanitize_json(record)
 
     raise HTTPException(status_code=404, detail="Record not found")
 
