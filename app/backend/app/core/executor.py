@@ -3,6 +3,9 @@ Executor for safe Python code execution.
 """
 
 import io
+import os
+import signal
+import threading
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -16,6 +19,16 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from app.core.data_loader import normalize_dataframe
+
+EXEC_TIMEOUT = int(os.environ.get('PDD_STAT_EXEC_TIMEOUT', '60'))
+
+
+class ExecTimeoutError(Exception):
+    pass
+
+
+def _timeout_handler(signum, frame):
+    raise ExecTimeoutError(f"Code execution timed out ({EXEC_TIMEOUT}s)")
 
 
 class Executor:
@@ -159,12 +172,26 @@ class Executor:
         stdout_capture = io.StringIO()
         stderr_capture = io.StringIO()
 
-        # Обновляем df в namespace
+        # Пересоздаём namespace для чистоты между шаблонами
+        self._init_namespace()
         self.namespace['df'] = self.df
 
         try:
-            with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-                exec(code, self.namespace)
+            # Timeout guard via SIGALRM (Unix only, main thread only)
+            using_timeout = (
+                hasattr(signal, 'SIGALRM')
+                and getattr(signal, 'SIGALRM', None) is not None
+                and threading.current_thread() is threading.main_thread()
+            )
+            if using_timeout:
+                signal.signal(signal.SIGALRM, _timeout_handler)
+                signal.alarm(EXEC_TIMEOUT)
+            try:
+                with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+                    exec(code, self.namespace)
+            finally:
+                if using_timeout:
+                    signal.alarm(0)
 
             # If code modified df - save changes
             if 'df' in self.namespace and isinstance(self.namespace['df'], pd.DataFrame):

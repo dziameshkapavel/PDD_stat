@@ -14,9 +14,14 @@ from sklearn.metrics import auc, confusion_matrix, roc_auc_score, roc_curve
 from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
-warnings.filterwarnings('ignore')
-
+warnings.filterwarnings('ignore', message='.*MATPLOTLIB.*')
 from sklearn.calibration import calibration_curve
+
+
+def _check_convergence(model, tag=""):
+    if hasattr(model, 'n_iter_') and len(model.n_iter_) > 0 and model.n_iter_[0] >= model.max_iter:
+        return f"Logistic regression did not converge{tag} — coefficients may be unreliable"
+    return None
 
 
 def net_benefit(y_true, y_pred, threshold):
@@ -296,6 +301,10 @@ if encoding_map:
                 msg = f"Complete separation in {col}={cat} ({events_cat}/{n_cat} events) — OR may be extreme"
                 print(f"     ⚠️ {msg}")
                 output_metrics["warnings"].append(msg)
+            elif n_cat > 0 and (events_cat / n_cat > 0.95 or events_cat / n_cat < 0.05):
+                msg = f"Quasi-complete separation in {col}={cat} ({events_cat}/{n_cat} events) — OR may be extreme"
+                print(f"     ⚠️ {msg}")
+                output_metrics["warnings"].append(msg)
 
 if len(encoded_covs) == 0:
     raise ValueError("No usable predictor columns after encoding — all predictors may be single-category categorical")
@@ -318,7 +327,7 @@ if validation_strategy == "split":
 
 def fit_logistic(pred_list):
     if not pred_list:
-        return None, None, None, []
+        return None, None, None, [], None
     expanded = get_expanded(pred_list)
     X = df_log[expanded].values
     y = df_log[target_col].values
@@ -326,7 +335,8 @@ def fit_logistic(pred_list):
     cw = 'balanced' if use_balanced else None
     model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
     model.fit(X_scaled, y)
-    return model, X_scaled, y, expanded
+    warn = _check_convergence(model)
+    return model, X_scaled, y, expanded, warn
 
 def evaluate_final(pred_list):
     expanded = get_expanded(pred_list)
@@ -379,7 +389,8 @@ def evaluate_final(pred_list):
         model.fit(Xf_scaled, y_all)  # final fit for coefficients
         return model, metrics, fpr, tpr, y_true, y_proba
     else:  # none
-        model, X, y, _ = fit_logistic(pred_list)
+        model, X, y, _, warn = fit_logistic(pred_list)
+        if warn: output_metrics["warnings"].append(warn)
         metrics = calculate_metrics(model, X, y)
         y_proba = model.predict_proba(X)[:, 1]
         fpr, tpr, _ = roc_curve(y, y_proba)
@@ -489,7 +500,7 @@ def hosmer_lemeshow_test(model, X, y, n_groups=10):
     except Exception as e:
         return {"error": str(e)}
 
-def get_model_summary(model, pred_list, X_scaled=None):
+def get_model_summary(model, pred_list, X_scaled=None, warnings_list=None):
     if model is None:
         return []
     coefs = model.coef_[0]
@@ -511,6 +522,8 @@ def get_model_summary(model, pred_list, X_scaled=None):
         from scipy import stats
         se = np.ones(len(coefs) + 1)
         p_values = np.ones(len(coefs) + 1)
+        if warnings_list is not None:
+            warnings_list.append("Singular information matrix — standard errors may be unreliable")
 
     summary = []
     summary.append({
@@ -523,9 +536,9 @@ def get_model_summary(model, pred_list, X_scaled=None):
     })
     for i, pred in enumerate(pred_list):
         coef = coefs[i]
-        odds_ratio = np.exp(coef)
-        ci_lower = np.exp(coef - 1.96 * se[i+1]) if i+1 < len(se) else None
-        ci_upper = np.exp(coef + 1.96 * se[i+1]) if i+1 < len(se) else None
+        odds_ratio = np.exp(np.clip(coef, -700, 700))
+        ci_lower = np.exp(np.clip(coef - 1.96 * se[i+1], -700, 700)) if i+1 < len(se) else None
+        ci_upper = np.exp(np.clip(coef + 1.96 * se[i+1], -700, 700)) if i+1 < len(se) else None
         summary.append({
             "variable": pred,
             "coef": float(coef),
@@ -618,12 +631,13 @@ if regression_type == "uni":
             print(f"**Predictor:** `{pred}`\n")
             print(f"\n**AUC (5-fold CV):** {roc_auc:.4f}  \n---\n")
         else:
-            model, X, y, _ = fit_logistic([pred])
+            model, X, y, _, warn = fit_logistic([pred])
+            if warn: output_metrics["warnings"].append(warn)
             if model is None:
                 print(f"**{pred}:** Failed\n")
                 continue
             print(f"**Predictor:** `{pred}`\n")
-            summary = get_model_summary(model, expanded, X)
+            summary = get_model_summary(model, expanded, X, warnings_list=output_metrics["warnings"])
             print_summary_table(summary)
             metrics = calculate_metrics(model, X, y)
             print(f"\n**AUC:** {metrics['auc']:.4f}  \n---\n")
@@ -681,6 +695,8 @@ elif regression_type in ["multi", "enter"]:
         Xm_test_scaled = scaler.transform(Xm_test)
         model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
         model.fit(Xm_train_scaled, y_train)
+        cwarn = _check_convergence(model, " (backward split train)")
+        if cwarn: output_metrics["warnings"].append(cwarn)
 
         y_pred = model.predict(Xm_test_scaled)
         y_proba = model.predict_proba(Xm_test_scaled)[:, 1]
@@ -703,7 +719,7 @@ elif regression_type in ["multi", "enter"]:
             print(f"  ⚠️ {lw}")
             output_metrics["warnings"].append(lw)
 
-        summary = get_model_summary(model, expanded, Xm_train_scaled)
+        summary = get_model_summary(model, expanded, Xm_train_scaled, warnings_list=output_metrics["warnings"])
         print_summary_table(summary)
         print(f"\n**AUC (test):** {output_metrics['auc']:.4f}")
         print(f"**Accuracy (test):** {output_metrics['accuracy']:.4f}")
@@ -730,6 +746,8 @@ elif regression_type in ["multi", "enter"]:
         output_metrics.update(metrics)
         output_metrics["vif"] = calculate_vif(expanded)
         model.fit(Xm_scaled, y_all)
+        cwarn = _check_convergence(model, " (backward final)")
+        if cwarn: output_metrics["warnings"].append(cwarn)
         output_metrics["hosmer_lemeshow"] = hosmer_lemeshow_test(model, Xm_scaled, y_all)
         output_metrics["equation_html"] = build_equation(model, valid_pred)
         cont_vars = [c for c in valid_pred if c not in encoding_map]
@@ -737,7 +755,7 @@ elif regression_type in ["multi", "enter"]:
         for lw in lin_warnings:
             print(f"  ⚠️ {lw}")
             output_metrics["warnings"].append(lw)
-        summary = get_model_summary(model, expanded, Xm_scaled)
+        summary = get_model_summary(model, expanded, Xm_scaled, warnings_list=output_metrics["warnings"])
         print_summary_table(summary)
         print(f"\n**AUC (5-fold CV):** {output_metrics['auc']:.4f}")
         print(f"**Accuracy (5-fold CV):** {output_metrics['accuracy']:.4f}")
@@ -745,7 +763,8 @@ elif regression_type in ["multi", "enter"]:
         print(f"**Specificity (5-fold CV):** {output_metrics['specificity']:.4f}")
 
     else:  # none
-        model, X, y, expanded = fit_logistic(valid_pred)
+        model, X, y, expanded, warn = fit_logistic(valid_pred)
+        if warn: output_metrics["warnings"].append(warn)
         if model is None:
             raise ValueError("Model fitting failed")
         metrics = calculate_metrics(model, X, y)
@@ -758,7 +777,7 @@ elif regression_type in ["multi", "enter"]:
         for lw in lin_warnings:
             print(f"  ⚠️ {lw}")
             output_metrics["warnings"].append(lw)
-        summary = get_model_summary(model, expanded, X)
+        summary = get_model_summary(model, expanded, X, warnings_list=output_metrics["warnings"])
         print_summary_table(summary)
         print("⚠️ **Metrics on training data (optimistic)**")
         print(f"\n**AUC:** {output_metrics['auc']:.4f}")
@@ -834,10 +853,11 @@ elif regression_type == "forward":
 
         for pred in remaining:
             test_preds = selected + [pred]
-            model, X, y, expanded = fit_logistic(test_preds)
+            model, X, y, expanded, warn = fit_logistic(test_preds)
+            if warn: output_metrics["warnings"].append(warn)
             if model is None:
                 continue
-            summary = get_model_summary(model, expanded, X)
+            summary = get_model_summary(model, expanded, X, warnings_list=output_metrics["warnings"])
             min_pval = 1.0
             for row in summary:
                 v = row['variable']
@@ -875,115 +895,15 @@ elif regression_type == "forward":
         X_hl_scaled = StandardScaler().fit_transform(X_hl)
         hl_model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
         hl_model.fit(X_hl_scaled, y_all)
+        cwarn = _check_convergence(hl_model, " (Hosmer-Lemeshow)")
+        if cwarn: output_metrics["warnings"].append(cwarn)
         output_metrics["hosmer_lemeshow"] = hosmer_lemeshow_test(hl_model, X_hl_scaled, y_all)
 
-        cont_vars = [c for c in selected if c not in encoding_map]
-        lin_warnings = check_logit_linearity(cont_vars)
-        for lw in lin_warnings:
-            print(f"  ⚠️ {lw}")
-            output_metrics["warnings"].append(lw)
 
         # Summary table from full-data model (avoids scaler inconsistency)
-        summary_model, summary_X, summary_y, summary_exp = fit_logistic(selected)
-        summary = get_model_summary(summary_model, summary_exp, summary_X)
-        if summary:
-            print_summary_table(summary)
-
-        auc_val = metrics['auc']
-        label_suffix = " (test)" if validation_strategy == "split" else " (5-fold CV)" if validation_strategy == "cv" else ""
-        print(f"\n**AUC{label_suffix}:** {auc_val:.4f}")
-
-        # ROC
-        timestamp = str(int(time.time()))
-        fig, ax = plt.subplots(1, 1, figsize=(8, 8))
-        roc_auc = auc_val
-        ax.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC (AUC = {roc_auc:.3f})')
-        ax.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', alpha=0.5)
-        ax.set_xlim([0.0, 1.0])
-        ax.set_ylim([0.0, 1.05])
-        ax.set_xlabel('False Positive Rate')
-        ax.set_ylabel('True Positive Rate')
-        ax.set_title('ROC Curve - Forward Selection')
-        ax.legend(loc="lower right")
-        ax.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plot_filename = f"logistic_forward_{timestamp}"
-        save_plot(plot_filename, fig)
-        output_metrics["plots"] = [f"{plot_filename}.png"]
-        print(f"\n![Logistic Forward](/plots/{plot_filename}.png)\n")
-        plot_dca(y_true, [y_proba], ["Model"], "logistic_forward", timestamp)
-        plot_calibration(y_true, [y_proba], ["Model"], "logistic_forward", timestamp)
-        save_predictions_to_df(save_pred_col, selected)
-    else:
-        output_metrics["warnings"].append("No predictors selected")
-
-# ==================== BACKWARD ====================
-elif regression_type == "backward":
-    print("### Backward Elimination\n")
-
-    if validation_strategy == "split":
-        print("⚠️ **Note:** Backward elimination uses all data for variable removal (max power).")
-        print("   Final metrics are computed on the test set.\n")
-    else:
-        print("⚠️ **Note:** Backward elimination uses p-values for variable removal.")
-        print("   P-values in the final model **do not account for the selection process** and may be inflated.")
-        if validation_strategy == "none":
-            print("   Metrics on training data are **optimistic**. Use split or CV.")
-        print("   Consider LASSO or Random Forest for more robust selection.\n")
-
-    current = valid_pred.copy()
-    step = 1
-
-    while len(current) > 1:
-        expanded = get_expanded(current)
-        model, X, y, _ = fit_logistic(current)
-        if model is None:
-            break
-        summary = get_model_summary(model, expanded, X)
-        var_max_p = {}
-        for row in summary:
-            v = row['variable']
-            if v == "Intercept":
-                continue
-            orig = dummy_to_info[v]['original'] if v in dummy_to_info else v
-            p = row['p_value'] if row['p_value'] is not None else 1.0
-            if orig not in var_max_p or p > var_max_p[orig]:
-                var_max_p[orig] = p
-        if not var_max_p:
-            break
-        worst_pred = max(var_max_p, key=var_max_p.get)
-        max_pval = var_max_p[worst_pred]
-        if max_pval > 0.1 and worst_pred:
-            current.remove(worst_pred)
-            output_metrics["model_steps"].append({
-                "step": step, "action": "removed",
-                "variable": worst_pred, "p_value": float(max_pval)
-            })
-            print(f"Step {step}: - {worst_pred} (p={fmt_p(max_pval)})")
-            step += 1
-        else:
-            break
-
-    if current:
-        print(f"\n**Final model:** {', '.join(current)}")
-        model, metrics, fpr, tpr, y_true, y_proba = evaluate_final(current)
-        output_metrics.update(metrics)
-        expanded = get_expanded(current)
-        output_metrics["vif"] = calculate_vif(expanded)
-        output_metrics["equation_html"] = build_equation(model, current)
-
-        # H-L test: fit on all data
-        hl_expanded = get_expanded(current)
-        hl_idx = [encoded_covs.index(e) for e in hl_expanded]
-        X_hl = X_all[:, hl_idx]
-        X_hl_scaled = StandardScaler().fit_transform(X_hl)
-        hl_model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
-        hl_model.fit(X_hl_scaled, y_all)
-        output_metrics["hosmer_lemeshow"] = hosmer_lemeshow_test(hl_model, X_hl_scaled, y_all)
-
-        # Summary table from full-data model (avoids scaler inconsistency)
-        summary_model, summary_X, summary_y, summary_exp = fit_logistic(current)
-        summary = get_model_summary(summary_model, summary_exp, summary_X)
+        summary_model, summary_X, summary_y, summary_exp, warn = fit_logistic(current)
+        if warn: output_metrics["warnings"].append(warn)
+        summary = get_model_summary(summary_model, summary_exp, summary_X, warnings_list=output_metrics["warnings"])
         if summary:
             print_summary_table(summary)
 
@@ -1043,8 +963,9 @@ def build_coef_list(summary_rows):
 
 if regression_type in ["multi", "enter"]:
     try:
-        summary_model, summary_X, summary_y, summary_exp = fit_logistic(valid_pred)
-        summary = get_model_summary(summary_model, summary_exp, summary_X)
+        summary_model, summary_X, summary_y, summary_exp, warn = fit_logistic(valid_pred)
+        if warn: output_metrics["warnings"].append(warn)
+        summary = get_model_summary(summary_model, summary_exp, summary_X, warnings_list=output_metrics["warnings"])
         if summary:
             output_metrics["coefficients"] = build_coef_list(summary)
             output_metrics["significant_predictors"] = [
@@ -1056,8 +977,9 @@ if regression_type in ["multi", "enter"]:
 
 if regression_type == "forward" and 'selected' in dir() and selected:
     try:
-        model, X, y, expanded = fit_logistic(selected)
-        summary = get_model_summary(model, expanded, X)
+        model, X, y, expanded, warn = fit_logistic(selected)
+        if warn: output_metrics["warnings"].append(warn)
+        summary = get_model_summary(model, expanded, X, warnings_list=output_metrics["warnings"])
         if summary:
             output_metrics["coefficients"] = build_coef_list(summary)
             output_metrics["significant_predictors"] = [
@@ -1069,8 +991,9 @@ if regression_type == "forward" and 'selected' in dir() and selected:
 
 if regression_type == "backward" and 'current' in dir() and current:
     try:
-        model, X, y, expanded = fit_logistic(current)
-        summary = get_model_summary(model, expanded, X)
+        model, X, y, expanded, warn = fit_logistic(current)
+        if warn: output_metrics["warnings"].append(warn)
+        summary = get_model_summary(model, expanded, X, warnings_list=output_metrics["warnings"])
         if summary:
             output_metrics["coefficients"] = build_coef_list(summary)
             output_metrics["significant_predictors"] = [
@@ -1084,7 +1007,8 @@ if regression_type == "uni":
     try:
         univariate_results = []
         for pred in valid_pred:
-            model_uni, X_uni, y_uni, _ = fit_logistic([pred])
+            model_uni, X_uni, y_uni, _, warn = fit_logistic([pred])
+            if warn: output_metrics["warnings"].append(warn)
             if model_uni is not None:
                 y_proba = model_uni.predict_proba(X_uni)[:, 1]
                 auc_uni = roc_auc_score(y_uni, y_proba)

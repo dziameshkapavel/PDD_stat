@@ -130,6 +130,8 @@ if is_survival:
     
     cph = CoxPHFitter()
     cph.fit(df_cox, duration_col=time_col, event_col=event_col)
+    if hasattr(cph, 'converged_') and not cph.converged_:
+        print("⚠️ Cox model did not converge — HR estimates may be unreliable")
     
     print("### Cox Model with Spline\n")
     print("| Segment | Knot | HR | 95% CI | p-value |")
@@ -156,9 +158,9 @@ if is_survival:
             cov_vs = cph.variance_matrix_.loc[variable, col]
             var_sum = var_v + var_s + 2 * cov_vs
             se_sum = np.sqrt(var_sum)
-            combined_hr = float(np.exp(beta_v + beta_s))
-            ci_combined_low = float(np.exp(beta_v + beta_s - 1.96 * se_sum))
-            ci_combined_high = float(np.exp(beta_v + beta_s + 1.96 * se_sum))
+            combined_hr = float(np.exp(np.clip(beta_v + beta_s, -700, 700)))
+            ci_combined_low = float(np.exp(np.clip(beta_v + beta_s - 1.96 * se_sum, -700, 700)))
+            ci_combined_high = float(np.exp(np.clip(beta_v + beta_s + 1.96 * se_sum, -700, 700)))
             print(f"| Above {knot_labels[i]} | {k:.1f} | {combined_hr:.3f} | {ci_combined_low:.3f}-{ci_combined_high:.3f} | {fmt_p(p)} |")
     
     # Тест нелинейности (LRT: полная модель vs модель без сплайнов)
@@ -167,6 +169,8 @@ if is_survival:
             null_cph = CoxPHFitter()
             null_cph.fit(df_cox[[time_col, event_col, variable] + covariates], 
                         duration_col=time_col, event_col=event_col)
+            if hasattr(null_cph, 'converged_') and not null_cph.converged_:
+                print("⚠️ Null Cox model did not converge — LRT may be unreliable")
             
             ll_full = cph.log_likelihood_
             ll_null = null_cph.log_likelihood_
@@ -270,14 +274,14 @@ else:
     p_values = 2 * (1 - scipy_stats.norm.cdf(np.abs(z_scores)))
     
     # coefs[0] = variable (linear effect)
-    base_or = float(np.exp(coefs[0]))
+    base_or = float(np.exp(np.clip(coefs[0], -700, 700)))
     base_p = float(p_values[0])
     print(f"| Below first knot | — | {base_or:.3f} | — | {fmt_p(base_p)} |")
     
     for i, k in enumerate(knots):
         col_idx = i + 1  # coefs[1] = spline_1, coefs[2] = spline_2, ...
         if col_idx < len(coefs):
-            or_val = float(np.exp(coefs[col_idx]))
+            or_val = float(np.exp(np.clip(coefs[col_idx], -700, 700)))
             p_val = float(p_values[col_idx])
             combined_or = base_or * or_val
             print(f"| Above {knot_labels[i]} | {k:.1f} | {combined_or:.3f} | — | {fmt_p(p_val)} |")

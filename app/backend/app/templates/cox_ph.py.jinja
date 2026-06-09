@@ -196,6 +196,10 @@ if encoding_map:
                     output_metrics["warnings"].append(msg)
             if n_cat > 0 and (events_cat == 0 or events_cat == n_cat):
                 msg = f"Complete separation in {col}={cat} ({events_cat}/{n_cat} events) — HR may be extreme"
+                print(f"     🛑 {msg}")
+                output_metrics["warnings"].append(msg)
+            elif n_cat > 0 and (events_cat / n_cat > 0.95 or events_cat / n_cat < 0.05):
+                msg = f"Quasi-complete separation in {col}={cat} ({events_cat}/{n_cat} events) — HR may be extreme"
                 print(f"     ⚠️ {msg}")
                 output_metrics["warnings"].append(msg)
     print()
