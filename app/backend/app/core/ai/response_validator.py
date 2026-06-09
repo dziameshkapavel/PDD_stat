@@ -601,7 +601,7 @@ class ResponseValidator:
             pmids_checked = len(set(self._extract_pmids(response)))
             if pmids_checked > 0:
                 citations_checked = pmids_checked
-                citations_matched = pmids_checked - len(citation_errors)
+                citations_matched = max(0, pmids_checked - len(citation_errors))
             errors.extend(citation_errors)
 
         return ValidationResult(
