@@ -9,6 +9,38 @@ from scipy import stats
 import json
 from pathlib import Path
 
+def adjust_p_values(p_values):
+    n = len(p_values)
+    if n == 0:
+        return [], [], []
+    p_bonf = [min(1.0, p * n) for p in p_values]
+    
+    indexed_p = sorted(enumerate(p_values), key=lambda x: x[1])
+    p_holm_sorted = []
+    max_p = 0.0
+    for rank, (orig_idx, p) in enumerate(indexed_p):
+        p_adj = p * (n - rank)
+        max_p = max(max_p, p_adj)
+        p_holm_sorted.append((orig_idx, min(1.0, max_p)))
+    p_holm = [0.0] * n
+    for orig_idx, val in p_holm_sorted:
+        p_holm[orig_idx] = val
+        
+    indexed_p_desc = sorted(enumerate(p_values), key=lambda x: x[1], reverse=True)
+    p_bh_sorted = []
+    min_p = 1.0
+    for rank, (orig_idx, p) in enumerate(indexed_p_desc):
+        curr_rank = n - rank
+        p_adj = p * n / curr_rank
+        min_p = min(min_p, p_adj)
+        p_bh_sorted.append((orig_idx, min(1.0, min_p)))
+    p_bh = [0.0] * n
+    for orig_idx, val in p_bh_sorted:
+        p_bh[orig_idx] = val
+        
+    return p_bonf, p_holm, p_bh
+
+
 var_labels = {}
 try:
     labels_path = Path(project_path) / "state" / "variable_labels.json"
@@ -64,49 +96,72 @@ plot_name = f"correlation_{timestamp}"
 save_plot(plot_name, fig)
 print(f"![Correlation Matrix](/plots/{plot_name}.png)\n")
 
-# Таблица сильных корреляций
-print(f"### Strong Correlations (|r| > {threshold})\n")
-
 n_total_pairs = len(valid_vars) * (len(valid_vars) - 1) // 2
-alpha_corrected = 0.05 / n_total_pairs if n_total_pairs > 0 else 0.05
-print(f"*{n_total_pairs} pairwise comparisons. Bonferroni-corrected α = {alpha_corrected:.6f}*\n")
 
-pairs = []
+# Compute p-values for all pairs of variables
+all_pairs = []
 for i in range(len(valid_vars)):
     for j in range(i+1, len(valid_vars)):
-        r = corr_matrix.iloc[i, j]
-        if abs(r) >= threshold:
-            try:
-                mask = df[valid_vars[i]].notna() & df[valid_vars[j]].notna()
-                if method == "pearson":
-                    _, p_val = stats.pearsonr(df.loc[mask, valid_vars[i]], df.loc[mask, valid_vars[j]])
-                elif method == "spearman":
-                    _, p_val = stats.spearmanr(df.loc[mask, valid_vars[i]], df.loc[mask, valid_vars[j]])
-                else:
-                    _, p_val = stats.kendalltau(df.loc[mask, valid_vars[i]], df.loc[mask, valid_vars[j]])
-            except:
-                p_val = 1.0
-            pairs.append((valid_vars[i], valid_vars[j], r, p_val))
+        v1, v2 = valid_vars[i], valid_vars[j]
+        r = corr_matrix.loc[v1, v2]
+        try:
+            mask = df[v1].notna() & df[v2].notna()
+            if method == "pearson":
+                _, p_val = stats.pearsonr(df.loc[mask, v1], df.loc[mask, v2])
+            elif method == "spearman":
+                _, p_val = stats.spearmanr(df.loc[mask, v1], df.loc[mask, v2])
+            else:
+                _, p_val = stats.kendalltau(df.loc[mask, v1], df.loc[mask, v2])
+        except:
+            p_val = 1.0
+        all_pairs.append((v1, v2, r, p_val))
 
-pairs.sort(key=lambda x: abs(x[2]), reverse=True)
-
-if pairs:
-    print("| Variable 1 | Variable 2 | r | p-value | Corrected p | Significant (Bonferroni) |")
-    print("|------------|------------|-----|---------|-------------|-------------------------|")
-    for v1, v2, r, p in pairs:
-        p_corr = min(p * n_total_pairs, 1.0)
-        sig = "Yes **" if p_corr < 0.05 else "No"
-        print(f"| {v1} | {v2} | {r:.3f} | {fmt_p(p)} | {fmt_p(p_corr)} | {sig} |")
-    print()
+# Perform adjustments
+if all_pairs:
+    raw_ps = [x[3] for x in all_pairs]
+    p_bonf, p_holm, p_bh = adjust_p_values(raw_ps)
+    
+    adjusted_pairs = []
+    for idx, (v1, v2, r, p) in enumerate(all_pairs):
+        adjusted_pairs.append({
+            "var1": v1, "var2": v2, "r": r, "p_value": p,
+            "p_bonferroni": p_bonf[idx],
+            "p_holm": p_holm[idx],
+            "p_bh": p_bh[idx],
+            "significant": bool(p_holm[idx] < 0.05)
+        })
+    
+    # Sort by absolute correlation coefficient descending
+    adjusted_pairs.sort(key=lambda x: abs(x["r"]), reverse=True)
 else:
-    print("*No strong correlations found above threshold.*\n")
+    adjusted_pairs = []
 
-n_strong = len(pairs)
+# Filter for strong correlations
+strong_pairs = [p for p in adjusted_pairs if abs(p["r"]) >= threshold]
+n_strong = len(strong_pairs)
+
+print(f"### Correlation Pairs (|r| > {threshold})\n")
+print(f"*{n_total_pairs} pairwise comparisons. Multiple comparison corrections computed.*\n")
+
+display_pairs = strong_pairs if strong_pairs else adjusted_pairs[:10]
+
+if display_pairs:
+    print("| Variable 1 | Variable 2 | r | p-value | p (Bonf) | p (Holm) | p (FDR/BH) | Significant? |")
+    print("|------------|------------|-----|---------|----------|----------|------------|--------------|")
+    for p in display_pairs:
+        sig_str = "Yes **" if p["p_holm"] < 0.05 else "No"
+        print(f"| {p['var1']} | {p['var2']} | {p['r']:.3f} | {fmt_p(p['p_value'])} | {fmt_p(p['p_bonferroni'])} | {fmt_p(p['p_holm'])} | {fmt_p(p['p_bh'])} | {sig_str} |")
+    print()
+    if not strong_pairs:
+        print("*No correlations exceeded the threshold. Showing top 10 strongest correlation pairs as reference.*\n")
+else:
+    print("*No correlations found.*\n")
+
 print(f"**Summary:** {n_strong}/{n_total_pairs} pairs exceed |r| > {threshold}")
 
-if pairs:
-    top = pairs[0]
-    print(f"**Strongest correlation:** {top[0]} vs {top[1]} (r={top[2]:.3f}, p={top[3]:.4f})")
+if adjusted_pairs:
+    top = adjusted_pairs[0]
+    print(f"**Strongest correlation:** {top['var1']} vs {top['var2']} (r={top['r']:.3f}, p={top['p_value']:.4f})")
 
 print("\n---")
 print("**Correlation analysis complete**")
@@ -117,13 +172,16 @@ output_metrics = {
     "method": method,
     "n_variables": len(valid_vars),
     "n_total_pairs": n_total_pairs,
-    "n_strong_pairs": len(pairs),
+    "n_strong_pairs": n_strong,
     "threshold": threshold,
-    "strongest_r": float(pairs[0][2]) if pairs else None,
-    "strongest_pair": f"{pairs[0][0]} vs {pairs[0][1]}" if pairs else None,
+    "strongest_r": float(adjusted_pairs[0]["r"]) if adjusted_pairs else None,
+    "strongest_pair": f"{adjusted_pairs[0]['var1']} vs {adjusted_pairs[0]['var2']}" if adjusted_pairs else None,
     "pairs": [
-        {"var1": v1, "var2": v2, "r": float(r), "p_value": float(p)}
-        for v1, v2, r, p in pairs[:10]
+        {
+            "var1": p["var1"], "var2": p["var2"], "r": float(p["r"]), "p_value": float(p["p_value"]),
+            "p_bonferroni": float(p["p_bonferroni"]), "p_holm": float(p["p_holm"]), "p_bh": float(p["p_bh"])
+        }
+        for p in adjusted_pairs[:20]
     ]
 }
 

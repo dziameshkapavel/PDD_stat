@@ -468,6 +468,17 @@ def calculate_metrics(model, X, y):
 def hosmer_lemeshow_test(model, X, y, n_groups=10):
     try:
         y_proba = model.predict_proba(X)[:, 1]
+        n_unique_probas = len(np.unique(y_proba))
+        if n_unique_probas < 3:
+            return {"error": "Too few unique predicted probabilities to compute Hosmer-Lemeshow test"}
+        
+        # Адаптивно снижаем n_groups для устойчивости dof (g - 2 >= 1)
+        n_groups = min(n_groups, len(y) // 5)
+        n_groups = min(n_groups, n_unique_probas - 1)
+        
+        if n_groups < 3:
+            return {"error": "Insufficient groups/data to compute Hosmer-Lemeshow test"}
+
         sorted_idx = np.argsort(y_proba)
         sorted_y = y[sorted_idx]
         sorted_proba = y_proba[sorted_idx]
@@ -512,7 +523,8 @@ def get_model_summary(model, pred_list, X_scaled=None, warnings_list=None):
     try:
         y_proba = model.predict_proba(X_scaled)[:, 1]
         W = np.diag(y_proba * (1 - y_proba))
-        cov_matrix = np.linalg.inv(X_with_intercept.T @ W @ X_with_intercept)
+        # Используем псевдообратную матрицу pinv для защиты от сингулярности
+        cov_matrix = np.linalg.pinv(X_with_intercept.T @ W @ X_with_intercept)
         se = np.sqrt(np.diag(cov_matrix))
         all_coefs = np.concatenate([[intercept], coefs])
         z_scores = all_coefs / se

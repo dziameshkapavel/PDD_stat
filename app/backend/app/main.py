@@ -47,7 +47,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"500 on {request.method} {request.url.path}: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"success": False, "error": str(exc)[:500], "traceback": traceback.format_exc()[:2000]}
+        content={"success": False, "error": "Internal server error"}
     )
 
 # Путь к фронтенду (на уровень выше backend/)
@@ -108,7 +108,9 @@ async def serve_frontend(path: str, request: Request):
         return JSONResponse(content={"detail": "Not Found"}, status_code=404)
 
     # Проверяем файл
-    file_path = frontend_path / path
+    file_path = (frontend_path / path).resolve()
+    if not str(file_path).startswith(str(frontend_path.resolve())):
+        return JSONResponse(content={"detail": "Not Found"}, status_code=404)
     if file_path.exists() and file_path.is_file():
         # Определяем MIME тип
         ext = file_path.suffix.lower()

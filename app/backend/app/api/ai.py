@@ -35,7 +35,7 @@ class ConfigRequest(BaseModel):
     ollama_url: str | None = "http://localhost:11434"
     ollama_model: str | None = "llama3:8b"
     groq_api_key: str | None = ""
-    groq_model: str | None = "llama3-70b-8192"
+    groq_model: str | None = "llama-3.3-70b-versatile"
     pubmed_api_key: str | None = ""
     pubmed_email: str | None = "app@pdd-stat.local"
     temperature: float | None = 0.7
@@ -90,25 +90,34 @@ def get_context_path(loader) -> Path:
 def load_config(loader) -> dict[str, Any]:
     config_path = get_config_path(loader)
     if config_path.exists():
-        with open(config_path, encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(config_path, encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
     return ai_clients.AIClientFactory.get_default_config()
 
 def load_context(loader) -> dict[str, Any]:
     context_path = get_context_path(loader)
     if context_path.exists():
-        with open(context_path, encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(context_path, encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
     return {"description": "", "aim": "", "notes": ""}
 
 def load_history(loader, limit: int = 5) -> list[dict[str, Any]]:
     history_path = loader.project_path / "state" / "analysis_history.json"
     if not history_path.exists():
         return []
-    with open(history_path, encoding='utf-8') as f:
-        data = json.load(f)
-    if isinstance(data, list):
-        return data[:limit]
+    try:
+        with open(history_path, encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data[:limit]
+    except Exception:
+        pass
     return []
 
 
@@ -181,8 +190,10 @@ async def test_connection(req: dict):
         pubmed_key = req.get('pubmed_api_key', pubmed_cfg.get('api_key', ''))
         from app.core.pubmed_api import PubMedAPI
         pubmed = PubMedAPI(api_key=pubmed_key)
-        pmids = pubmed.search('test', max_results=1, years=1)
-        return {"status": "ok" if pmids is not None else "error", "message": f"PubMed API responded: {len(pmids)} results"}
+        pmids = await pubmed.search('test', max_results=1, years=1)
+        count = len(pmids) if pmids is not None else 0
+        status = "ok" if pmids is not None else "error"
+        return {"status": status, "message": f"PubMed API responded: {count} results"}
     try:
         client = ai_clients.AIClientFactory.create(test_config)
         result = await client.test_connection()
@@ -262,13 +273,13 @@ async def pubmed_search(req: PubMedSearchRequest):
     all_pmids: list[str] = []
     for variant in variants[:5]:
         try:
-            pmids = pubmed.search(variant, max_results=20, years=req.years)
+            pmids = await pubmed.search(variant, max_results=20, years=req.years)
             all_pmids.extend(pmids)
         except Exception:
             pass
 
     unique_pmids = list(dict.fromkeys(all_pmids))[:req.max_results]
-    new_articles = pubmed.fetch_details(unique_pmids) if unique_pmids else []
+    new_articles = await pubmed.fetch_details(unique_pmids) if unique_pmids else []
 
     # 3. Append or replace in context
     existing = load_context(loader).get('pubmed_articles', [])
@@ -409,6 +420,8 @@ async def chat(req: ChatRequest):
         context += f"\n\n## Project\n{project_context['description'][:500]}"
     if project_context.get('aim'):
         context += f"\nAim: {project_context['aim'][:300]}"
+    if project_context.get('notes'):
+        context += f"\nNotes: {project_context['notes'][:500]}"
 
     full_prompt = system_prompt + "\n\n" + context
 
@@ -518,6 +531,8 @@ async def suggest_pipeline():
         prompt += f"Project: {project_context['description'][:300]}\n"
     if project_context.get('aim'):
         prompt += f"Aim: {project_context['aim'][:300]}\n"
+    if project_context.get('notes'):
+        prompt += f"Notes: {project_context['notes'][:300]}\n"
 
     prompt += "\nAvailable templates:\n"
     from app.core.ai.tools import TEMPLATE_DESCRIPTIONS

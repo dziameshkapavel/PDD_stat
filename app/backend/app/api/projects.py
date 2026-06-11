@@ -96,7 +96,8 @@ async def upload_file(file: UploadFile = File(...)):
     pm.open_project(name)
     data_folder = pm.current_project_path / "data"
     data_folder.mkdir(parents=True, exist_ok=True)
-    file_path = data_folder / file.filename
+    safe_filename = Path(file.filename).name
+    file_path = data_folder / safe_filename
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
@@ -213,7 +214,10 @@ async def delete_column(req: ColumnDeleteRequest):
 @router.delete("/{name}")
 async def delete_project(name: str):
     pm = ProjectManager()
-    project_path = pm.base_path / name
+    safe_name = pm._sanitize_project_name(name)
+    project_path = (pm.base_path / safe_name).resolve()
+    if not str(project_path).startswith(str(pm.base_path.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid project name")
     if not project_path.exists():
         raise HTTPException(status_code=404, detail="Project not found")
 

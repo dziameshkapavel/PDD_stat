@@ -12,6 +12,46 @@ import time
 import warnings
 warnings.filterwarnings('ignore')
 
+def adjust_p_values(p_values):
+    """
+    Computes Bonferroni, Holm, and Benjamini-Hochberg (BH) adjusted p-values.
+    Returns lists of adjusted p-values.
+    """
+    n = len(p_values)
+    if n == 0:
+        return [], [], []
+    
+    # Bonferroni
+    p_bonf = [min(1.0, p * n) for p in p_values]
+    
+    # Holm
+    indexed_p = sorted(enumerate(p_values), key=lambda x: x[1])
+    p_holm_sorted = []
+    max_p = 0.0
+    for rank, (orig_idx, p) in enumerate(indexed_p):
+        p_adj = p * (n - rank)
+        max_p = max(max_p, p_adj)
+        p_holm_sorted.append((orig_idx, min(1.0, max_p)))
+    p_holm = [0.0] * n
+    for orig_idx, val in p_holm_sorted:
+        p_holm[orig_idx] = val
+        
+    # Benjamini-Hochberg (BH) / FDR
+    indexed_p_desc = sorted(enumerate(p_values), key=lambda x: x[1], reverse=True)
+    p_bh_sorted = []
+    min_p = 1.0
+    for rank, (orig_idx, p) in enumerate(indexed_p_desc):
+        curr_rank = n - rank
+        p_adj = p * n / curr_rank
+        min_p = min(min_p, p_adj)
+        p_bh_sorted.append((orig_idx, min(1.0, min_p)))
+    p_bh = [0.0] * n
+    for orig_idx, val in p_bh_sorted:
+        p_bh[orig_idx] = val
+        
+    return p_bonf, p_holm, p_bh
+
+
 print("## Kaplan-Meier Analysis\n")
 
 from pathlib import Path
@@ -224,6 +264,8 @@ if stratify_col:
                 if n_comp > 1:
                     print(f"  *{n_comp} pairwise comparisons. Multiple comparisons inflate Type I error.*\n")
                 
+                raw_ps = []
+                comparisons = []
                 for g1, g2 in combinations(unique_groups, 2):
                     try:
                         g1_data = stratum_df[stratum_df[group_col].astype(str) == g1]
@@ -236,13 +278,31 @@ if stratify_col:
                         
                         res = logrank_test(t1, t2, e1, e2)
                         p_val = float(res.p_value)
-                        
-                        stratum_metrics["logrank_pairwise"].append({
-                            "group1": str(g1), "group2": str(g2),
-                            "p_value": p_val
-                        })
+                        raw_ps.append(p_val)
+                        comparisons.append((g1, g2))
                     except:
                         pass
+                
+                if raw_ps:
+                    p_bonf, p_holm, p_bh = adjust_p_values(raw_ps)
+                    print("  | Comparison | p-value | p (Bonf) | p (Holm) | p (FDR/BH) | Significant? |")
+                    print("  |------------|---------|----------|----------|------------|--------------|")
+                    for idx, (g1, g2) in enumerate(comparisons):
+                        p_raw = raw_ps[idx]
+                        pb = p_bonf[idx]
+                        ph = p_holm[idx]
+                        pf = p_bh[idx]
+                        sig_str = "Yes **" if ph < 0.05 else "No"
+                        print(f"  | {g1} vs {g2} | {fmt_p(p_raw)} | {fmt_p(pb)} | {fmt_p(ph)} | {fmt_p(pf)} | {sig_str} |")
+                        stratum_metrics["logrank_pairwise"].append({
+                            "group1": str(g1), "group2": str(g2),
+                            "p_value": p_raw,
+                            "p_bonferroni": pb,
+                            "p_holm": ph,
+                            "p_bh": pf,
+                            "significant": bool(ph < 0.05)
+                        })
+
             
             # Number at Risk & S(t) per stratum/group
             if plot_type == 'survival':
@@ -414,6 +474,8 @@ else:
             if n_comp > 1:
                 print(f"\n*{n_comp} pairwise comparisons. Multiple comparisons inflate Type I error.*\n")
             
+            raw_ps = []
+            comparisons = []
             for g1, g2 in combinations(unique_groups, 2):
                 try:
                     g1_data = df_km[df_km[group_col].astype(str) == g1]
@@ -426,25 +488,30 @@ else:
                     
                     res = logrank_test(t1, t2, e1, e2)
                     p_val = float(res.p_value)
-                    
-                    output_metrics["logrank_pairwise"].append({
-                        "group1": str(g1), "group2": str(g2),
-                        "p_value": p_val, "significant": p_val < 0.05
-                    })
-                    
-                    sig = "**" if p_val < 0.05 else ""
-                    print(f"  {g1} vs {g2}: p = {fmt_p(p_val)} {sig}")
+                    raw_ps.append(p_val)
+                    comparisons.append((g1, g2))
                 except Exception as ex:
                     print(f"  {g1} vs {g2}: error - {ex}")
-        
-        if output_metrics["logrank_pairwise"]:
-            print("\n| Comparison | p-value | Significant |")
-            print("|------------|---------|-------------|")
-            for pw in output_metrics["logrank_pairwise"]:
-                sig_icon = "Yes **" if pw["significant"] else "No"
-                print(f"| {pw['group1']} vs {pw['group2']} | {fmt_p(pw['p_value'])} | {sig_icon} |")
-            if n_comp > 1:
-                print(f"\n*Bonferroni-corrected α = {0.05/n_comp:.4f}. Consider adjusted p-values for confirmatory inference.*")
+            
+            if raw_ps:
+                p_bonf, p_holm, p_bh = adjust_p_values(raw_ps)
+                print("\n| Comparison | p-value | p (Bonf) | p (Holm) | p (FDR/BH) | Significant? |")
+                print("|------------|---------|----------|----------|------------|--------------|")
+                for idx, (g1, g2) in enumerate(comparisons):
+                    p_raw = raw_ps[idx]
+                    pb = p_bonf[idx]
+                    ph = p_holm[idx]
+                    pf = p_bh[idx]
+                    sig_str = "Yes **" if ph < 0.05 else "No"
+                    print(f"| {g1} vs {g2} | {fmt_p(p_raw)} | {fmt_p(pb)} | {fmt_p(ph)} | {fmt_p(pf)} | {sig_str} |")
+                    output_metrics["logrank_pairwise"].append({
+                        "group1": str(g1), "group2": str(g2),
+                        "p_value": p_raw,
+                        "p_bonferroni": pb,
+                        "p_holm": ph,
+                        "p_bh": pf,
+                        "significant": bool(ph < 0.05)
+                    })
         
         # Number at Risk & S(t)
         if plot_type == 'survival' and total_n > 0:

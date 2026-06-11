@@ -77,7 +77,36 @@ export class ReportsPanel {
                 
                 <button class="btn-primary" id="generateAIReportBtn" style="width:100%;margin-top:8px;background:var(--accent-green);">Generate AI Report</button>
                 
-                <div id="reportStatus" style="font-size:13px;color:var(--text-muted);text-align:center;"></div>
+                <hr style="border:0;border-top:1px solid var(--border-primary);margin:12px 0;">
+                
+                <h3 style="font-size:16px;font-weight:600;color:var(--text-primary);">Generate Scientific Draft</h3>
+                
+                <div class="form-group">
+                    <label class="form-label">Draft title</label>
+                    <input type="text" class="form-input draft-title" value="Scientific Article Draft" style="width:100%;">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Section to write</label>
+                    <select class="form-input draft-section" style="width:100%;">
+                        <option value="all">Full Draft (Methods + Results + Discussion)</option>
+                        <option value="methods">Methods only</option>
+                        <option value="results">Results only</option>
+                        <option value="discussion">Discussion only</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Draft language</label>
+                    <select class="form-input draft-language" style="width:100%;">
+                        <option value="Russian">Russian (Русский)</option>
+                        <option value="English">English</option>
+                    </select>
+                </div>
+                
+                <button class="btn-primary" id="generateDraftBtn" style="width:100%;background:var(--accent-purple);">Generate Article Draft</button>
+                
+                <div id="reportStatus" style="font-size:13px;color:var(--text-muted);text-align:center;margin-top:12px;"></div>
             </div>
         `;
         
@@ -104,6 +133,7 @@ export class ReportsPanel {
         
         this.container.querySelector('#generateReportBtn').addEventListener('click', () => this._generateReport());
         this.container.querySelector('#generateAIReportBtn').addEventListener('click', () => this._generateAIReport());
+        this.container.querySelector('#generateDraftBtn').addEventListener('click', () => this._generateDraft());
     }
     
     async _loadHistory() {
@@ -264,6 +294,86 @@ export class ReportsPanel {
             
             if (result.status === 'generated') {
                 statusDiv.innerHTML = `AI Report generated: <a href="${API_BASE}/analysis/report/download/${result.filename}" style="color:var(--accent-blue);">${result.filename}</a>`;
+                statusDiv.style.color = 'var(--accent-green)';
+            }
+        } catch (e) {
+            statusDiv.textContent = `Error: ${e.message}`;
+            statusDiv.style.color = 'var(--accent-red)';
+        } finally {
+            generateBtn.disabled = false;
+        }
+    }
+
+    async _generateDraft() {
+        const modeRadio = this.container.querySelector('.report-mode:checked');
+        const mode = modeRadio ? modeRadio.value : 'all';
+        
+        const selectedIds = [];
+        if (mode === 'selected') {
+            this.container.querySelectorAll('.analysis-check:checked').forEach(cb => {
+                selectedIds.push(cb.value);
+            });
+            if (selectedIds.length === 0) {
+                const statusDiv = this.container.querySelector('#reportStatus');
+                statusDiv.textContent = 'Error: Please select at least one analysis.';
+                statusDiv.style.color = 'var(--accent-red)';
+                return;
+            }
+        }
+        
+        const title = this.container.querySelector('.draft-title')?.value || 'Scientific Article Draft';
+        const section = this.container.querySelector('.draft-section')?.value || 'all';
+        const language = this.container.querySelector('.draft-language')?.value || 'Russian';
+        
+        const statusDiv = this.container.querySelector('#reportStatus');
+        const generateBtn = this.container.querySelector('#generateDraftBtn');
+        
+        statusDiv.textContent = 'Checking AI configuration...';
+        statusDiv.style.color = 'var(--text-muted)';
+        generateBtn.disabled = true;
+        
+        try {
+            const configResp = await fetch(`${API_BASE}/ai/config`);
+            if (!configResp.ok) throw new Error('Failed to check AI configuration');
+            const configData = await configResp.json();
+            const cfg = configData.config || {};
+            const provider = cfg.provider || '';
+            if (provider === 'groq' && (!cfg.groq || !cfg.groq.api_key)) {
+                throw new Error('AI not configured. Configure AI in Chat Settings (Groq API key missing).');
+            }
+            if (provider === 'ollama' && (!cfg.ollama || !cfg.ollama.url)) {
+                throw new Error('AI not configured. Configure AI in Chat Settings (Ollama URL missing).');
+            }
+            if (!provider) {
+                throw new Error('AI not configured. Please configure AI in Chat Settings.');
+            }
+            
+            statusDiv.textContent = 'Draft is being generated...';
+            
+            const response = await fetch(`${API_BASE}/analysis/report/draft-article`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: title,
+                    analyses: mode,
+                    selected_ids: selectedIds,
+                    language: language,
+                    section: section
+                })
+            });
+            
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.detail || `HTTP ${response.status}: ${await response.text().catch(() => '')}`);
+            }
+            
+            const result = await response.json();
+            
+            if (result.status === 'generated') {
+                const checkNotice = result.validation_passed ? 
+                    '<span style="color:var(--accent-green); font-size:12px; display:block; margin-top:4px;">✓ Verified by ResponseValidator</span>' : 
+                    '<span style="color:var(--accent-orange); font-size:12px; display:block; margin-top:4px;">⚠ Some metrics could not be verified automatically</span>';
+                statusDiv.innerHTML = `Draft generated: <a href="${API_BASE}/analysis/report/download/${result.filename}" style="color:var(--accent-blue);">${result.filename}</a>${checkNotice}`;
                 statusDiv.style.color = 'var(--accent-green)';
             }
         } catch (e) {

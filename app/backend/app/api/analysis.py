@@ -60,10 +60,11 @@ def _save_to_history(project_path, template, params, result):
         "output_preview": result.get("output", "")[:2000]  # первые 2000 символов
     }
 
-    # Добавляем в начало списка
+    # Добавляем в начало списка и ограничиваем длину до 200 записей
     history.insert(0, record)
+    history = history[:200]
 
-    # Сохраняем (без ограничения) — sanitize NaN/Inf to None
+    # Сохраняем — sanitize NaN/Inf to None
     with open(history_path, 'w', encoding='utf-8') as f:
         json.dump(_sanitize_json(history), f, indent=2, ensure_ascii=False, default=str)
 
@@ -121,7 +122,10 @@ async def upload_model(file: UploadFile = File(...)):
     # Save uploaded file
     models_dir = loader.project_path / "models"
     models_dir.mkdir(parents=True, exist_ok=True)
-    file_path = models_dir / file.filename
+    safe_filename = Path(file.filename).name
+    if not (safe_filename.endswith('.pkl') or safe_filename.endswith('.joblib')):
+        raise HTTPException(status_code=400, detail="Only .pkl and .joblib files are allowed")
+    file_path = models_dir / safe_filename
 
     with open(file_path, "wb") as f:
         content = await file.read()
@@ -1106,15 +1110,283 @@ async def generate_ai_report(req: AIReportRequest):
         "analyses_count": analyses_count
     }
 
+class ArticleDraftRequest(BaseModel):
+    title: str = "Scientific Article Draft"
+    analyses: str = "all"
+    selected_ids: list[str] = []
+    language: str = "Russian"
+    section: str = "all"  # all, methods, results, discussion
+
+
+@router.post("/report/draft-article")
+async def generate_article_draft(req: ArticleDraftRequest):
+    """Генерирует драфт научной статьи в DOCX на основе истории анализов и найденной литературы PubMed"""
+    import re
+    from datetime import datetime
+    import json
+    from docx import Document
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt, RGBColor
+
+    loader = get_loader()
+
+    # 1. Check AI config
+    from app.api.ai import load_config as load_ai_config
+    from app.api.ai import load_context
+    from app.core.ai.ai_clients import AIClientFactory
+    from app.core.ai.context_builder import ContextBuilder
+    from app.core.ai.response_validator import ResponseValidator
+
+    ai_config = load_ai_config(loader)
+    provider = ai_config.get('provider', '')
+    if not provider:
+        raise HTTPException(status_code=400, detail="AI not configured. Please configure AI in Chat Settings.")
+    if provider == 'groq':
+        groq_cfg = ai_config.get('groq', {})
+        if not groq_cfg.get('api_key'):
+            raise HTTPException(status_code=400, detail="AI not configured. Groq API key missing.")
+    if provider == 'ollama':
+        ollama_cfg = ai_config.get('ollama', {})
+        if not ollama_cfg.get('url'):
+            raise HTTPException(status_code=400, detail="AI not configured. Ollama URL missing.")
+
+    model = ai_config.get('last_used_model', 'llama3:8b')
+    temperature = ai_config.get('temperature', 0.2)
+
+    # 2. Load PubMed articles from project context
+    project_context = load_context(loader)
+    pubmed_articles = project_context.get("pubmed_articles", [])
+
+    # 3. Build prompt using ContextBuilder for analyses
+    cb = ContextBuilder(loader.project_path)
+    selected_ids = req.selected_ids if req.analyses != "all" else []
+    
+    # Get structured history metrics for validation
+    history_path = loader.project_path / "state" / "analysis_history.json"
+    history_metrics = {}
+    analyses_count = 0
+    if history_path.exists():
+        all_history = json.loads(history_path.read_text(encoding="utf-8"))
+        if selected_ids:
+            counted = [h for h in all_history if h.get("id") in selected_ids]
+        else:
+            counted = [h for h in all_history if h.get("template") != "ai_chat"]
+        for h in counted[:5]:
+            template_name = h.get("template", "unknown")
+            metrics_dict = h.get("metrics", {})
+            history_metrics[template_name] = metrics_dict
+            analyses_count += 1
+
+    analyses_context = cb.build_context_for_report(loader, selected_ids)
+    dataset_summary = cb.build_dataset_summary(loader)
+
+    # 4. Construct prompt
+    prompt_lines = [
+        "You are an expert medical statistician and clinical research manuscript writer.",
+        f"Write a professional, academic scientific article draft section in {req.language} based on the calculations and provided PubMed literature.",
+        "Your report must follow strict academic standards. Focus heavily on statistical rigor, exact estimates, and scientific interpretation.",
+        "",
+        "MANDATORY SAFETY RULES:",
+        "1. Do NOT invent, guess, or extrapolate any numbers, coefficients, HRs, ORs, p-values, or sample sizes. Use ONLY the exact numbers provided in the 'CALCULATIONS HISTORY' below.",
+        "2. Do NOT hallucinate PMIDs or citations. Use ONLY the provided PubMed articles. Cite them inline using '[PMID: XXXXXXXX]'.",
+        "3. Keep the tone academic, neutral, and precise. Avoid causal claims unless supported by multivariate models. Do NOT use forbidden phrases (e.g. 'almost significant', 'trend toward significance').",
+        "",
+        "STRUCTURE OF THE DRAFT (use ## and ### markdown):"
+    ]
+
+    if req.section == "all" or req.section == "methods":
+        prompt_lines.append("- ## Materials and Methods: Describe the dataset and the exact statistical flow (e.g. Shapiro-Wilk test for normality, Welch's t-test/ANOVA for unequal variances, Games-Howell post-hoc, Kaplan-Meier, Cox PH, etc.).")
+    if req.section == "all" or req.section == "results":
+        prompt_lines.append("- ## Results: Present the exact findings, tables of coefficients, effect sizes, p-values, and model metrics (AUC, C-index, etc.).")
+    if req.section == "all" or req.section == "discussion":
+        prompt_lines.append("- ## Discussion: Contextualize the results using the provided PubMed articles. Relate the findings (e.g. hazard ratios, regression coefficients) to Smith et al. or other cited authors using inline [PMID: XXXXXXXX] links.")
+        prompt_lines.append("- ## Conclusion: Sum up the main clinical and statistical takeaways.")
+
+    # Add PubMed literature context
+    if pubmed_articles:
+        prompt_lines.append("\n## PROVIDED PUBMED ARTICLES BIBLIOGRAPHY:")
+        for idx, art in enumerate(pubmed_articles[:5], 1):
+            prompt_lines.append(f"[{idx}] PMID: {art.get('pmid')}")
+            prompt_lines.append(f"    Title: {art.get('title')}")
+            prompt_lines.append(f"    Authors: {art.get('authors_str')}")
+            prompt_lines.append(f"    Journal: {art.get('journal')} ({art.get('year')})")
+            prompt_lines.append(f"    Abstract: {art.get('abstract')}")
+            prompt_lines.append("---")
+    else:
+        prompt_lines.append("\nNo PubMed articles available in project context.")
+
+    prompt_lines.append(f"\n## DATASET SUMMARY:\n{dataset_summary}")
+    prompt_lines.append(f"\n## CALCULATIONS HISTORY:\n{analyses_context}")
+    
+    prompt_lines.append("\nIMPORTANT: Do NOT output any internal <think> blocks, greetings, or meta-comments. Output ONLY the manuscript text directly.")
+    prompt = "\n".join(prompt_lines)
+
+    # 5. Call AI Client with ResponseValidator (Auto-Retry)
+    client = AIClientFactory.create(ai_config)
+    max_tokens = 4000
+    
+    async def llm_rewrite(correction_msg: str) -> str:
+        res = await client.chat(
+            model=model,
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": correction_msg}
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+        if res.get('success'):
+            return res.get('content', '')
+        raise Exception(res.get('error', 'AI rewrite failed'))
+
+    try:
+        initial_res = await client.chat(
+            model=model,
+            messages=[{"role": "system", "content": prompt}],
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+        if not initial_res.get('success'):
+            raise HTTPException(status_code=500, detail=initial_res.get('error', 'AI request failed'))
+        
+        initial_content = initial_res.get('content', '')
+        initial_content = re.sub(r'<think>.*?</think>', '', initial_content, flags=re.DOTALL).strip()
+        initial_content = re.sub(r'<think>.*', '', initial_content).strip()
+
+        lang_code = "ru" if req.language.lower() in ["russian", "ru", "русский"] else "en"
+        
+        validated_text, passed, v_result = await ResponseValidator.auto_retry(
+            response=initial_content,
+            metrics=history_metrics,
+            llm_rewrite_fn=llm_rewrite,
+            max_retries=2,
+            response_language=lang_code,
+            pubmed_articles=pubmed_articles
+        )
+        
+        ai_content = ResponseValidator.add_validation_notice(validated_text, v_result)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI drafting failed: {str(e)}")
+
+    # 6. Convert validated markdown response to styled academic DOCX
+    doc = Document()
+
+    style = doc.styles['Normal']
+    font = style.font
+    font.name = 'Times New Roman'
+    font.size = Pt(12)
+    font.color.rgb = RGBColor(0, 0, 0)
+    paragraph_format = style.paragraph_format
+    paragraph_format.space_before = Pt(0)
+    paragraph_format.space_after = Pt(6)
+    paragraph_format.line_spacing = 1.5
+
+    for i in range(1, 4):
+        heading_style = doc.styles[f'Heading {i}']
+        heading_style.font.name = 'Times New Roman'
+        heading_style.font.color.rgb = RGBColor(0, 0, 0)
+        heading_style.font.bold = True
+        heading_style.paragraph_format.space_before = Pt(12)
+        heading_style.paragraph_format.space_after = Pt(6)
+
+    title_h = doc.add_heading(req.title, 0)
+    title_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    doc.add_paragraph(f"Project: {loader.project_path.name}")
+    doc.add_paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    doc.add_paragraph(f"Language: {req.language}")
+    doc.add_paragraph(f"Section scope: {req.section.capitalize()}")
+    doc.add_paragraph()
+
+    def add_markdown_paragraph(doc_obj, text):
+        parts = re.split(r'(\*\*.*?\*\*)', text)
+        p = doc_obj.add_paragraph()
+        for part in parts:
+            if part.startswith('**') and part.endswith('**'):
+                run = p.add_run(part[2:-2])
+                run.bold = True
+                run.font.name = 'Times New Roman'
+                run.font.size = Pt(12)
+            elif part.strip():
+                run = p.add_run(part)
+                run.font.name = 'Times New Roman'
+                run.font.size = Pt(12)
+        return p
+
+    lines = ai_content.split('\n')
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip()
+
+        if line.startswith('## ') and not line.startswith('### '):
+            doc.add_heading(line[3:].strip(), level=1)
+        elif line.startswith('### '):
+            doc.add_heading(line[4:].strip(), level=2)
+        elif line.startswith('|') and line.endswith('|'):
+            table_rows = []
+            while i < len(lines) and lines[i].strip().startswith('|'):
+                cells = [c.strip() for c in lines[i].split('|') if c.strip()]
+                if cells:
+                    table_rows.append(cells)
+                i += 1
+            if table_rows:
+                if len(table_rows) > 1 and all(c in '-: ' for c in table_rows[1][0].replace('|', '').replace('-', '').replace(':', '').strip()):
+                    table_rows.pop(1)
+                ncols = max(len(r) for r in table_rows)
+                table = doc.add_table(rows=len(table_rows), cols=ncols)
+                table.style = 'Table Grid'
+                for ri, row_data in enumerate(table_rows):
+                    for cj, cell_text in enumerate(row_data):
+                        if cj < ncols and ri < len(table.rows):
+                            cell = table.rows[ri].cells[cj]
+                            cell.text = cell_text
+                            for paragraph in cell.paragraphs:
+                                for run in paragraph.runs:
+                                    run.font.name = 'Times New Roman'
+                                    run.font.size = Pt(11)
+                doc.add_paragraph()
+            continue
+        elif line.strip() == '':
+            doc.add_paragraph('')
+        elif line.startswith('- ') and len(line) > 2:
+            p = doc.add_paragraph(line[2:], style='List Bullet')
+            for run in p.runs:
+                run.font.name = 'Times New Roman'
+                run.font.size = Pt(12)
+        else:
+            add_markdown_paragraph(doc, line)
+
+        i += 1
+
+    # Save
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    reports_dir = loader.project_path / "state" / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_name = req.title.replace(' ', '_').replace('/', '_')[:50]
+    filename = f"Draft_{safe_name}_{timestamp}.docx"
+    filepath = reports_dir / filename
+
+    doc.save(str(filepath))
+
+    return {
+        "status": "generated",
+        "filename": filename,
+        "path": str(filepath),
+        "validation_passed": passed
+    }
+
+
 @router.get("/report/download/{filename}")
 async def download_report(filename: str):
     """Скачать сгенерированный отчёт"""
     from fastapi.responses import FileResponse
-    loader = get_loader()
-    filepath = loader.project_path / "state" / "reports" / filename
+    safe_filename = Path(filename).name
+    filepath = loader.project_path / "state" / "reports" / safe_filename
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Report not found")
-    return FileResponse(filepath, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename=filename)
+    return FileResponse(filepath, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename=safe_filename)
 
 
 class ReportRequest(BaseModel):

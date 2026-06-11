@@ -207,19 +207,36 @@ if encoding_map:
 def fit_cox(covariates_to_fit, label=""):
     if not covariates_to_fit:
         return None
-    cph = CoxPHFitter()
+    cph = None
     convergence_warnings = []
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        try:
-            cph.fit(df_cox[[time_col, event_col] + covariates_to_fit], duration_col=time_col, event_col=event_col)
-            for warning in w:
-                if "convergen" in str(warning.message).lower():
-                    convergence_warnings.append(str(warning.message))
-        except Exception as e:
-            msg = f"Model fitting failed {label}: {str(e)}"
-            output_metrics["warnings"].append(msg)
-            return None
+    
+    # Пытаемся обучить без регуляризации, затем с возрастающим penalizer для стабильности
+    fitted = False
+    last_err = ""
+    for pen in [0.0, 0.01, 0.1, 0.5]:
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            try:
+                cph = CoxPHFitter(penalizer=pen)
+                cph.fit(df_cox[[time_col, event_col] + covariates_to_fit], duration_col=time_col, event_col=event_col)
+                fitted = True
+                for warning in w:
+                    if "convergen" in str(warning.message).lower():
+                        convergence_warnings.append(str(warning.message))
+                if pen > 0:
+                    msg = f"Model fitted with L2 regularization (penalizer={pen}) due to convergence issues"
+                    output_metrics["warnings"].append(msg)
+                    print(f"ℹ️ {msg}")
+                break
+            except Exception as e:
+                last_err = str(e)
+                continue
+                
+    if not fitted:
+        msg = f"Model fitting failed {label}: {last_err}"
+        output_metrics["warnings"].append(msg)
+        return None
+
     if convergence_warnings:
         for cw in convergence_warnings[:3]:
             output_metrics["warnings"].append(f"Convergence issue {label}: {cw[:200]}")
@@ -435,16 +452,29 @@ def run_schoenfeld_multivariate(cph, covariates_list):
         schoenfeld = {}
         for i, var in enumerate(results.name):
             p_val = float(results.p_value[i])
+            violated = bool(p_val < 0.05)
             schoenfeld[str(var)] = {
                 "p_value": p_val,
                 "test_statistic": float(results.test_statistic[i]),
-                "violated": bool(p_val < 0.05)
+                "violated": violated
             }
+            if violated and str(var) != "GLOBAL":
+                msg = f"Proportional hazards assumption violated for covariate '{var}' (p = {p_val:.4f}). Consider stratifying by this variable if it is categorical."
+                print(f"⚠️ {msg}")
+                output_metrics["warnings"].append(msg)
+                
+        global_p = float(results.p_value[-1]) if len(results.p_value) > 0 else 1.0
+        global_violated = bool(global_p < 0.05)
         schoenfeld["GLOBAL"] = {
-            "p_value": float(results.p_value[-1]) if len(results.p_value) > 0 else 1.0,
+            "p_value": global_p,
             "test_statistic": float(results.test_statistic[-1]) if len(results.test_statistic) > 0 else 0.0,
-            "violated": bool((float(results.p_value[-1]) if len(results.p_value) > 0 else 1.0) < 0.05)
+            "violated": global_violated
         }
+        if global_violated:
+            msg = f"Global proportional hazards assumption violated (p = {global_p:.4f})."
+            print(f"⚠️ {msg}")
+            output_metrics["warnings"].append(msg)
+            
         return schoenfeld
     except Exception as e:
         output_metrics["warnings"].append(f"Schoenfeld test error: {str(e)}")

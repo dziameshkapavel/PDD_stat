@@ -3,7 +3,7 @@ PubMed API client — NCBI E-utilities wrapper.
 Search, fetch details, parse XML, rate limiting.
 """
 
-import time
+import asyncio
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
@@ -19,7 +19,7 @@ class PubMedAPI:
         self.api_key = api_key
         self.email = email
 
-    def search(self, query: str, max_results: int = 50, years: int = 5) -> list[str]:
+    async def search(self, query: str, max_results: int = 50, years: int = 5) -> list[str]:
         """Поиск PMIDs по запросу с фильтром по дате."""
         current_year = datetime.now().year
         mindate = current_year - years
@@ -38,11 +38,12 @@ class PubMedAPI:
             params["api_key"] = self.api_key
 
         try:
-            response = httpx.get(
-                self.BASE_URL + "esearch.fcgi",
-                params=params,
-                timeout=30,
-            )
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    self.BASE_URL + "esearch.fcgi",
+                    params=params,
+                    timeout=30,
+                )
             if response.status_code != 200:
                 return []
 
@@ -51,7 +52,7 @@ class PubMedAPI:
         except Exception:
             return []
 
-    def fetch_details(self, pmids: list[str]) -> list[dict]:
+    async def fetch_details(self, pmids: list[str]) -> list[dict]:
         """Загрузка деталей статей (title, abstract, authors, metadata)."""
         if not pmids:
             return []
@@ -59,30 +60,31 @@ class PubMedAPI:
         all_articles: list[dict] = []
         total = len(pmids)
 
-        for i in range(0, total, 50):
-            chunk = pmids[i : i + 50]
+        async with httpx.AsyncClient() as client:
+            for i in range(0, total, 50):
+                chunk = pmids[i : i + 50]
 
-            params = {
-                "db": "pubmed",
-                "id": ",".join(chunk),
-                "retmode": "xml",
-                "email": self.email,
-            }
-            if self.api_key:
-                params["api_key"] = self.api_key
+                params = {
+                    "db": "pubmed",
+                    "id": ",".join(chunk),
+                    "retmode": "xml",
+                    "email": self.email,
+                }
+                if self.api_key:
+                    params["api_key"] = self.api_key
 
-            try:
-                response = httpx.get(
-                    self.BASE_URL + "efetch.fcgi",
-                    params=params,
-                    timeout=60,
-                )
-                if response.status_code == 200:
-                    articles = self._parse_xml(response.text)
-                    all_articles.extend(articles)
-                time.sleep(0.35)
-            except Exception:
-                continue
+                try:
+                    response = await client.get(
+                        self.BASE_URL + "efetch.fcgi",
+                        params=params,
+                        timeout=60,
+                    )
+                    if response.status_code == 200:
+                        articles = self._parse_xml(response.text)
+                        all_articles.extend(articles)
+                    await asyncio.sleep(0.35)
+                except Exception:
+                    continue
 
         return all_articles
 

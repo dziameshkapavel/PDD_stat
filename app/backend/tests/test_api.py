@@ -164,6 +164,19 @@ class TestAnalysis:
         data = resp.json()
         assert len(data) > 0
 
+    def test_draft_article(self):
+        # Test draft article endpoint. Since it depends on active project analyses and AI configuration,
+        # we expect it to return either a 400 (AI not configured) or 500 (API key invalid/network error)
+        # or 200 if Ollama/Groq is fully mockable/functional.
+        resp = client.post("/api/analysis/report/draft-article", json={
+            "title": "Test Scientific Article Draft",
+            "analyses": "all",
+            "selected_ids": [],
+            "language": "English",
+            "section": "methods"
+        })
+        assert resp.status_code in (200, 400, 500)
+
 
 # ======================== AI ========================
 

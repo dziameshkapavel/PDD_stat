@@ -51,6 +51,139 @@ def format_group_label(g):
         pass
     return str(g)
 
+def adjust_p_values(p_values):
+    n = len(p_values)
+    if n == 0:
+        return [], [], []
+    p_bonf = [min(1.0, p * n) for p in p_values]
+    
+    indexed_p = sorted(enumerate(p_values), key=lambda x: x[1])
+    p_holm_sorted = []
+    max_p = 0.0
+    for rank, (orig_idx, p) in enumerate(indexed_p):
+        p_adj = p * (n - rank)
+        max_p = max(max_p, p_adj)
+        p_holm_sorted.append((orig_idx, min(1.0, max_p)))
+    p_holm = [0.0] * n
+    for orig_idx, val in p_holm_sorted:
+        p_holm[orig_idx] = val
+        
+    indexed_p_desc = sorted(enumerate(p_values), key=lambda x: x[1], reverse=True)
+    p_bh_sorted = []
+    min_p = 1.0
+    for rank, (orig_idx, p) in enumerate(indexed_p_desc):
+        curr_rank = n - rank
+        p_adj = p * n / curr_rank
+        min_p = min(min_p, p_adj)
+        p_bh_sorted.append((orig_idx, min(1.0, min_p)))
+    p_bh = [0.0] * n
+    for orig_idx, val in p_bh_sorted:
+        p_bh[orig_idx] = val
+        
+    return p_bonf, p_holm, p_bh
+
+def welch_anova(groups_data):
+    k = len(groups_data)
+    means = np.array([np.mean(g) for g in groups_data])
+    vars_ = np.array([np.var(g, ddof=1) for g in groups_data])
+    ns = np.array([len(g) for g in groups_data])
+    
+    ws = ns / vars_
+    w_sum = np.sum(ws)
+    mean_w = np.sum(ws * means) / w_sum
+    
+    num = np.sum(ws * (means - mean_w)**2) / (k - 1)
+    lambdas = ws / w_sum
+    denom_term = np.sum((1.0 - lambdas)**2 / (ns - 1))
+    denom = 1.0 + 2.0 * (k - 2) / (k**2 - 1) * denom_term
+    
+    f_stat = num / denom
+    df1 = k - 1
+    df2 = (k**2 - 1) / (3.0 * denom_term)
+    
+    p_val = 1.0 - stats.f.cdf(f_stat, df1, df2)
+    return f_stat, df1, df2, p_val
+
+def games_howell_test(groups, data_by_group):
+    from scipy.stats import studentized_range
+    k = len(groups)
+    means = {g: np.mean(data_by_group[g]) for g in groups}
+    vars_ = {g: np.var(data_by_group[g], ddof=1) for g in groups}
+    ns = {g: len(data_by_group[g]) for g in groups}
+    
+    results = []
+    from itertools import combinations
+    for g1, g2 in combinations(groups, 2):
+        m1, m2 = means[g1], means[g2]
+        v1, v2 = vars_[g1], vars_[g2]
+        n1, n2 = ns[g1], ns[g2]
+        
+        md = m1 - m2
+        se = np.sqrt(0.5 * (v1/n1 + v2/n2))
+        q = abs(md) / se if se > 0 else 0
+        
+        df_num = (v1/n1 + v2/n2)**2
+        df_den = (v1/n1)**2 / (n1 - 1) + (v2/n2)**2 / (n2 - 1)
+        df = df_num / df_den if df_den > 0 else 1
+        
+        p_val = 1.0 - studentized_range.cdf(q, k, df)
+        
+        results.append({
+            "group1": g1, "group2": g2,
+            "mean_diff": md, "q_stat": q,
+            "df": df, "p_value": p_val
+        })
+    return results
+
+def jonckheere_terpstra_test(groups_data, n_permutations=2000):
+    k = len(groups_data)
+    groups_data = [np.asarray(g) for g in groups_data]
+    n = [len(g) for g in groups_data]
+    N = sum(n)
+    
+    def compute_j(data_list):
+        J_val = 0.0
+        for i in range(k - 1):
+            g_i = data_list[i]
+            for j in range(i + 1, k):
+                g_j = data_list[j]
+                diff = g_j[:, None] - g_i[None, :]
+                J_val += np.sum(diff > 0) + 0.5 * np.sum(diff == 0)
+        return J_val
+
+    J_obs = compute_j(groups_data)
+    
+    pooled = np.concatenate(groups_data)
+    split_indices = np.cumsum(n)[:-1]
+    
+    # Adaptive permutation count
+    if N > 500:
+        n_permutations = 200
+    elif N > 200:
+        n_permutations = 500
+    
+    perm_Js = []
+    for _ in range(n_permutations):
+        perm_pooled = np.random.permutation(pooled)
+        perm_groups = np.split(perm_pooled, split_indices)
+        perm_Js.append(compute_j(perm_groups))
+        
+    perm_Js = np.array(perm_Js)
+    E_J = (N**2 - sum(ni**2 for ni in n)) / 4.0
+    obs_dev = abs(J_obs - E_J)
+    perm_devs = abs(perm_Js - E_J)
+    p_val = (np.sum(perm_devs >= obs_dev) + 1) / (n_permutations + 1) if n_permutations > 0 else 1.0
+    
+    var_J = (N**2 * (2*N + 3) - sum(ni**2 * (2*ni + 3) for ni in n)) / 72.0
+    se = np.sqrt(var_J)
+    z_stat = (J_obs - E_J) / se if se > 0 else 0
+    p_norm = 2.0 * (1.0 - stats.norm.cdf(abs(z_stat)))
+    
+    # Use normal approximation if permutation test not run or sample size is very large
+    final_p = p_val if n_permutations > 0 else p_norm
+    return J_obs, final_p, z_stat, p_norm
+
+
 print("## One-way ANOVA / Kruskal-Wallis\n")
 
 value_col = "{{ value_col }}"
@@ -216,7 +349,57 @@ if all_normal and equal_var and n_groups >= 2:
                 })
         except:
             print("*Post-hoc test could not be computed*\n")
+
+elif all_normal and not equal_var and n_groups >= 2:
+    # WELCH'S ANOVA
+    print("### Welch's ANOVA\n")
+    print("*Reason: Normality holds, but equal variance does not (Levene's p < 0.05)*\n")
+    f_stat, df1, df2, anova_p = welch_anova(arrays)
+    print(f"F({df1:.1f}, {df2:.2f}) = {f_stat:.4f}")
+    print(f"**p = {fmt_p(anova_p)}**")
     
+    # Effect size: eta-squared
+    grand_mean = np.mean(df_clean[value_col].values)
+    ss_between = sum(len(data_by_group[g]) * (np.mean(data_by_group[g]) - grand_mean)**2 for g in groups)
+    ss_total = sum((df_clean[value_col].values - grand_mean)**2)
+    eta_sq = ss_between / ss_total if ss_total > 0 else 0
+    print(f"η² = {eta_sq:.4f}\n")
+    
+    output_metrics["test_name"] = "Welch ANOVA"
+    output_metrics["F_stat"] = float(f_stat)
+    output_metrics["df1"] = float(df1)
+    output_metrics["df2"] = float(df2)
+    output_metrics["p_value"] = float(anova_p)
+    output_metrics["eta_sq"] = float(eta_sq)
+    output_metrics["significant"] = bool(anova_p < 0.05)
+    
+    # Post-hoc Games-Howell
+    if anova_p < 0.05 and n_groups >= 3:
+        print("### Post-hoc: Games-Howell\n")
+        try:
+            gh_results = games_howell_test(groups, data_by_group)
+            print("| Comparison | Mean Diff | q-statistic | df | p-value | Significant |")
+            print("|------------|-----------|-------------|----|---------|-------------|")
+            for r in gh_results:
+                comp = f"{r['group1']} vs {r['group2']}"
+                diff = r['mean_diff']
+                q_val = r['q_stat']
+                df_val = r['df']
+                p_val = r['p_value']
+                sig = "Yes" if p_val < 0.05 else "No"
+                print(f"| {comp} | {diff:.2f} | {q_val:.4f} | {df_val:.1f} | {fmt_p(p_val)} | {sig} |")
+                output_metrics["posthoc"].append({
+                    "group1": str(r['group1']),
+                    "group2": str(r['group2']),
+                    "mean_diff": float(diff),
+                    "q_statistic": float(q_val),
+                    "df": float(df_val),
+                    "p_value": float(p_val),
+                    "significant": bool(p_val < 0.05)
+                })
+        except Exception as ex:
+            print(f"*Post-hoc Games-Howell could not be computed: {ex}*\n")
+
 else:
     # KRUSKAL-WALLIS
     print("### Kruskal-Wallis H Test\n")
@@ -235,51 +418,71 @@ else:
     output_metrics["epsilon_sq"] = float(epsilon_sq)
     output_metrics["significant"] = bool(kw_p < 0.05)
     
-    # Post-hoc Dunn (Монте-Карло permutation + Бонферрони)
+    # Post-hoc Mann-Whitney with Bonferroni, Holm, BH/FDR correction
     if kw_p < 0.05 and n_groups >= 3:
-        print("### Post-hoc: Pairwise Comparisons\n")
-        print("*Corrected for multiple comparisons*\n")
+        print("### Post-hoc: Pairwise Comparisons (Mann-Whitney)\n")
+        print("*Multiple comparison corrections computed*\n")
         
         from itertools import combinations
-        alpha = 0.05
-        n_comparisons = n_groups * (n_groups - 1) / 2
-        bonferroni_alpha = alpha / n_comparisons
-        
-        print(f"Bonferroni corrected α = {bonferroni_alpha:.4f} ({int(n_comparisons)} comparisons)\n")
-        print("| Comparison | p-value (Mann-Whitney) | Significant |")
-        print("|------------|------------------------|-------------|")
-        
+        raw_ps = []
+        pairs = []
         for g1, g2 in combinations(groups, 2):
-            u_stat, u_p = stats.mannwhitneyu(data_by_group[g1], data_by_group[g2], alternative='two-sided')
-            sig = u_p < bonferroni_alpha
-            print(f"| {g1} vs {g2} | {fmt_p(u_p)} | {'Yes' if sig else 'No'} |")
-            output_metrics["posthoc"].append({
-                "group1": str(g1),
-                "group2": str(g2),
-                "p_value": float(u_p),
-                "significant": bool(sig),
-                "bonferroni_alpha": float(bonferroni_alpha)
-            })
+            try:
+                u_stat, u_p = stats.mannwhitneyu(data_by_group[g1], data_by_group[g2], alternative='two-sided')
+                raw_ps.append(u_p)
+                pairs.append((g1, g2))
+            except:
+                pass
+                
+        if raw_ps:
+            p_bonf, p_holm, p_bh = adjust_p_values(raw_ps)
+            print("| Comparison | p-value | p (Bonf) | p (Holm) | p (FDR/BH) | Significant? |")
+            print("|------------|---------|----------|----------|------------|--------------|")
+            for idx, (g1, g2) in enumerate(pairs):
+                p_raw = raw_ps[idx]
+                pb = p_bonf[idx]
+                ph = p_holm[idx]
+                pf = p_bh[idx]
+                sig_str = "Yes **" if ph < 0.05 else "No"
+                print(f"| {g1} vs {g2} | {fmt_p(p_raw)} | {fmt_p(pb)} | {fmt_p(ph)} | {fmt_p(pf)} | {sig_str} |")
+                output_metrics["posthoc"].append({
+                    "group1": str(g1),
+                    "group2": str(g2),
+                    "p_value": float(p_raw),
+                    "p_bonferroni": float(pb),
+                    "p_holm": float(ph),
+                    "p_bh": float(pf),
+                    "significant": bool(ph < 0.05)
+                })
 
 # ========== TREND TEST ==========
 if n_groups >= 3:
     print("\n### Trend Test (Jonckheere-Terpstra)\n")
     try:
-        # Encode groups as ordinal
-        group_order = {g: i for i, g in enumerate(groups)}
-        ordered_groups = df_clean[group_col].map(group_order).values
-        jt_stat, jt_p = stats.mannwhitneyu(ordered_groups, df_clean[value_col].values)
-        print(f"MW = {jt_stat:.4f}, p = {fmt_p(jt_p)}")
+        # Sort groups in ascending order for trend test
+        ordered_data = [data_by_group[g] for g in groups]
+        jt_stat, jt_p, z_stat, p_norm = jonckheere_terpstra_test(ordered_data)
+        
+        print(f"J statistic = {jt_stat:.1f}")
+        print(f"Z statistic = {z_stat:.4f} (asymptotic)")
+        print(f"p-value (asymptotic) = {fmt_p(p_norm)}")
+        print(f"**p-value (permutation) = {fmt_p(jt_p)}**")
+        
         if jt_p < 0.05:
             print("**Significant monotonic trend detected**")
+        else:
+            print("No significant monotonic trend detected")
+            
         output_metrics["trend_test"] = {
             "name": "Jonckheere-Terpstra",
             "statistic": float(jt_stat),
+            "z_statistic": float(z_stat),
+            "p_value_asymptotic": float(p_norm),
             "p_value": float(jt_p),
             "significant": bool(jt_p < 0.05)
         }
-    except:
-        print("*Trend test not available*")
+    except Exception as ex:
+        print(f"*Trend test not available: {ex}*")
 
 # ========== PLOT ==========
 timestamp = str(int(__import__("time").time()))

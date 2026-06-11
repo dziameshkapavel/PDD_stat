@@ -64,21 +64,38 @@ def wilson_ci(prop, n):
     margin = z * np.sqrt((prop * (1 - prop) + z**2 / (4 * n)) / n) / denominator
     return max(0, centre - margin), min(1, centre + margin)
 
-def lr_ci(lr, tp, fp, fn, tn):
-    if lr <= 0 or np.isinf(lr) or np.isnan(lr):
+def lr_pos_ci(tp, fp, fn, tn):
+    if tp + fn == 0 or fp + tn == 0:
         return np.nan, np.nan
-    if lr >= 1:
-        if tp > 0 and fn > 0 and (tp + fp) > 0 and (fn + tn) > 0:
-            se = np.sqrt(1/tp - 1/(tp+fp) + 1/fn - 1/(fn+tn))
-        else:
-            return np.nan, np.nan
-    else:
-        if fp > 0 and tn > 0 and (tp + fp) > 0 and (fn + tn) > 0:
-            se = np.sqrt(1/fp - 1/(tp+fp) + 1/tn - 1/(fn+tn))
-        else:
-            return np.nan, np.nan
-    if np.isnan(se) or se <= 0:
+    sens = tp / (tp + fn)
+    spec = tn / (tn + fp)
+    if 1 - spec == 0:
         return np.nan, np.nan
+    lr = sens / (1 - spec)
+    if tp == 0 or fp == 0:
+        return np.nan, np.nan
+    var_ln_lr = (1/tp - 1/(tp+fn)) + (1/fp - 1/(fp+tn))
+    if var_ln_lr < 0:
+        return np.nan, np.nan
+    se = np.sqrt(var_ln_lr)
+    ci_low = np.exp(np.log(lr) - 1.96 * se)
+    ci_high = np.exp(np.log(lr) + 1.96 * se)
+    return ci_low, ci_high
+
+def lr_neg_ci(tp, fp, fn, tn):
+    if tp + fn == 0 or fp + tn == 0:
+        return np.nan, np.nan
+    sens = tp / (tp + fn)
+    spec = tn / (tn + fp)
+    if spec == 0:
+        return np.nan, np.nan
+    lr = (1 - sens) / spec
+    if fn == 0 or tn == 0:
+        return np.nan, np.nan
+    var_ln_lr = (1/fn - 1/(tp+fn)) + (1/tn - 1/(fp+tn))
+    if var_ln_lr < 0:
+        return np.nan, np.nan
+    se = np.sqrt(var_ln_lr)
     ci_low = np.exp(np.log(lr) - 1.96 * se)
     ci_high = np.exp(np.log(lr) + 1.96 * se)
     return ci_low, ci_high
@@ -142,8 +159,8 @@ for test in valid_tests:
     ppv_ci = wilson_ci(ppv, tp + fp)
     npv_ci = wilson_ci(npv, tn + fn)
     acc_ci = wilson_ci(acc, n)
-    lr_pos_ci = lr_ci(lr_pos, tp, fp, fn, tn)
-    lr_neg_ci = lr_ci(lr_neg, tp, fp, fn, tn)
+    lr_pos_ci = lr_pos_ci(tp, fp, fn, tn)
+    lr_neg_ci = lr_neg_ci(tp, fp, fn, tn)
 
     results.append({
         "test": test,

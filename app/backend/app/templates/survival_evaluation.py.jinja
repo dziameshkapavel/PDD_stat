@@ -430,8 +430,9 @@ if run_model_comparison and len(valid_preds) >= 2 and len(strata) == 1:
             boot_deltas = np.array(boot_deltas)
             delta_ci_low = float(np.percentile(boot_deltas, 2.5))
             delta_ci_high = float(np.percentile(boot_deltas, 97.5))
-            # SURV-008: CI-based significance (no z-test)
-            p_val = 0.05 if delta_ci_low > 0 or delta_ci_high < 0 else 1.0
+            p_val = (2.0 * min(np.sum(boot_deltas <= 0), np.sum(boot_deltas >= 0)) + 1.0) / (len(boot_deltas) + 1.0)
+            if p_val > 1.0:
+                p_val = 1.0
         else:
             delta_ci_low, delta_ci_high, p_val = delta, delta, 1.0
 

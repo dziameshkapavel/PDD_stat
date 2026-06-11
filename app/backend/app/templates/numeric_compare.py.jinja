@@ -11,6 +11,91 @@ import warnings
 from itertools import combinations
 warnings.filterwarnings('ignore')
 
+def adjust_p_values(p_values):
+    n = len(p_values)
+    if n == 0:
+        return [], [], []
+    p_bonf = [min(1.0, p * n) for p in p_values]
+    
+    indexed_p = sorted(enumerate(p_values), key=lambda x: x[1])
+    p_holm_sorted = []
+    max_p = 0.0
+    for rank, (orig_idx, p) in enumerate(indexed_p):
+        p_adj = p * (n - rank)
+        max_p = max(max_p, p_adj)
+        p_holm_sorted.append((orig_idx, min(1.0, max_p)))
+    p_holm = [0.0] * n
+    for orig_idx, val in p_holm_sorted:
+        p_holm[orig_idx] = val
+        
+    indexed_p_desc = sorted(enumerate(p_values), key=lambda x: x[1], reverse=True)
+    p_bh_sorted = []
+    min_p = 1.0
+    for rank, (orig_idx, p) in enumerate(indexed_p_desc):
+        curr_rank = n - rank
+        p_adj = p * n / curr_rank
+        min_p = min(min_p, p_adj)
+        p_bh_sorted.append((orig_idx, min(1.0, min_p)))
+    p_bh = [0.0] * n
+    for orig_idx, val in p_bh_sorted:
+        p_bh[orig_idx] = val
+        
+    return p_bonf, p_holm, p_bh
+
+def welch_anova(groups_data):
+    k = len(groups_data)
+    means = np.array([np.mean(g) for g in groups_data])
+    vars_ = np.array([np.var(g, ddof=1) for g in groups_data])
+    ns = np.array([len(g) for g in groups_data])
+    
+    ws = ns / vars_
+    w_sum = np.sum(ws)
+    mean_w = np.sum(ws * means) / w_sum
+    
+    num = np.sum(ws * (means - mean_w)**2) / (k - 1)
+    lambdas = ws / w_sum
+    denom_term = np.sum((1.0 - lambdas)**2 / (ns - 1))
+    denom = 1.0 + 2.0 * (k - 2) / (k**2 - 1) * denom_term
+    
+    f_stat = num / denom
+    df1 = k - 1
+    df2 = (k**2 - 1) / (3.0 * denom_term)
+    
+    p_val = 1.0 - stats.f.cdf(f_stat, df1, df2)
+    return f_stat, df1, df2, p_val
+
+def games_howell_test(groups, data_by_group):
+    from scipy.stats import studentized_range
+    k = len(groups)
+    means = {g: np.mean(data_by_group[g]) for g in groups}
+    vars_ = {g: np.var(data_by_group[g], ddof=1) for g in groups}
+    ns = {g: len(data_by_group[g]) for g in groups}
+    
+    results = []
+    from itertools import combinations
+    for g1, g2 in combinations(groups, 2):
+        m1, m2 = means[g1], means[g2]
+        v1, v2 = vars_[g1], vars_[g2]
+        n1, n2 = ns[g1], ns[g2]
+        
+        md = m1 - m2
+        se = np.sqrt(0.5 * (v1/n1 + v2/n2))
+        q = abs(md) / se if se > 0 else 0
+        
+        df_num = (v1/n1 + v2/n2)**2
+        df_den = (v1/n1)**2 / (n1 - 1) + (v2/n2)**2 / (n2 - 1)
+        df = df_num / df_den if df_den > 0 else 1
+        
+        p_val = 1.0 - studentized_range.cdf(q, k, df)
+        
+        results.append({
+            "group1": g1, "group2": g2,
+            "mean_diff": md, "q_stat": q,
+            "df": df, "p_value": p_val
+        })
+    return results
+
+
 var_labels = {}
 try:
     labels_path = Path(project_path) / "state" / "variable_labels.json"
@@ -115,53 +200,150 @@ else:
         print("**Unequal variances (Welch correction recommended)**")
     print()
 
-    if all_normal and equal_var:
-        print("### Statistical Tests\n")
+    # Initialize JSON metrics
+    output_metrics = {
+        "model_type": "numeric_compare",
+        "value_col": value_col,
+        "group_col": group_col,
+        "n_total": sum(len(v) for v in data_by_group.values()),
+        "n_groups": n_groups,
+        "groups": [str(g) for g in groups],
+        "group_stats": [
+            {
+                "group": str(g),
+                "n": int(len(vals)),
+                "mean": round(float(vals.mean()), 4),
+                "median": round(float(vals.median()), 4),
+                "std": round(float(vals.std()), 4) if len(vals) > 1 else 0.0,
+                "q1": round(float(vals.quantile(0.25)), 4),
+                "q3": round(float(vals.quantile(0.75)), 4)
+            }
+            for g, vals in data_by_group.items()
+        ],
+        "normality": {
+            "all_normal": all_normal,
+            "shapiro_tests": [
+                {"group": str(g), "w": float(w), "p": float(p)}
+                for g, vals in data_by_group.items() if len(vals) >= 3
+                for (w, p) in [stats.shapiro(vals)]
+            ]
+        },
+        "equal_var": bool(equal_var),
+        "levene_p": float(levene_p),
+        "posthoc": []
+    }
+
+    if all_normal:
+        print("### Parametric Tests\n")
         if n_groups == 2:
             g1, g2 = list(data_by_group.keys())
-            t_stat, t_p = stats.ttest_ind(data_by_group[g1], data_by_group[g2])
+            if equal_var:
+                t_stat, t_p = stats.ttest_ind(data_by_group[g1], data_by_group[g2], equal_var=True)
+                test_name = "Independent t-test"
+                print(f"**Independent t-test (equal variances assumed):**")
+            else:
+                t_stat, t_p = stats.ttest_ind(data_by_group[g1], data_by_group[g2], equal_var=False)
+                test_name = "Welch's t-test"
+                print(f"**Welch's t-test (equal variances not assumed):**")
+                
             sig = "***" if t_p < 0.001 else "**" if t_p < 0.01 else "*" if t_p < 0.05 else ""
-            print(f"**Independent t-test:** t = {t_stat:.4f}, **p = {fmt_p(t_p)}** {sig}")
+            print(f"t = {t_stat:.4f}, **p = {fmt_p(t_p)}** {sig}")
             
             mean_diff = data_by_group[g1].mean() - data_by_group[g2].mean()
             print(f"**Mean difference ({g1} - {g2}):** {mean_diff:.4f}")
             
-            pooled_std = np.sqrt(
-                ((len(data_by_group[g1]) - 1) * data_by_group[g1].std()**2 + 
-                 (len(data_by_group[g2]) - 1) * data_by_group[g2].std()**2) /
-                (len(data_by_group[g1]) + len(data_by_group[g2]) - 2)
-            )
-            cohens_d = mean_diff / pooled_std
+            s1, s2 = data_by_group[g1].std(ddof=1), data_by_group[g2].std(ddof=1)
+            n1, n2 = len(data_by_group[g1]), len(data_by_group[g2])
+            pooled_std = np.sqrt(((n1 - 1) * s1**2 + (n2 - 1) * s2**2) / (n1 + n2 - 2))
+            cohens_d = mean_diff / pooled_std if pooled_std > 0 else 0
             print(f"**Cohen's d:** {cohens_d:.4f}")
             
+            output_metrics["test_name"] = test_name
+            output_metrics["statistic"] = float(t_stat)
+            output_metrics["p_value"] = float(t_p)
+            output_metrics["cohens_d"] = float(cohens_d)
+            
         else:
-            f_stat, f_p = stats.f_oneway(*[v.values for v in data_by_group.values()])
-            sig = "***" if f_p < 0.001 else "**" if f_p < 0.01 else "*" if f_p < 0.05 else ""
-            print(f"**One-way ANOVA:** F = {f_stat:.4f}, **p = {fmt_p(f_p)}** {sig}")
-            
-            df_between = n_groups - 1
-            df_error = n_total - n_groups
-            eta_sq = f_stat * df_between / (f_stat * df_between + df_error)
-            print(f"**Effect size (eta-squared):** {eta_sq:.4f}")
-            
-            # Post-hoc: Tukey HSD
-            if f_p < 0.05 and n_groups > 2:
-                try:
-                    from statsmodels.stats.multicomp import pairwise_tukeyhsd
-                    tukey = pairwise_tukeyhsd(df[value_col].dropna(), df[group_col].dropna(), alpha=0.05)
-                    print("\n**Post-hoc (Tukey HSD):**")
-                    print("| Pair | Mean Diff | p-value | Significant |")
-                    print("|------|-----------|---------|-------------|")
-                    sorted_groups = sorted(data_by_group.keys(), key=str)
-                    for pair_idx, (g1, g2) in enumerate(combinations(sorted_groups, 2)):
-                        meandiff = tukey.meandiffs[pair_idx]
-                        p_adj = tukey.pvalues[pair_idx]
-                        reject = tukey.reject[pair_idx]
-                        print(f"| {g1} vs {g2} | {meandiff:.3f} | {fmt_p(p_adj)} | {'✓' if reject else '-'} |")
-                    print()
-                except:
-                    pass
-        
+            if equal_var:
+                f_stat, f_p = stats.f_oneway(*[v.values for v in data_by_group.values()])
+                test_name = "One-way ANOVA"
+                print(f"**One-way ANOVA (equal variances assumed):**")
+                print(f"F = {f_stat:.4f}, **p = {fmt_p(f_p)}**")
+                
+                df_between = n_groups - 1
+                df_error = n_total - n_groups
+                eta_sq = f_stat * df_between / (f_stat * df_between + df_error) if (f_stat * df_between + df_error) > 0 else 0
+                print(f"**Effect size (eta-squared):** {eta_sq:.4f}")
+                
+                output_metrics["test_name"] = test_name
+                output_metrics["statistic"] = float(f_stat)
+                output_metrics["p_value"] = float(f_p)
+                output_metrics["eta_sq"] = float(eta_sq)
+                
+                if f_p < 0.05:
+                    try:
+                        from statsmodels.stats.multicomp import pairwise_tukeyhsd
+                        tukey = pairwise_tukeyhsd(df[value_col].dropna(), df[group_col].dropna(), alpha=0.05)
+                        print("\n**Post-hoc (Tukey HSD):**")
+                        print("| Pair | Mean Diff | p-value | Significant |")
+                        print("|------|-----------|---------|-------------|")
+                        sorted_groups = sorted(data_by_group.keys(), key=str)
+                        for pair_idx, (grp1, grp2) in enumerate(combinations(sorted_groups, 2)):
+                            meandiff = tukey.meandiffs[pair_idx]
+                            p_adj = tukey.pvalues[pair_idx]
+                            reject = tukey.reject[pair_idx]
+                            print(f"| {grp1} vs {grp2} | {meandiff:.3f} | {fmt_p(p_adj)} | {'✓' if reject else '-'} |")
+                            output_metrics["posthoc"].append({
+                                "group1": str(grp1), "group2": str(grp2),
+                                "mean_diff": float(meandiff), "p_value": float(p_adj),
+                                "significant": bool(reject)
+                            })
+                        print()
+                    except:
+                        pass
+            else:
+                # Welch ANOVA
+                f_stat, df1, df2, f_p = welch_anova([v.values for v in data_by_group.values()])
+                test_name = "Welch's ANOVA"
+                print(f"**Welch's ANOVA (equal variances not assumed):**")
+                print(f"F({df1:.1f}, {df2:.2f}) = {f_stat:.4f}, **p = {fmt_p(f_p)}**")
+                
+                grand_mean = np.mean(df[value_col].dropna().values)
+                ss_between = sum(len(v) * (v.mean() - grand_mean)**2 for v in data_by_group.values())
+                ss_total = sum((df[value_col].dropna().values - grand_mean)**2)
+                eta_sq = ss_between / ss_total if ss_total > 0 else 0
+                print(f"**Effect size (eta-squared):** {eta_sq:.4f}")
+                
+                output_metrics["test_name"] = test_name
+                output_metrics["statistic"] = float(f_stat)
+                output_metrics["df1"] = float(df1)
+                output_metrics["df2"] = float(df2)
+                output_metrics["p_value"] = float(f_p)
+                output_metrics["eta_sq"] = float(eta_sq)
+                
+                if f_p < 0.05:
+                    try:
+                        sorted_groups = sorted(data_by_group.keys(), key=str)
+                        gh_res = games_howell_test(sorted_groups, {g: v.values for g, v in data_by_group.items()})
+                        print("\n**Post-hoc (Games-Howell):**")
+                        print("| Pair | Mean Diff | q-statistic | df | p-value | Significant |")
+                        print("|------|-----------|-------------|----|---------|-------------|")
+                        for r in gh_res:
+                            comp = f"{r['group1']} vs {r['group2']}"
+                            diff = r['mean_diff']
+                            q_val = r['q_stat']
+                            df_val = r['df']
+                            p_val = r['p_value']
+                            sig = "✓" if p_val < 0.05 else "-"
+                            print(f"| {r['group1']} vs {r['group2']} | {diff:.3f} | {q_val:.4f} | {df_val:.1f} | {fmt_p(p_val)} | {sig} |")
+                            output_metrics["posthoc"].append({
+                                "group1": str(r['group1']), "group2": str(r['group2']),
+                                "mean_diff": float(diff), "p_value": float(p_val),
+                                "significant": bool(p_val < 0.05)
+                            })
+                        print()
+                    except Exception as ex:
+                        print(f"*Post-hoc Games-Howell could not be computed: {ex}*")
     else:
         print("### Non-parametric Tests\n")
         if n_groups == 2:
@@ -169,125 +351,57 @@ else:
             u_stat, u_p = stats.mannwhitneyu(data_by_group[g1], data_by_group[g2], alternative='two-sided')
             sig = "***" if u_p < 0.001 else "**" if u_p < 0.01 else "*" if u_p < 0.05 else ""
             print(f"**Mann-Whitney U test:** U = {u_stat:.1f}, **p = {fmt_p(u_p)}** {sig}")
+            
+            output_metrics["test_name"] = "Mann-Whitney U"
+            output_metrics["statistic"] = float(u_stat)
+            output_metrics["p_value"] = float(u_p)
         else:
             h_stat, h_p = stats.kruskal(*[v.values for v in data_by_group.values()])
             sig = "***" if h_p < 0.001 else "**" if h_p < 0.01 else "*" if h_p < 0.05 else ""
             print(f"**Kruskal-Wallis H test:** H = {h_stat:.4f}, **p = {fmt_p(h_p)}** {sig}")
             
-            # Post-hoc: pairwise Mann-Whitney with Bonferroni
-            if h_p < 0.05 and n_groups > 2:
-                try:
-                    sorted_groups = sorted(data_by_group.keys(), key=str)
-                    pairs = list(combinations(sorted_groups, 2))
-                    n_pairs = len(pairs)
-                    print("\n**Post-hoc (Mann-Whitney + Bonferroni):**")
-                    print("| Pair | U | p-value | Adj. p (Bonf) | Significant |")
-                    print("|------|---|---------|----------------|-------------|")
-                    for g1, g2 in pairs:
-                        u_stat_pw, u_p_pw = stats.mannwhitneyu(data_by_group[g1], data_by_group[g2], alternative='two-sided')
-                        p_adj = min(u_p_pw * n_pairs, 1.0)
-                        sig_pw = "✓" if p_adj < 0.05 else "-"
-                        print(f"| {g1} vs {g2} | {u_stat_pw:.1f} | {fmt_p(u_p_pw)} | {fmt_p(p_adj)} | {sig_pw} |")
-                    print()
-                except:
-                    pass
-
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
-fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-
-ax1 = axes[0]
-positions = range(len(data_by_group))
-bp_data = [v.values for v in data_by_group.values()]
-bp = ax1.boxplot(bp_data, positions=positions, patch_artist=True)
-colors = ['#007aff', '#34c759', '#ff9500', '#af52de', '#ff3b30', '#5856d6']
-for patch, color in zip(bp['boxes'], colors):
-    patch.set_facecolor(color)
-    patch.set_alpha(0.7)
-ax1.set_xticks(positions)
-ax1.set_xticklabels([str(g)[:15] for g in data_by_group.keys()], rotation=45, ha='right')
-ax1.set_ylabel(value_col)
-ax1.set_title(f'Distribution of {value_col} by {group_col}')
-ax1.grid(axis='y', alpha=0.3)
-
-ax2 = axes[1]
-means = [v.mean() for v in data_by_group.values()]
-stds = [v.std() for v in data_by_group.values()]
-x_pos = range(len(data_by_group))
-ax2.bar(x_pos, means, yerr=stds, color=colors[:len(means)], alpha=0.7, capsize=5)
-ax2.set_xticks(x_pos)
-ax2.set_xticklabels([str(g)[:15] for g in data_by_group.keys()], rotation=45, ha='right')
-ax2.set_ylabel(value_col)
-ax2.set_title(f'Mean ± SD of {value_col} by {group_col}')
-ax2.grid(axis='y', alpha=0.3)
-
-plt.tight_layout()
-plot_name = "numericCompare_" + str(int(time.time()))
-save_plot(plot_name)
-plt.close()
-
-# ========== JSON METRICS FOR AI ==========
-output_metrics = {
-    "model_type": "numeric_compare",
-    "value_col": value_col,
-    "group_col": group_col,
-    "n_total": sum(len(v) for v in data_by_group.values()),
-    "n_groups": n_groups,
-    "groups": [str(g) for g in groups],
-    "group_stats": [
-        {
-            "group": str(g),
-            "n": int(len(vals)),
-            "mean": round(float(vals.mean()), 4),
-            "median": round(float(vals.median()), 4),
-            "std": round(float(vals.std()), 4),
-            "q1": round(float(vals.quantile(0.25)), 4),
-            "q3": round(float(vals.quantile(0.75)), 4)
-        }
-        for g, vals in data_by_group.items()
-    ],
-}
-
-if n_groups >= 2:
-    output_metrics["normality"] = {
-        "all_normal": all_normal,
-        "shapiro_tests": [
-            {"group": str(g), "w": float(w), "p": float(p)}
-            for g, vals in data_by_group.items() if len(vals) >= 3
-            for (w, p) in [stats.shapiro(vals)]
-        ]
-    }
-    output_metrics["equal_var"] = bool(equal_var)
-    output_metrics["levene_p"] = float(levene_p)
-
-    if all_normal and equal_var:
-        if n_groups == 2:
-            output_metrics["test_name"] = "t-test"
-            output_metrics["statistic"] = float(t_stat)
-            output_metrics["p_value"] = float(t_p)
-            output_metrics["cohens_d"] = float(cohens_d)
-        else:
-            output_metrics["test_name"] = "ANOVA"
-            output_metrics["statistic"] = float(f_stat)
-            output_metrics["p_value"] = float(f_p)
-    else:
-        if n_groups == 2:
-            output_metrics["test_name"] = "Mann-Whitney U"
-            output_metrics["statistic"] = float(u_stat)
-            output_metrics["p_value"] = float(u_p)
-        else:
             output_metrics["test_name"] = "Kruskal-Wallis H"
             output_metrics["statistic"] = float(h_stat)
             output_metrics["p_value"] = float(h_p)
+            
+            if h_p < 0.05:
+                try:
+                    sorted_groups = sorted(data_by_group.keys(), key=str)
+                    raw_ps = []
+                    pairs = []
+                    for g1, g2 in combinations(sorted_groups, 2):
+                        u_stat_pw, u_p_pw = stats.mannwhitneyu(data_by_group[g1], data_by_group[g2], alternative='two-sided')
+                        raw_ps.append(u_p_pw)
+                        pairs.append((g1, g2))
+                    
+                    if raw_ps:
+                        p_bonf, p_holm, p_bh = adjust_p_values(raw_ps)
+                        print("\n**Post-hoc (Mann-Whitney Pairwise):**")
+                        print("| Pair | p-value | p (Bonf) | p (Holm) | p (FDR/BH) | Significant? |")
+                        print("|------|---------|----------|----------|------------|--------------|")
+                        for idx, (g1, g2) in enumerate(pairs):
+                            p_raw = raw_ps[idx]
+                            pb = p_bonf[idx]
+                            ph = p_holm[idx]
+                            pf = p_bh[idx]
+                            sig_pw = "✓" if ph < 0.05 else "-"
+                            print(f"| {g1} vs {g2} | {fmt_p(p_raw)} | {fmt_p(pb)} | {fmt_p(ph)} | {fmt_p(pf)} | {sig_pw} |")
+                            output_metrics["posthoc"].append({
+                                "group1": str(g1), "group2": str(g2),
+                                "p_value": float(p_raw), "p_bonferroni": float(pb),
+                                "p_holm": float(ph), "p_bh": float(pf),
+                                "significant": bool(ph < 0.05)
+                            })
+                        print()
+                except Exception as ex:
+                    print(f"*Post-hoc comparisons failed: {ex}*")
 
     if 'p_value' in output_metrics:
         output_metrics["significant"] = output_metrics["p_value"] < 0.05
 
-print("\n<!-- JSON_METRICS_START -->")
-print(json.dumps(output_metrics, ensure_ascii=False))
-print("<!-- JSON_METRICS_END -->")
+    print("\n<!-- JSON_METRICS_START -->")
+    print(json.dumps(output_metrics, ensure_ascii=False))
+    print("<!-- JSON_METRICS_END -->")
 
 print("\n---")
 print(f"**Numeric comparison complete**")

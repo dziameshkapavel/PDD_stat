@@ -92,6 +92,8 @@ class ProjectManager:
         return self.current_project_path / "state"
 
     def get_plots_folder(self) -> Path:
+        if self.current_project_path is None:
+            raise ValueError("Project not selected.")
         return self.current_project_path / "plots"
 
     def release_lock(self):

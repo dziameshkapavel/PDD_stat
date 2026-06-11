@@ -222,8 +222,12 @@ if auto_select_C:
     best_idx = np.argmax(cv_means)
     best_score = cv_means[best_idx]
     one_se_threshold = best_score - cv_stds[best_idx]
-    one_se_idx = np.where(cv_means >= one_se_threshold)[0][0]
-    c_1se = grid.param_grid['C'][one_se_idx]
+    valid_indices = [i for i in range(best_idx + 1) if cv_means[i] >= one_se_threshold]
+    if valid_indices:
+        one_se_idx = valid_indices[0]
+        c_1se = grid.param_grid['C'][one_se_idx]
+    else:
+        c_1se = best_C
     if c_1se < best_C:
         print(f"**1-SE rule C:** {c_1se:.4f} (simpler model)")
         model_1se = LogisticRegression(penalty='l1', C=c_1se, solver='saga', max_iter=10000, tol=1e-8, random_state=42, class_weight='balanced')

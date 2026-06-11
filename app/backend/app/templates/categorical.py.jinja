@@ -116,14 +116,12 @@ else:
     total = observed.sum()
     expected = np.outer(row_sums, col_sums) / total
     
+    expected_flat = expected.flatten()
     simulated_chi2 = []
     np.random.seed(42)
-    
     for _ in range(n_iterations):
-        simulated = np.random.multinomial(total, expected.flatten() / total).reshape(observed.shape)
-        sim_expected = np.outer(simulated.sum(axis=1), simulated.sum(axis=0)) / total
-        sim_expected = np.where(sim_expected == 0, 1e-10, sim_expected)
-        sim_chi2 = ((simulated - sim_expected) ** 2 / sim_expected).sum()
+        simulated = np.random.multinomial(total, expected_flat / total)
+        sim_chi2 = ((simulated - expected_flat) ** 2 / expected_flat).sum()
         simulated_chi2.append(sim_chi2)
     
     simulated_chi2 = np.array(simulated_chi2)

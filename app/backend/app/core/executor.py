@@ -62,6 +62,7 @@ class Executor:
     def _init_namespace(self):
         """Инициализирует пространство имён для выполнения кода"""
         import json
+        import builtins
         from pathlib import Path
 
         from app.core.cox_selector import CoxVariableSelector
@@ -94,6 +95,34 @@ class Executor:
                 return f"<{epsilon}"
             return f"{p:.4f}"
 
+        def safe_open(file, mode='r', *args, **kwargs):
+            if any(char in mode for char in ('w', 'a', 'x', '+')):
+                raise PermissionError("Writing is not allowed in sandbox")
+            p = Path(file).resolve()
+            if not str(p).startswith(str(Path(self.project_path).resolve())):
+                raise PermissionError("Access denied: file is outside project path")
+            return open(file, mode, *args, **kwargs)
+
+        safe_builtins = {
+            'print': print, 'len': len, 'range': range,
+            'int': int, 'float': float, 'str': str, 'bool': bool,
+            'list': list, 'dict': dict, 'tuple': tuple, 'set': set,
+            'isinstance': isinstance, 'hasattr': hasattr, 'getattr': getattr,
+            'setattr': setattr, 'delattr': delattr,
+            'enumerate': enumerate, 'zip': zip, 'map': map, 'filter': filter,
+            'sorted': sorted, 'reversed': reversed, 'min': min, 'max': max,
+            'sum': sum, 'abs': abs, 'round': round, 'any': any, 'all': all,
+            'None': None, 'True': True, 'False': False,
+            'ValueError': ValueError, 'TypeError': TypeError,
+            'KeyError': KeyError, 'IndexError': IndexError,
+            'AttributeError': AttributeError, 'ZeroDivisionError': ZeroDivisionError,
+            'RuntimeError': RuntimeError, 'Exception': Exception,
+            'dir': dir,
+            '__build_class__': __build_class__,
+            '__import__': builtins.__import__,
+            'open': safe_open,
+        }
+
         self.namespace = {
             'df': self.df,
             'pd': pd,
@@ -105,6 +134,10 @@ class Executor:
             'var_labels': var_labels_dict,
             'project_path': str(self.project_path),
             'fmt_p': fmt_p,
+            '__builtins__': safe_builtins,
+            '__name__': '__main__',
+            '__doc__': None,
+            '__package__': None,
         }
 
     def _save_plot(self, name: str, fig=None) -> str:
@@ -167,7 +200,39 @@ class Executor:
             if 'save_plot(' in line and not line.strip().startswith('#'):
                 indent = len(line) - len(line.lstrip())
                 result_lines.append(' ' * indent + 'print("[PLOT] saved")')
-        code = '\n'.join(result_lines)
+        # AST-анализ на запрещенные импорты
+        import ast
+        ALLOWED_USER_IMPORTS = {
+            'pandas', 'numpy', 'matplotlib', 'scipy', 'lifelines', 'json',
+            'time', 'pathlib', 'warnings', 'statsmodels', 'sklearn', 'itertools',
+            'typing', 'math', 'seaborn', 'collections', 'docx', 'jinja2',
+            'pyarrow', 'openpyxl', 'autograd', 'shutil', 'numbers'
+        }
+        try:
+            tree = ast.parse(code)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        root = alias.name.split('.')[0]
+                        if root not in ALLOWED_USER_IMPORTS:
+                            return {
+                                "success": False,
+                                "output": "",
+                                "error": f"Import of module '{alias.name}' is not allowed in sandbox",
+                                "traceback": ""
+                            }
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module:
+                        root = node.module.split('.')[0]
+                        if root not in ALLOWED_USER_IMPORTS:
+                            return {
+                                "success": False,
+                                "output": "",
+                                "error": f"Import from module '{node.module}' is not allowed in sandbox",
+                                "traceback": ""
+                            }
+        except SyntaxError:
+            pass
 
         stdout_capture = io.StringIO()
         stderr_capture = io.StringIO()

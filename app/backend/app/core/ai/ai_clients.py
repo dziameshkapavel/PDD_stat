@@ -263,7 +263,7 @@ class AIClientFactory:
             },
             "groq": {
                 "api_key": "",
-                "default_model": "llama3-70b-8192",
+                "default_model": "llama-3.3-70b-versatile",
                 "temperature": 0.7,
                 "max_tokens": 2000
             },
