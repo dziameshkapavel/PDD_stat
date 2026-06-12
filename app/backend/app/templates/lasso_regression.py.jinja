@@ -410,11 +410,11 @@ if show_dca_plot:
     print(f"![LASSO DCA](/plots/{dca_fn}.png)\n")
 
 # ========== Calibration ==========
+brier = ((y - y_pred_proba)**2).mean()
 if show_cal_plot:
     print("### Calibration Plot\n")
     fig_cal, ax_cal = plt.subplots(figsize=(8, 8))
     prob_true, prob_pred = calibration_curve(y, y_pred_proba, n_bins=10, strategy='uniform')
-    brier = ((y - y_pred_proba)**2).mean()
     ax_cal.plot(prob_pred, prob_true, 'o-', color='steelblue', ms=8, label=f'LASSO (Brier={brier:.3f})')
     ax_cal.plot([0, 1], [0, 1], '--', color='gray', label='Perfect calibration')
     ax_cal.set_xlabel('Predicted Probability')
