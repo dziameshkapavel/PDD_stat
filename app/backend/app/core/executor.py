@@ -65,7 +65,10 @@ class Executor:
         import json
         from pathlib import Path
 
-        from app.core.cox_selector import CoxVariableSelector
+        try:
+            from app.core.cox_selector import CoxVariableSelector
+        except ModuleNotFoundError:
+            CoxVariableSelector = None
 
         # Load labels once
         labels_path = Path(self.project_path) / "state" / "variable_labels.json"
