@@ -223,30 +223,35 @@ if errorlevel 1 (
 
 echo.
 echo Upgrading pip...
-python -m pip install --upgrade pip >nul 2>&1
+python -m pip install --upgrade pip
 
-echo Installing dependencies (may take 2-5 minutes)...
 echo.
-
-pip install -r app\backend\requirements.txt
+echo Installing core packages...
+pip install fastapi uvicorn pandas openpyxl jinja2 matplotlib numpy python-multipart scipy seaborn python-docx httpx pyyaml tabulate pyarrow
 if errorlevel 1 (
-    echo.
-    echo ============================================
-    echo  ERROR: dependency installation failed.
-    echo ============================================
-    echo.
-    echo  Possible causes:
-    echo  - No internet connection
-    echo  - Missing admin privileges
-    echo  - Old Python version (need 3.12+)
-    echo.
-    echo  Try manually:
-    echo    .venv\Scripts\activate.bat
-    echo    pip install -r app\backend\requirements.txt
-    echo.
+    echo [ERROR] Core packages install failed. Check output above.
     pause
     exit /b 1
 )
+
+echo.
+echo Installing stats packages...
+pip install lifelines scikit-learn statsmodels scikit-survival autograd autograd-gamma
+if errorlevel 1 (
+    echo [WARNING] Some stats packages failed. Survival analysis may be unavailable.
+)
+
+echo.
+echo Installing shap...
+pip install shap
+if errorlevel 1 (
+    echo [WARNING] shap install failed. Some features may be unavailable.
+    echo    shap requires Python 3.12+ on Windows.
+)
+
+echo.
+echo Installing dev tools...
+pip install pytest pytest-asyncio pytest-timeout
 
 :: =============================================
 :: 8. Verify critical packages
