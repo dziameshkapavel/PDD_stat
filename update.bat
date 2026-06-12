@@ -9,12 +9,40 @@ echo.
 
 :: Check Git
 where git >nul 2>&1
-if errorlevel 1 (
-    echo Git not found. Download from https://git-scm.com/download/win
+if not errorlevel 1 goto :git_ok
+
+echo Git not found. Installing automatically...
+echo.
+
+set "GIT_INSTALLER=%TEMP%\git-install.exe"
+powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://github.com/git-scm/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe' -OutFile '%GIT_INSTALLER%' -UseBasicParsing"
+if not exist "%GIT_INSTALLER%" (
+    echo ERROR: Download failed.
+    echo Download manually: https://git-scm.com/download/win
     start https://git-scm.com/download/win
     pause
     exit /b 1
 )
+
+echo Installing Git...
+"%GIT_INSTALLER%" /VERYSILENT /NORESTART /NOCANCEL /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /COMPONENTS="icons,ext\reg\shellhere,assoc,assoc_sh"
+del "%GIT_INSTALLER%" >nul 2>&1
+
+:: Refresh PATH
+set "PATH=%ProgramFiles%\Git\cmd;%LOCALAPPDATA%\Programs\Git\cmd;%PATH%"
+
+where git >nul 2>&1
+if errorlevel 1 (
+    echo Git installed but not found in PATH.
+    echo Close this window and run update.bat again.
+    pause
+    exit /b 1
+)
+
+echo [OK] Git installed
+echo.
+
+:git_ok
 
 :: Pull updates
 echo Pulling updates from repository...
