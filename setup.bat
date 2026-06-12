@@ -20,44 +20,40 @@ if "%PROCESSOR_ARCHITECTURE%"=="x86" (
 )
 
 :: =============================================
-:: 2. Check for Microsoft Store fake aliases
+:: 2. Remove Microsoft Store fake aliases
 :: =============================================
-set "FAKE_PYTHON="
+set "STUB_DIR=%LOCALAPPDATA%\Microsoft\WindowsApps"
 
+if exist "%STUB_DIR%\python.exe" (
+    echo [!] Removing Microsoft Store stub: python.exe
+    del "%STUB_DIR%\python.exe" >nul 2>&1
+)
+
+if exist "%STUB_DIR%\python3.exe" (
+    echo [!] Removing Microsoft Store stub: python3.exe
+    del "%STUB_DIR%\python3.exe" >nul 2>&1
+)
+
+if exist "%STUB_DIR%\py.exe" (
+    echo [!] Removing Microsoft Store stub: py.exe
+    del "%STUB_DIR%\py.exe" >nul 2>&1
+)
+
+:: Verify stubs are gone
 where python >nul 2>&1
 if not errorlevel 1 (
     python --version >nul 2>&1
     if errorlevel 1 (
-        set "FAKE_PYTHON=1"
-        echo [!] Microsoft Store stub detected for python.exe
-        echo     This is NOT real Python.
         echo.
-        echo     To disable stubs:
-        echo       Settings ^> Apps ^> Advanced app settings
-        echo       ^> App execution aliases
-        echo       Turn off "python.exe" and "python3.exe"
+        echo ERROR: Could not remove Microsoft Store stubs.
+        echo Please disable them manually:
+        echo   Settings ^> Apps ^> Advanced app settings
+        echo   ^> App execution aliases
+        echo   Turn off "python.exe" and "python3.exe"
         echo.
+        pause
+        exit /b 1
     )
-)
-
-where py >nul 2>&1
-if not errorlevel 1 (
-    py --version >nul 2>&1
-    if errorlevel 1 (
-        set "FAKE_PYTHON=1"
-        echo [!] Microsoft Store stub detected for py.exe
-        echo.
-    )
-)
-
-if defined FAKE_PYTHON (
-    echo ============================================
-    echo  Microsoft Store stubs are blocking Python.
-    echo  Disable them and run setup.bat again.
-    echo ============================================
-    echo.
-    pause
-    exit /b 1
 )
 
 :: =============================================
