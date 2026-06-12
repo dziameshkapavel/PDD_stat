@@ -209,7 +209,7 @@ class Executor:
             'pandas', 'numpy', 'matplotlib', 'scipy', 'lifelines', 'json',
             'time', 'pathlib', 'warnings', 'statsmodels', 'sklearn', 'itertools',
             'typing', 'math', 'seaborn', 'collections', 'docx', 'jinja2',
-            'pyarrow', 'openpyxl', 'autograd', 'shutil', 'numbers'
+            'pyarrow', 'openpyxl', 'autograd', 'shutil', 'numbers', 'sksurv'
         }
         try:
             tree = ast.parse(code)
