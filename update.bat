@@ -163,6 +163,13 @@ if exist ".venv\" (
         echo [WARNING] Some dependencies failed to update.
         echo Run setup.bat to reinstall.
     )
+    echo.
+    echo Ensuring autograd-gamma is installed...
+    pip install autograd-gamma
+    if errorlevel 1 (
+        echo [WARNING] autograd-gamma install failed.
+        echo    Cox regression may be unavailable.
+    )
 ) else (
     echo.
     echo No virtual environment found. Run setup.bat first.

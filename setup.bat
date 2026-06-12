@@ -236,9 +236,18 @@ if errorlevel 1 (
 
 echo.
 echo Installing stats packages...
-pip install lifelines scikit-learn statsmodels scikit-survival autograd autograd-gamma
+pip install lifelines scikit-learn statsmodels scikit-survival autograd
 if errorlevel 1 (
     echo [WARNING] Some stats packages failed. Survival analysis may be unavailable.
+)
+
+echo.
+echo Installing autograd-gamma (required by lifelines on Windows)...
+pip install autograd-gamma
+if errorlevel 1 (
+    echo [WARNING] autograd-gamma install failed.
+    echo    This is required for Cox regression. Install manually:
+    echo    pip install autograd-gamma
 )
 
 echo.
@@ -274,6 +283,13 @@ if errorlevel 1 (
 python -c "import sksurv; print('[OK] scikit-survival installed')" 2>nul
 if errorlevel 1 (
     echo [WARNING] scikit-survival not installed - survival analysis unavailable
+)
+
+python -c "import autograd_gamma; print('[OK] autograd-gamma installed')" 2>nul
+if errorlevel 1 (
+    echo [WARNING] autograd-gamma not installed.
+    echo    Cox regression will fail. Install manually:
+    echo    pip install autograd-gamma
 )
 
 :: =============================================
