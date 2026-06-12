@@ -38,7 +38,7 @@ async def log_requests(request: Request, call_next):
     t0 = datetime.now()
     response = await call_next(request)
     dt = (datetime.now() - t0).total_seconds()
-    logger.info(f"{request.method} {request.url.path} → {response.status_code} ({dt:.2f}s)")
+    logger.info(f"{request.method} {request.url.path} -> {response.status_code} ({dt:.2f}s)")
     return response
 
 @app.exception_handler(Exception)

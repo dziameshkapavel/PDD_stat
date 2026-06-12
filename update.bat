@@ -59,30 +59,80 @@ echo.
 
 :: Check if this is a git repository
 git rev-parse --git-dir >nul 2>&1
+if not errorlevel 1 goto :pull_updates
+
+echo.
+echo This folder is not a git repository (probably ZIP download).
+echo.
+echo  [A] Auto-convert to git repository (recommended)
+echo      Downloads git metadata, preserves your files.
+echo      You will be able to update with update.bat later.
+echo.
+echo  [B] Skip update
+echo.
+choice /c AB /m "Choose"
+if errorlevel 2 goto :skip_update
+if errorlevel 1 goto :auto_convert
+goto :skip_update
+
+:auto_convert
+echo.
+echo Initializing git repository...
+git init
 if errorlevel 1 (
-    echo.
-    echo This folder is not a git repository.
-    echo It was probably downloaded as a ZIP file.
-    echo.
-    echo To fix this, run these commands in the parent folder:
-    echo.
-    echo   cd ..
-    echo   rmdir /s /q "%~nx0"
-    echo   git clone https://github.com/dziameshkapavel/PDD_stat.git
-    echo   cd PDD_stat
-    echo   update.bat
-    echo.
-    echo Or just download setup.bat and run it in a new folder.
+    echo ERROR: git init failed.
     pause
     exit /b 1
 )
+
+git remote add origin https://github.com/dziameshkapavel/PDD_stat.git >nul 2>&1
+echo Fetching from remote...
+git fetch origin
+if errorlevel 1 (
+    echo ERROR: failed to fetch from remote.
+    echo Check your internet connection.
+    pause
+    exit /b 1
+)
+
+echo Resetting to latest version...
+
+git rev-parse --verify origin/main >nul 2>&1
+if errorlevel 1 (
+    git checkout -b master origin/master
+) else (
+    git checkout -b main origin/main
+)
+if errorlevel 1 (
+    echo ERROR: failed to create local branch.
+    pause
+    exit /b 1
+)
+
+echo.
+echo [OK] Folder converted to git repository.
+echo.
+goto :pull_updates
+
+:skip_update
+echo.
+echo Update skipped.
+pause
+exit /b 1
+
+:pull_updates
 
 :: Pull updates
 echo Pulling updates from repository...
 echo.
 git remote -v
 echo.
-git pull 2>&1
+
+:: Use explicit remote+branch to avoid "no tracking info" error
+git pull origin main 2>&1
+if errorlevel 1 (
+    git pull origin master 2>&1
+)
 if errorlevel 1 (
     echo.
     echo ERROR: failed to pull updates.
@@ -93,7 +143,7 @@ if errorlevel 1 (
     echo   3. Repository is not accessible
     echo.
     echo Try running manually in this folder:
-    echo   git pull
+    echo   git pull origin main
     echo.
     echo If git pull asks for login, use a Personal Access Token:
     echo   https://github.com/settings/tokens
