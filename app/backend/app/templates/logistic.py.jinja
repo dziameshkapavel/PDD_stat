@@ -12,7 +12,7 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import auc, confusion_matrix, roc_auc_score, roc_curve
 from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings('ignore', message='.*MATPLOTLIB.*')
 from sklearn.calibration import calibration_curve
@@ -103,6 +103,7 @@ except:
     pass
 
 target_col = "{{ target_col }}"
+event_value = int({{ event_value|default(1)|tojson }})
 predictors = {{ predictors|default([])|tojson }}
 regression_type = "{{ regression_type|default('multi') }}"
 covariate_types = {{ covariate_types|default({})|tojson }}
@@ -249,10 +250,12 @@ if encoding_map:
         print(f"   * `{col}`: Reference = `{info['reference']}`, Categories = {info['categories']}")
     print()
 
+# Encode target: event_value -> 1, rest -> 0
 if df_log[target_col].dtype == 'object' or df_log[target_col].dtype.name == 'category':
-    le_target = LabelEncoder()
-    df_log[target_col] = le_target.fit_transform(df_log[target_col].astype(str))
-    print(f"**Target encoded:** 0 = {le_target.classes_[0]}, 1 = {le_target.classes_[1]}")
+    unique_vals = sorted(df_log[target_col].astype(str).unique())
+    if len(unique_vals) != 2:
+        raise ValueError(f"Target variable must be binary, found {unique_vals}")
+df_log[target_col] = (df_log[target_col] == event_value).astype(int)
 
 n_before = len(df_log)
 df_log = df_log.dropna()
@@ -268,7 +271,7 @@ if unique_targets != 2:
 n_cases = df_log[target_col].sum()
 n_controls = len(df_log) - n_cases
 print(f"**Observations (complete cases):** {len(df_log)}  ")
-print(f"**Events (1):** {int(n_cases)}  ")
+print(f"**Events ({event_value}):** {int(n_cases)}  ")
 print(f"**Non-events (0):** {int(n_controls)}  \n")
 
 # EPV check (LOG-103)

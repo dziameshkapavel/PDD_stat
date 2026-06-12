@@ -242,6 +242,7 @@ export class LogisticModel extends BaseModel {
         
         const predictors = vars.predictors ? Array.from(vars.predictors) : [];
         const covariate_types = card.covariateTypes || {};
+        const eventSelect = card.querySelector('.event-value-select');
         
         const reference_groups = {};
         card.querySelectorAll('.ref-group-item').forEach(item => {
@@ -265,7 +266,8 @@ export class LogisticModel extends BaseModel {
             regression_type: regressionType,
             validation: validation,
             covariate_types,
-            reference_groups
+            reference_groups,
+            event_value: eventSelect ? parseInt(eventSelect.value) : 1
         };
     }
     

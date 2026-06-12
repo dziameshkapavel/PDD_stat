@@ -183,6 +183,7 @@ export class LassoModel extends BaseModel {
         const autoCheck = card.querySelector('.auto-c-check');
         const cInput = card.querySelector('.c-value-input');
         const covariate_types = card.covariateTypes || {};
+        const eventSelect = card.querySelector('.event-value-select');
         
         const plotCoef = card.querySelector('.plot-coef-check');
         const plotCv = card.querySelector('.plot-cv-check');
@@ -206,6 +207,7 @@ export class LassoModel extends BaseModel {
             C_value: cInput ? parseFloat(cInput.value) || 1.0 : 1.0,
             covariate_types,
             reference_groups,
+            event_value: eventSelect ? parseInt(eventSelect.value) : 1,
             show_coef_plot: plotCoef ? plotCoef.checked : false,
             show_cv_plot: plotCv ? plotCv.checked : false,
             show_dca_plot: plotDca ? plotDca.checked : false,

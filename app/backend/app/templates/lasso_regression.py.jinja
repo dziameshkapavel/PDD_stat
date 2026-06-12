@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.metrics import roc_auc_score, accuracy_score, classification_report
 import json
@@ -40,6 +40,7 @@ n_1se_val = None
 print("## Logistic LASSO: Feature Selection\n")
 
 target_col = "{{ target_col }}"
+event_value = int({{ event_value|default(1)|tojson }})
 covariates = {{ covariates|default([])|tojson }}
 C_value = {{ C_value|default(1.0)|float }}
 auto_select_C = {{ auto_select_C|default(True) }}
@@ -90,11 +91,13 @@ reference_groups = {{ reference_groups|default({})|tojson }}
 # Подготовка данных
 df_model = df[[target_col] + valid_cov].copy()
 
-# Кодируем целевую если нужно
+# Encode target: event_value -> 1, rest -> 0
 if df_model[target_col].dtype == 'object' or df_model[target_col].dtype.name == 'category':
-    le_target = LabelEncoder()
-    df_model[target_col] = le_target.fit_transform(df_model[target_col].astype(str))
-    print(f"**Target encoded:** 0 = {le_target.classes_[0]}, 1 = {le_target.classes_[1]}\n")
+    unique_vals = sorted(df_model[target_col].astype(str).unique())
+    if len(unique_vals) != 2:
+        raise ValueError(f"Target variable must be binary, found {unique_vals}")
+df_model[target_col] = (df_model[target_col] == event_value).astype(int)
+print(f"**Target:** event = {event_value}\n")
 
 def prepare_dummies(df_in, covariates_list, ref_groups, cov_types):
     df_out = df_in.copy()
@@ -165,7 +168,7 @@ n_total = len(df_model)
 n_positive = int(df_model[target_col].sum())
 n_negative = n_total - n_positive
 print(f"**Observations:** {n_total}")
-print(f"**Events (1):** {n_positive} ({n_positive/n_total*100:.1f}%)")
+print(f"**Events ({event_value}):** {n_positive} ({n_positive/n_total*100:.1f}%)")
 print(f"**Non-events (0):** {n_negative} ({n_negative/n_total*100:.1f}%)\n")
 
 # LAS-107: Small sample warning
