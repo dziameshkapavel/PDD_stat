@@ -320,6 +320,7 @@ print(f"**Accuracy:** {accuracy:.4f}")
 print(f"**Intercept:** {intercept:.4f}\n")
 
 timestamp = str(int(time.time()))
+output_plots = []
 
 # График коэффициентов
 if show_coef_plot and n_selected > 0:
@@ -353,6 +354,7 @@ if show_coef_plot and n_selected > 0:
     plt.tight_layout()
     plot_filename = f"lasso_coefs_{timestamp}"
     save_plot(plot_filename, fig)
+    output_plots.append(f"{plot_filename}.png")
     print(f"![LASSO Coefficients](/plots/{plot_filename}.png)\n")
 
 # CV curve если авто
@@ -373,6 +375,7 @@ if show_cv_plot and auto_select_C:
     plt.tight_layout()
     cv_plot = f"lasso_cv_{timestamp}"
     save_plot(cv_plot, fig)
+    output_plots.append(f"{cv_plot}.png")
     print(f"![LASSO CV](/plots/{cv_plot}.png)\n")
 
 # ========== DCA ==========
@@ -407,6 +410,7 @@ if show_dca_plot:
     plt.tight_layout()
     dca_fn = f"lasso_dca_{timestamp}"
     save_plot(dca_fn, fig_dca)
+    output_plots.append(f"{dca_fn}.png")
     print(f"![LASSO DCA](/plots/{dca_fn}.png)\n")
 
 # ========== Calibration ==========
@@ -425,6 +429,7 @@ if show_cal_plot:
     plt.tight_layout()
     cal_fn = f"lasso_calibration_{timestamp}"
     save_plot(cal_fn, fig_cal)
+    output_plots.append(f"{cal_fn}.png")
     print(f"![LASSO Calibration](/plots/{cal_fn}.png)\n")
 
 # ========== JSON METRICS FOR AI ==========
@@ -455,7 +460,8 @@ output_metrics = {
     "zeroed_features": [display_name(f) for f in zeroed_features['Feature'].tolist()] if n_zeroed > 0 else [],
     "encoding_map": {col: {'categories': info['categories'], 'reference': info['reference']} for col, info in encoding_map.items()},
     "c_1se": c_1se_val,
-    "n_features_1se": n_1se_val
+    "n_features_1se": n_1se_val,
+    "plots": output_plots
 }
 
 def make_json_serializable(obj):

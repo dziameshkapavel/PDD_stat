@@ -68,7 +68,8 @@ export class LassoModel extends BaseModel {
             
             loadingDiv.remove();
             this.renderResults(block, result);
-            await this.displayPlots(block, 'lasso');
+            const plotFiles = (result.metrics && result.metrics.plots) ? result.metrics.plots : null;
+            await this.displayPlots(block, null, plotFiles);
             
         } catch (error) {
             loadingDiv.remove();
