@@ -68,7 +68,7 @@ class Executor:
         try:
             from app.core.cox_selector import CoxVariableSelector
         except ModuleNotFoundError:
-            CoxVariableSelector = None
+            CoxVariableSelector = None  # noqa: N806
 
         # Load labels once
         labels_path = Path(self.project_path) / "state" / "variable_labels.json"
