@@ -64,22 +64,17 @@ if errorlevel 1 (
     echo This folder is not a git repository.
     echo It was probably downloaded as a ZIP file.
     echo.
-    echo Initializing git in this folder...
+    echo To fix this, run these commands in the parent folder:
     echo.
-    git init
-    git remote add origin https://github.com/dziameshkapavel/PDD_stat.git
-    git fetch origin main
-    git checkout main
-    if errorlevel 1 (
-        echo.
-        echo ERROR: Could not initialize repository.
-        echo Delete this folder and clone properly:
-        echo   git clone https://github.com/dziameshkapavel/PDD_stat.git
-        pause
-        exit /b 1
-    )
-    echo [OK] Repository initialized
+    echo   cd ..
+    echo   rmdir /s /q "%~nx0"
+    echo   git clone https://github.com/dziameshkapavel/PDD_stat.git
+    echo   cd PDD_stat
+    echo   update.bat
     echo.
+    echo Or just download setup.bat and run it in a new folder.
+    pause
+    exit /b 1
 )
 
 :: Pull updates
