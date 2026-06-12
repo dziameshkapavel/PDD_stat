@@ -17,6 +17,39 @@ if not exist ".venv\" (
 )
 
 :: =============================================
+:: Check for updates
+:: =============================================
+where git >nul 2>&1
+if errorlevel 1 goto :update_checked
+
+git rev-parse --git-dir >nul 2>&1
+if errorlevel 1 goto :update_checked
+
+echo Checking for updates...
+git fetch origin 2>nul
+if errorlevel 1 goto :update_checked
+
+git rev-parse --verify origin/main >nul 2>&1
+if errorlevel 1 goto :update_checked
+
+set "UPD_COUNT=0"
+git rev-list --count HEAD..origin/main > "%TEMP%\pdd_upd.txt" 2>nul
+set /p "UPD_COUNT=" < "%TEMP%\pdd_upd.txt"
+if not defined UPD_COUNT set "UPD_COUNT=0"
+if "%UPD_COUNT%"=="0" goto :update_checked
+
+echo.
+echo Updates available (%UPD_COUNT% new commit^(s^)^).
+choice /c YN /m "Install and start"
+if errorlevel 2 goto :update_checked
+
+echo.
+call update.bat
+echo.
+
+:update_checked
+
+:: =============================================
 :: Search Python (same logic as setup.bat)
 :: =============================================
 set "PYTHON_CMD="
