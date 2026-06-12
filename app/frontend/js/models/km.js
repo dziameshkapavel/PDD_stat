@@ -110,7 +110,7 @@ export class KaplanMeierModel extends BaseModel {
         
         const title = `Kaplan-Meier (${params.plot_type === 'hazard' ? 'Cumulative Hazard' : 'Survival'})`;
         const block = this.createResultsBlock(card, title);
-        block.querySelector('.results-stats')?.remove();
+        (block.querySelector('.results-stats') == null ? void 0 : block.querySelector('.results-stats').remove());
         
         const loadingDiv = this._showLoading(block);
         
@@ -142,7 +142,7 @@ export class KaplanMeierModel extends BaseModel {
                     const stratum = metrics.strata[i];
                     const stratumTitle = `Stratum: ${stratum.stratum} (n=${stratum.n}, events=${stratum.events})`;
                     const stratumBlock = this.createResultsBlock(card, stratumTitle);
-                    stratumBlock.querySelector('.results-stats')?.remove();
+                    (stratumBlock.querySelector('.results-stats') == null ? void 0 : stratumBlock.querySelector('.results-stats').remove());
                     
                     const stratumLoading = this._showLoading(stratumBlock);
                     stratumLoading.remove();
@@ -196,11 +196,11 @@ export class KaplanMeierModel extends BaseModel {
         
         let xTickStep = 6, xLabel = 'Time, months', yTickStep = 0.1, yLabel = 'Survival Probability';
         if (axesRow && axesRow.style.display !== 'none') {
-            xTickStep = parseInt(card.querySelector('.x-step-input')?.value) || 6;
-            xLabel = card.querySelector('.x-label-input')?.value || 'Time, months';
-            const yStepPct = parseInt(card.querySelector('.y-step-input')?.value) || 10;
+            xTickStep = parseInt((card.querySelector('.x-step-input') == null ? void 0 : card.querySelector('.x-step-input').value)) || 6;
+            xLabel = (card.querySelector('.x-label-input') == null ? void 0 : card.querySelector('.x-label-input').value) || 'Time, months';
+            const yStepPct = parseInt((card.querySelector('.y-step-input') == null ? void 0 : card.querySelector('.y-step-input').value)) || 10;
             yTickStep = yStepPct / 100;
-            yLabel = card.querySelector('.y-label-input')?.value || 'Survival Probability';
+            yLabel = (card.querySelector('.y-label-input') == null ? void 0 : card.querySelector('.y-label-input').value) || 'Survival Probability';
         }
         
         return {
@@ -287,7 +287,7 @@ export class KaplanMeierModel extends BaseModel {
         let h = '<div style="padding:16px;display:flex;flex-direction:column;gap:16px;">';
         
         // Log-Rank Test card
-        const pOverall = typeof m.logrank_overall === 'number' ? m.logrank_overall : (m.logrank_overall?.p_value ?? null);
+        const pOverall = typeof m.logrank_overall === 'number' ? m.logrank_overall : (m.logrank_overall && logrank_overall.p_value ?? null);
         const pairwise = m.logrank_pairwise;
         if (pOverall || (pairwise && pairwise.length)) {
             h += `<div class="diagnostic-card"><h3 class="diagnostic-card-title">Log-Rank Test</h3><div class="diagnostic-card-content">`;

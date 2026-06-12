@@ -25,14 +25,14 @@ export class ChartBuilderModel extends BaseModel {
         const scatterParams = card.querySelector('.scatter-params');
         
         const updateFields = () => {
-            const type = typeSelect?.value || 'histogram';
+            const type = typeSelect && typeSelect.value || 'histogram';
             yGroup.style.display = (type === 'scatter') ? 'block' : 'none';
             groupGroup.style.display = (type === 'histogram') ? 'none' : 'block';
             histParams.style.display = (type === 'histogram') ? 'block' : 'none';
             scatterParams.style.display = (type === 'scatter') ? 'block' : 'none';
         };
         
-        typeSelect?.addEventListener('change', updateFields);
+        typeSelect && typeSelect.addEventListener('change', updateFields);
         updateFields();
         
         // Chart Axes toggle
@@ -66,7 +66,7 @@ export class ChartBuilderModel extends BaseModel {
         }
         
         const block = this.createResultsBlock(card, `Chart: ${params.chart_type}`);
-        block.querySelector('.results-stats')?.remove();
+        (block.querySelector('.results-stats') == null ? void 0 : block.querySelector('.results-stats').remove());
         const loadingDiv = this._showLoading(block);
         
         try {
@@ -88,14 +88,14 @@ export class ChartBuilderModel extends BaseModel {
     
     _getParameters(card) {
         const vars = this.state.getCardVariables(card.id);
-        const chartType = card.querySelector('.chart-type-select')?.value || 'histogram';
+        const chartType = (card.querySelector('.chart-type-select') == null ? void 0 : card.querySelector('.chart-type-select').value) || 'histogram';
         
         const axesRow = card.querySelector('.chart-axes-row');
         let title = '', xLabel = '', yLabel = '';
         if (axesRow && axesRow.style.display !== 'none') {
-            title = card.querySelector('.title-input')?.value || '';
-            xLabel = card.querySelector('.x-label-input')?.value || '';
-            yLabel = card.querySelector('.y-label-input')?.value || '';
+            title = (card.querySelector('.title-input') == null ? void 0 : card.querySelector('.title-input').value) || '';
+            xLabel = (card.querySelector('.x-label-input') == null ? void 0 : card.querySelector('.x-label-input').value) || '';
+            yLabel = (card.querySelector('.y-label-input') == null ? void 0 : card.querySelector('.y-label-input').value) || '';
         }
         
         return {
@@ -103,9 +103,9 @@ export class ChartBuilderModel extends BaseModel {
             x_col: vars.x || '',
             y_col: vars.y || '',
             group_col: vars.group || '',
-            bins: parseInt(card.querySelector('.bins-input')?.value) || 20,
-            show_kde: card.querySelector('.kde-check')?.checked || false,
-            show_regline: card.querySelector('.regline-check')?.checked || false,
+            bins: parseInt((card.querySelector('.bins-input') == null ? void 0 : card.querySelector('.bins-input').value)) || 20,
+            show_kde: (card.querySelector('.kde-check') == null ? void 0 : card.querySelector('.kde-check').checked) || false,
+            show_regline: (card.querySelector('.regline-check') == null ? void 0 : card.querySelector('.regline-check').checked) || false,
             title: title,
             x_label: xLabel,
             y_label: yLabel,

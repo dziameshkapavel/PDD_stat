@@ -85,7 +85,7 @@ export class SurvivalEvaluationModel extends BaseModel {
         
         const title = `Survival Prediction Evaluation (${params.pred_cols.length} models)`;
         const block = this.createResultsBlock(card, title);
-        block.querySelector('.results-stats')?.remove();
+        (block.querySelector('.results-stats') == null ? void 0 : block.querySelector('.results-stats').remove());
         
         const loadingDiv = this._showLoading(block);
         
@@ -123,11 +123,11 @@ export class SurvivalEvaluationModel extends BaseModel {
         const bootstrapSeedInput = card.querySelector('.bootstrap-seed-input');
         const comparisonCheck = card.querySelector('.comparison-check');
         
-        const timeCol = timeInput?.value?.trim() || vars.time || '';
-        const eventCol = eventInput?.value?.trim() || vars.event || '';
+        const timeCol = timeInput && timeInput.value && value.trim() || vars.time || '';
+        const eventCol = eventInput && eventInput.value && value.trim() || vars.event || '';
         
         let predCols = [];
-        if (predictorsInput?.value?.trim()) {
+        if (predictorsInput && predictorsInput.value && value.trim()) {
             predCols = predictorsInput.value.split(',').map(s => s.trim()).filter(s => s);
         } else if (vars.predictors instanceof Set) {
             predCols = Array.from(vars.predictors);
@@ -135,29 +135,29 @@ export class SurvivalEvaluationModel extends BaseModel {
             predCols = vars.predictors;
         }
         
-        const timePointsStr = timePointsInput?.value || '';
+        const timePointsStr = timePointsInput && timePointsInput.value || '';
         const evalTimes = timePointsStr.split(',')
             .map(t => parseInt(t.trim()))
             .filter(t => !isNaN(t) && t > 0);
         const timeStep = evalTimes.length >= 2 ? evalTimes[1] - evalTimes[0] : 6;
         
-        const nBootstrap = parseInt(bootstrapInput?.value) || 1000;
-        const runComparison = comparisonCheck?.checked && nBootstrap > 0;
+        const nBootstrap = parseInt(bootstrapInput && bootstrapInput.value) || 1000;
+        const runComparison = comparisonCheck && comparisonCheck.checked && nBootstrap > 0;
         const runCalibration = false;
         
         const stratifyInput = card.querySelector('.stratify-input');
-        const stratifyCol = stratifyInput?.value?.trim() || vars.stratify || '';
+        const stratifyCol = stratifyInput && stratifyInput.value && value.trim() || vars.stratify || '';
         
         let xTickStep = 6, xLabel = 'Time, months', yTickStep = 0.1, yLabel = 'AUC';
         const axesRow = card.querySelector('.chart-axes-row');
         if (axesRow && axesRow.style.display !== 'none') {
-            xTickStep = parseInt(card.querySelector('.x-step-input')?.value) || 6;
-            xLabel = card.querySelector('.x-label-input')?.value || 'Time, months';
-            yTickStep = parseFloat(card.querySelector('.y-step-input')?.value) || 0.1;
-            yLabel = card.querySelector('.y-label-input')?.value || 'AUC';
+            xTickStep = parseInt((card.querySelector('.x-step-input') == null ? void 0 : card.querySelector('.x-step-input').value)) || 6;
+            xLabel = (card.querySelector('.x-label-input') == null ? void 0 : card.querySelector('.x-label-input').value) || 'Time, months';
+            yTickStep = parseFloat((card.querySelector('.y-step-input') == null ? void 0 : card.querySelector('.y-step-input').value)) || 0.1;
+            yLabel = (card.querySelector('.y-label-input') == null ? void 0 : card.querySelector('.y-label-input').value) || 'AUC';
         }
         
-        const smooth = card.querySelector('.smooth-btn')?.classList.contains('active') || false;
+        const smooth = (card.querySelector('.smooth-btn') == null ? void 0 : card.querySelector('.smooth-btn').classList.contains('active')) || false;
 
         return {
             time_col: timeCol,
@@ -201,7 +201,7 @@ export class SurvivalEvaluationModel extends BaseModel {
                     html += '</tbody></table>';
                 }
                 
-                const timeAuc = metrics.time_auc?.[s.label] || {};
+                const timeAuc = metrics.time_auc && time_auc.[s.label] || {};
                 if (Object.keys(timeAuc).length > 0) {
                     // Use user-specified time points if any, otherwise show nothing
                     const userPoints = params.time_points ? params.time_points.split(',').map(t => parseInt(t.trim())).filter(t => !isNaN(t)) : [];
@@ -214,11 +214,11 @@ export class SurvivalEvaluationModel extends BaseModel {
                         for (const [m, data] of Object.entries(timeAuc)) {
                             html += `<tr><td><strong>${m}</strong></td>`;
                             sortedTimes.forEach(t => {
-                                const cell = data?.[String(t)];
+                                const cell = data && data.[String(t)];
                                 if (cell) {
-                                    const auc = cell.auc?.toFixed(3) || '—';
-                                    const ciLow = cell.ci_low?.toFixed(3) || '';
-                                    const ciHigh = cell.ci_high?.toFixed(3) || '';
+                                    const auc = cell.auc && auc.toFixed(3) || '—';
+                                    const ciLow = cell.ci_low && ci_low.toFixed(3) || '';
+                                    const ciHigh = cell.ci_high && ci_high.toFixed(3) || '';
                                     const p = cell.p_value;
                                     const pStr = (p != null) ? ` p=${Number(p).toFixed(4)}` : '';
                                     if (ciLow && ciHigh) {
@@ -276,14 +276,14 @@ export class SurvivalEvaluationModel extends BaseModel {
         
         // Sort by C-index descending
         const sortedModels = models.sort((a, b) => 
-            (cIndices[b]?.value || 0) - (cIndices[a]?.value || 0)
+            ((cIndices[b] == null ? void 0 : cIndices[b].value) || 0) - ((cIndices[a] == null ? void 0 : cIndices[a].value) || 0)
         );
         
         sortedModels.forEach(m => {
             const c = cIndices[m] || {};
-            const val = c.value?.toFixed(4) || '—';
-            const ciLow = c.ci_low?.toFixed(4) || '—';
-            const ciHigh = c.ci_high?.toFixed(4) || '—';
+            const val = c.value && value.toFixed(4) || '—';
+            const ciLow = c.ci_low && ci_low.toFixed(4) || '—';
+            const ciHigh = c.ci_high && ci_high.toFixed(4) || '—';
             
             // Color coding
             let color = 'var(--text-muted)';
@@ -304,7 +304,7 @@ export class SurvivalEvaluationModel extends BaseModel {
     _renderTimeAUC(pane, metrics, output) {
         const timeAuc = metrics.time_auc || {};
         // Use user-specified time points if any, otherwise show nothing
-        const userPoints = output?.time_points ? output.time_points.split(',').map(t => parseInt(t.trim())).filter(t => !isNaN(t)) : [];
+        const userPoints = output && output.time_points ? output.time_points.split(',').map(t => parseInt(t.trim())).filter(t => !isNaN(t)) : [];
         const sortedTimes = userPoints.length > 0 ? userPoints.sort((a, b) => a - b) : [];
         
         if (sortedTimes.length > 0) {
@@ -319,7 +319,7 @@ export class SurvivalEvaluationModel extends BaseModel {
             for (const m of models) {
                 html += `<tr><td><strong>${m}</strong></td>`;
                 sortedTimes.forEach(t => {
-                    html += `<td>${timeAuc[m]?.[String(t)]?.auc?.toFixed(3) || '—'}</td>`;
+                    html += `<td>${timeAuc[m] && timeAuc[m][String(t)] && timeAuc[m][String(t)].auc && timeAuc[m][String(t)].auc.toFixed(3) || '—'}</td>`;
                 });
                 html += '</tr>';
             }
@@ -436,15 +436,15 @@ export class SurvivalEvaluationModel extends BaseModel {
             });
             html += '</tr></thead><tbody>';
             
-            const nGroups = (calData[timePoints[0]]?.observed || []).length;
+            const nGroups = ((calData[timePoints[0]] == null ? void 0 : calData[timePoints[0]].observed) || []).length;
             
             for (let g = 0; g < nGroups; g++) {
                 html += '<tr>';
                 html += `<td><strong>Q${g + 1}</strong></td>`;
                 
                 timePoints.forEach(t => {
-                    const obs = calData[t]?.observed?.[g];
-                    const pred = calData[t]?.predicted?.[g];
+                    const obs = calData[t] && calData[t].observed && calData[t].observed[g];
+                    const pred = calData[t] && calData[t].predicted && calData[t].predicted[g];
                     
                     if (obs != null) {
                         const diff = Math.abs(obs - pred);

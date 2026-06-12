@@ -57,8 +57,8 @@ export class CoxModel extends BaseModel {
         });
         
         const updateStepwiseVis = () => {
-            const activeType = card.querySelector('.analysis-type.active')?.dataset.type;
-            const activeMethod = card.querySelector('.method-btn.active')?.dataset.method;
+            const activeType = (card.querySelector('.analysis-type.active') == null ? void 0 : card.querySelector('.analysis-type.active').dataset).type;
+            const activeMethod = (card.querySelector('.method-btn.active') == null ? void 0 : card.querySelector('.method-btn.active').dataset).method;
             
             if (activeType === 'multivariate' && (activeMethod === 'forward' || activeMethod === 'backward')) {
                 stepwisePGroup.classList.remove('hidden');

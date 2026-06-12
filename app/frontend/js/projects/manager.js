@@ -84,8 +84,8 @@ export class ProjectManager {
     }
     
     async handleCreateProject() {
-        const name = this.newProjectNameInput?.value?.trim();
-        const file = this.newProjectFileInput?.files[0];
+        const name = this.newProjectNameInput && newProjectNameInput.value && value.trim();
+        const file = this.newProjectFileInput && newProjectFileInput.files[0];
         
         if (!name) {
             this.modals.showAlert('Please enter a project name');
@@ -111,10 +111,10 @@ export class ProjectManager {
             let html = `<p><strong>File:</strong> ${data.filename}</p>`;
             html += `<p><strong>Rows:</strong> ${data.audit.shape.rows}, <strong>Columns:</strong> ${data.audit.shape.columns}</p>`;
             
-            if (plan.drop_columns?.length) {
+            if (plan.drop_columns && drop_columns.length) {
                 html += `<p><strong>Recommended to drop:</strong> ${plan.drop_columns.join(", ")}</p>`;
             }
-            if (plan.to_impute?.length) {
+            if (plan.to_impute && to_impute.length) {
                 html += `<p><strong>Will impute:</strong> ${plan.to_impute.map(i => i.column).join(", ")}</p>`;
             }
             
@@ -247,10 +247,10 @@ export class ProjectManager {
             let html = `<p><strong>File:</strong> ${data.filename}</p>`;
             html += `<p><strong>Rows:</strong> ${data.audit.shape.rows}, <strong>Columns:</strong> ${data.audit.shape.columns}</p>`;
             
-            if (plan.drop_columns?.length) {
+            if (plan.drop_columns && drop_columns.length) {
                 html += `<p><strong>Recommended to drop:</strong> ${plan.drop_columns.join(", ")}</p>`;
             }
-            if (plan.to_impute?.length) {
+            if (plan.to_impute && to_impute.length) {
                 html += `<p><strong>Will impute:</strong> ${plan.to_impute.map(i => i.column).join(", ")}</p>`;
             }
             

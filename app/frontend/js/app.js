@@ -241,11 +241,11 @@ class App {
     _toggleCodeMode(show) {
         if (show) {
             this.ui.panels.hideEmptyState();
-            document.getElementById('analysisCards')?.classList.add('hidden');
-            this.codeEditorContainer?.classList.remove('hidden');
+            (document.getElementById('analysisCards') == null ? void 0 : document.getElementById('analysisCards').classList).add('hidden');
+            this.codeEditorContainer && codeEditorContainer.classList.remove('hidden');
         } else {
-            this.codeEditorContainer?.classList.add('hidden');
-            document.getElementById('analysisCards')?.classList.remove('hidden');
+            this.codeEditorContainer && codeEditorContainer.classList.add('hidden');
+            (document.getElementById('analysisCards') == null ? void 0 : document.getElementById('analysisCards').classList).remove('hidden');
             
             const analysisCards = document.getElementById('analysisCards');
             if (analysisCards && analysisCards.children.length === 0) {
@@ -255,8 +255,8 @@ class App {
     }
     
     async _runCode() {
-        const code = this.codeEditor?.value;
-        if (!code?.trim()) {
+        const code = this.codeEditor && codeEditor.value;
+        if (!code && code.trim()) {
             this.ui.modals.showAlert('Enter some code first');
             return;
         }

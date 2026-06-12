@@ -38,7 +38,7 @@ export class CorrelationModel extends BaseModel {
         
         const title = `Correlation Analysis (${params.method}, |r| > ${params.threshold})`;
         const block = this.createResultsBlock(card, title);
-        block.querySelector('.results-stats')?.remove();
+        (block.querySelector('.results-stats') == null ? void 0 : block.querySelector('.results-stats').remove());
         
         const loadingDiv = this._showLoading(block);
         

@@ -25,8 +25,8 @@ export class AgreementCategoricalModel extends BaseModel {
     _setupButtons(card) {
         const nomBtn = card.querySelector('.btn-nominal');
         const ordBtn = card.querySelector('.btn-ordinal');
-        nomBtn?.addEventListener('click', () => { nomBtn.classList.add('active'); ordBtn?.classList.remove('active'); card.dataset.scaleType = 'nominal'; });
-        ordBtn?.addEventListener('click', () => { ordBtn.classList.add('active'); nomBtn?.classList.remove('active'); card.dataset.scaleType = 'ordinal'; });
+        nomBtn && nomBtn.addEventListener('click', () => { nomBtn.classList.add('active'); ordBtn && ordBtn.classList.remove('active'); card.dataset.scaleType = 'nominal'; });
+        ordBtn && ordBtn.addEventListener('click', () => { ordBtn.classList.add('active'); nomBtn && nomBtn.classList.remove('active'); card.dataset.scaleType = 'ordinal'; });
     }
     
     async run(card) {
@@ -35,7 +35,7 @@ export class AgreementCategoricalModel extends BaseModel {
         const params = this._getParameters(card, scaleType);
         if (params.raters.length < 2) { this.ui.modals.showAlert('Select at least 2 rater columns'); return; }
         const block = this.createResultsBlock(card, 'Agreement Analysis');
-        block.querySelector('.results-stats')?.remove();
+        (block.querySelector('.results-stats') == null ? void 0 : block.querySelector('.results-stats').remove());
         const loadingDiv = this._showLoading(block);
         try {
             const response = await fetch(`${API_BASE}/analysis/run`, {
@@ -88,9 +88,9 @@ export class AgreementCategoricalModel extends BaseModel {
         let html = '<div style="display:flex;flex-direction:column;gap:16px;">';
         html += '<div class="diagnostic-card"><h3 class="diagnostic-card-title">Kappa Coefficient</h3><div class="diagnostic-card-content">';
         html += `<div style="text-align:center;padding:20px 0;">`;
-        html += `<div style="font-size:48px;font-weight:700;color:${color};">${kappa?.toFixed(4)}</div>`;
+        html += `<div style="font-size:48px;font-weight:700;color:${color};">${kappa && kappa.toFixed(4)}</div>`;
         html += `<div style="font-size:18px;font-weight:600;color:${color};margin-top:4px;">${interp || ''}</div>`;
-        html += `<div style="font-size:13px;color:var(--text-muted);margin-top:8px;">95% CI: ${ci_low?.toFixed(4)} – ${ci_high?.toFixed(4)} | p = ${p_val?.toFixed(4)}</div>`;
+        html += `<div style="font-size:13px;color:var(--text-muted);margin-top:8px;">95% CI: ${ci_low && ci_low.toFixed(4)} – ${ci_high && ci_high.toFixed(4)} | p = ${p_val && p_val.toFixed(4)}</div>`;
         html += `</div></div></div>`;
         html += `<div class="diagnostic-card"><h3 class="diagnostic-card-title">Details</h3><div class="diagnostic-card-content">`;
         html += `<div class="diagnostic-item">Raters: ${(metrics.raters||[]).join(', ')} (${metrics.n_raters})</div>`;
@@ -121,7 +121,7 @@ export class AgreementCategoricalModel extends BaseModel {
                 h += '<tr>';
                 tableRows[i].forEach((c, j) => {
                     const val = parseInt(c);
-                    const isDiag = !isNaN(val) && j > 0 && tableRows[0][j]?.trim() === tableRows[i][0]?.trim();
+                    const isDiag = !isNaN(val) && j > 0 && (tableRows[0][j] == null ? void 0 : tableRows[0][j].trim()) === (tableRows[i][0] == null ? void 0 : tableRows[i][0].trim());
                     h += `<td style="${isDiag ? 'background:var(--accent-blue-light);font-weight:600;' : ''}">${c}</td>`;
                 });
                 h += '</tr>';

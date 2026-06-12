@@ -47,7 +47,7 @@ export class CategoricalModel extends BaseModel {
         
         const title = `Categorical comparison (${vars.col1} vs ${vars.col2})`;
         const block = this.createResultsBlock(card, title);
-        block.querySelector('.results-stats')?.remove();
+        (block.querySelector('.results-stats') == null ? void 0 : block.querySelector('.results-stats').remove());
         
         const loadingDiv = this._showLoading(block);
         

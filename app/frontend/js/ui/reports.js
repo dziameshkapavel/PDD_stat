@@ -194,7 +194,7 @@ export class ReportsPanel {
             sections.push(cb.value);
         });
         
-        const title = this.container.querySelector('.report-title')?.value || 'Analysis Report';
+        const title = (this.container.querySelector('.report-title') == null ? void 0 : this.container.querySelector('.report-title').value) || 'Analysis Report';
         
         const statusDiv = this.container.querySelector('#reportStatus');
         const generateBtn = this.container.querySelector('#generateReportBtn');
@@ -247,7 +247,7 @@ export class ReportsPanel {
             });
         }
         
-        const title = this.container.querySelector('.report-title')?.value || 'Analysis Report';
+        const title = (this.container.querySelector('.report-title') == null ? void 0 : this.container.querySelector('.report-title').value) || 'Analysis Report';
         
         const statusDiv = this.container.querySelector('#reportStatus');
         const generateBtn = this.container.querySelector('#generateAIReportBtn');
@@ -321,9 +321,9 @@ export class ReportsPanel {
             }
         }
         
-        const title = this.container.querySelector('.draft-title')?.value || 'Scientific Article Draft';
-        const section = this.container.querySelector('.draft-section')?.value || 'all';
-        const language = this.container.querySelector('.draft-language')?.value || 'Russian';
+        const title = (this.container.querySelector('.draft-title') == null ? void 0 : this.container.querySelector('.draft-title').value) || 'Scientific Article Draft';
+        const section = (this.container.querySelector('.draft-section') == null ? void 0 : this.container.querySelector('.draft-section').value) || 'all';
+        const language = (this.container.querySelector('.draft-language') == null ? void 0 : this.container.querySelector('.draft-language').value) || 'Russian';
         
         const statusDiv = this.container.querySelector('#reportStatus');
         const generateBtn = this.container.querySelector('#generateDraftBtn');

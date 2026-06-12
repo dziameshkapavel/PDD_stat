@@ -50,7 +50,7 @@ export class LassoModel extends BaseModel {
             `LASSO Regression (C=${params.C_value})`;
         
         const block = this.createResultsBlock(card, title);
-        block.querySelector('.results-stats')?.remove();
+        (block.querySelector('.results-stats') == null ? void 0 : block.querySelector('.results-stats').remove());
         
         const loadingDiv = this._showLoading(block);
         

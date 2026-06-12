@@ -24,7 +24,7 @@ export class IndividualPredictionModel extends BaseModel {
         const uploadBtn = card.querySelector('.upload-btn');
         
         if (uploadBtn) {
-            uploadBtn.addEventListener('click', () => fileInput?.click());
+            uploadBtn.addEventListener('click', () => fileInput && fileInput.click());
         }
         
         if (fileInput) {
@@ -102,7 +102,7 @@ export class IndividualPredictionModel extends BaseModel {
         };
 
         const block = this.createResultsBlock(card, 'Individual Prediction');
-        block.querySelector('.results-stats')?.remove();
+        (block.querySelector('.results-stats') == null ? void 0 : block.querySelector('.results-stats').remove());
         const loadingDiv = this._showLoading(block);
         try {
             const response = await fetch(`${API_BASE}/analysis/run`, {

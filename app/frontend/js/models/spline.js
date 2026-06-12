@@ -35,12 +35,12 @@ export class SplineModel extends BaseModel {
         const binaryInputs = card.querySelector('.binary-inputs');
         const survivalInputs = card.querySelector('.survival-inputs');
         
-        binaryRadio?.addEventListener('change', () => {
+        binaryRadio && binaryRadio.addEventListener('change', () => {
             binaryInputs.style.display = 'block';
             survivalInputs.style.display = 'none';
         });
         
-        survivalRadio?.addEventListener('change', () => {
+        survivalRadio && survivalRadio.addEventListener('change', () => {
             binaryInputs.style.display = 'none';
             survivalInputs.style.display = 'block';
         });
@@ -64,7 +64,7 @@ export class SplineModel extends BaseModel {
         
         const title = `Spline Analysis (${params.knot_type})`;
         const block = this.createResultsBlock(card, title);
-        block.querySelector('.results-stats')?.remove();
+        (block.querySelector('.results-stats') == null ? void 0 : block.querySelector('.results-stats').remove());
         
         const loadingDiv = this._showLoading(block);
         
@@ -194,7 +194,7 @@ export class SplineModel extends BaseModel {
     
     _getParameters(card) {
         const vars = this.state.getCardVariables(card.id);
-        const isSurvival = card.querySelector('.outcome-survival')?.checked;
+        const isSurvival = (card.querySelector('.outcome-survival') == null ? void 0 : card.querySelector('.outcome-survival').checked);
         const knotRadios = card.querySelectorAll('.knot-radio');
         let knotType = 'median';
         knotRadios.forEach(r => { if (r.checked) knotType = r.value; });
@@ -207,7 +207,7 @@ export class SplineModel extends BaseModel {
             event_col: isSurvival ? (vars.event || '') : '',
             covariates: vars.covariates ? Array.from(vars.covariates) : [],
             knot_type: knotType,
-            custom_knot: knotType === 'custom' ? parseFloat(customInput?.value) || 0 : 0
+            custom_knot: knotType === 'custom' ? parseFloat(customInput && customInput.value) || 0 : 0
         };
     }
     

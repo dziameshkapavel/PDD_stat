@@ -431,7 +431,7 @@ export class AISettings {
     }
     
     async _save() {
-        const provider = this.modal.querySelector('.provider-btn.active')?.dataset.provider || 'ollama';
+        const provider = (this.modal.querySelector('.provider-btn.active') == null ? void 0 : this.modal.querySelector('.provider-btn.active').dataset).provider || 'ollama';
         
         const config = {
             provider: provider,

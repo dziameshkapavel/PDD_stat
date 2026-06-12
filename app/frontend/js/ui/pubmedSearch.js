@@ -99,7 +99,7 @@ export class PubMedSearchPanel {
         try {
             const resp = await fetch(`${API_BASE}/ai/context`);
             const data = await resp.json();
-            this.articles = data.context?.pubmed_articles || [];
+            this.articles = data.context && context.pubmed_articles || [];
         } catch (e) {
             this.articles = [];
         }
@@ -278,7 +278,7 @@ export class PubMedSearchPanel {
 
         container.querySelectorAll('.pubmed-delete-btn').forEach((btn, i) => {
             btn.addEventListener('click', () => {
-                const pmid = this.articles[i]?.pmid;
+                const pmid = (this.articles[i] == null ? void 0 : this.articles[i].pmid);
                 if (pmid) this._deleteArticle(pmid);
             });
         });

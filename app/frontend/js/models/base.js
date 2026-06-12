@@ -141,7 +141,7 @@ export class BaseModel {
                 
                 console.log('Active field set, activeField:', this.state.getActiveField());
                 
-                document.querySelector('.tab-btn[data-tab="columns"]')?.click();
+                (document.querySelector('.tab-btn[data-tab="columns"]') == null ? void 0 : document.querySelector('.tab-btn[data-tab="columns"]').click());
             });
         });
     }

@@ -29,7 +29,7 @@ export class DiagnosticAccuracyModel extends BaseModel {
         if (!params.target_col) { this.ui.modals.showAlert('Select reference variable'); return; }
         if (params.test_cols.length === 0) { this.ui.modals.showAlert('Select at least one index test'); return; }
         const block = this.createResultsBlock(card, 'Diagnostic Accuracy');
-        block.querySelector('.results-stats')?.remove();
+        (block.querySelector('.results-stats') == null ? void 0 : block.querySelector('.results-stats').remove());
         const loadingDiv = this._showLoading(block);
         try {
             const response = await fetch(`${API_BASE}/analysis/run`, {

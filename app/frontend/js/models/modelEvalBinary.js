@@ -69,7 +69,7 @@ export class ModelEvalBinaryModel extends BaseModel {
         
         const title = 'Model Evaluation: Binary Classification';
         const block = this.createResultsBlock(card, title);
-        block.querySelector('.results-stats')?.remove();
+        (block.querySelector('.results-stats') == null ? void 0 : block.querySelector('.results-stats').remove());
         
         const loadingDiv = this._showLoading(block);
         

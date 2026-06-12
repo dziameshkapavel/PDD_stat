@@ -47,7 +47,7 @@ export class VariablesPanel {
             if (selectedVars.event === v.name) cls += ' event-selected';
             if (selectedVars.group === v.name) cls += ' group-selected';
             if (selectedVars.stratify === v.name) cls += ' stratify-selected';
-            if (selectedVars.covariates?.has(v.name)) cls += ' selected';
+            if (selectedVars.covariates && covariates.has(v.name)) cls += ' selected';
             
             const typeShort = v.type === 'numeric' ? 'num' : 
                             v.type === 'categorical' ? 'cat' : 
@@ -204,7 +204,7 @@ export class VariablesPanel {
         modal.querySelector('#labelModalClose').addEventListener('click', () => modal.remove());
         modal.querySelector('#labelModalCancel').addEventListener('click', () => modal.remove());
         modal.querySelector('#labelModalSave').addEventListener('click', async () => {
-            const newChartName = modal.querySelector('.chart-name')?.value || '';
+            const newChartName = (modal.querySelector('.chart-name') == null ? void 0 : modal.querySelector('.chart-name').value) || '';
             const newValueLabels = {};
             
             modal.querySelectorAll('.label-val').forEach(input => {

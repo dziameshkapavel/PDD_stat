@@ -28,7 +28,7 @@ export class ViolinPlotModel extends BaseModel {
         if (!params.group_col) { this.ui.modals.showAlert('Select group variable'); return; }
         
         const block = this.createResultsBlock(card, `Violin Plot: ${params.value_col} by ${params.group_col}`);
-        block.querySelector('.results-stats')?.remove();
+        (block.querySelector('.results-stats') == null ? void 0 : block.querySelector('.results-stats').remove());
         const loadingDiv = this._showLoading(block);
         
         try {

@@ -46,10 +46,10 @@ export class RandomForestModel extends BaseModel {
         const topSelect = card.querySelector('.top-features-select');
         const shapCheck = card.querySelector('.shap-check');
         
-        const target = targetInput?.value?.trim() || '';
-        const exclusions = exclusionsInput?.value?.trim() || '';
+        const target = targetInput && targetInput.value && value.trim() || '';
+        const exclusions = exclusionsInput && exclusionsInput.value && value.trim() || '';
         const topN = topSelect ? parseInt(topSelect.value) : 15;
-        const calculateShap = shapCheck?.checked || false;
+        const calculateShap = shapCheck && shapCheck.checked || false;
         
         return {
             target_col: target,
@@ -397,7 +397,7 @@ export class RandomForestModel extends BaseModel {
             });
             const result = await response.json();
             loadingDiv.remove();
-            if (result.success && result.metrics?.model_path) {
+            if (result.success && result.metrics && metrics.model_path) {
                 block.innerHTML = `<div style="padding:16px;color:var(--accent-green);">Model saved: ${result.metrics.model_path.split('/').pop()}</div>`;
             } else {
                 block.innerHTML = `<div style="padding:16px;color:var(--accent-red);">Failed to save model</div>`;

@@ -25,10 +25,10 @@ export class DescriptiveStatsModel extends BaseModel {
         const vars = this.state.getCardVariables(card.id);
         const plotsCheck = card.querySelector('.plots-check');
         const varList = vars.covariates ? Array.from(vars.covariates) : [];
-        const params = { variables: varList, include_plots: plotsCheck?.checked || false };
+        const params = { variables: varList, include_plots: plotsCheck && plotsCheck.checked || false };
         
         const block = this.createResultsBlock(card, 'Descriptive Statistics');
-        block.querySelector('.results-stats')?.remove();
+        (block.querySelector('.results-stats') == null ? void 0 : block.querySelector('.results-stats').remove());
         const loadingDiv = this._showLoading(block);
         
         try {
