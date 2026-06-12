@@ -287,4 +287,4 @@ echo.
 echo  Run start.bat to launch the server
 echo  Open http://127.0.0.1:8000 in browser
 echo.
-timeout /t 10 /nobreak >nul
+pause
