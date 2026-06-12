@@ -609,6 +609,7 @@ if regression_type == "uni":
 
     roc_data = []
     dca_data = []
+    uni_results = []
 
     for pred in valid_pred:
         expanded = get_expanded([pred])
@@ -623,12 +624,10 @@ if regression_type == "uni":
             model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
             model.fit(Xp_train_scaled, y_train)
             y_proba = model.predict_proba(Xp_test_scaled)[:, 1]
-            y_pred = model.predict(Xp_test_scaled)
             fpr, tpr, _ = roc_curve(y_test, y_proba)
             roc_auc = auc(fpr, tpr)
             dca_data.append((pred, y_test, y_proba))
-            print(f"**Predictor:** `{pred}`\n")
-            print(f"\n**AUC (test):** {roc_auc:.4f}  \n---\n")
+            summary = get_model_summary(model, expanded, Xp_train_scaled, warnings_list=output_metrics["warnings"])
         elif validation_strategy == "cv":
             Xp = X_all[:, col_idx]
             scaler = StandardScaler()
@@ -640,25 +639,34 @@ if regression_type == "uni":
             fpr, tpr, _ = roc_curve(y_all, y_proba)
             roc_auc = roc_auc_score(y_all, y_proba)
             dca_data.append((pred, y_all, y_proba))
-            print(f"**Predictor:** `{pred}`\n")
-            print(f"\n**AUC (5-fold CV):** {roc_auc:.4f}  \n---\n")
+            model.fit(Xp_scaled, y_all)
+            summary = get_model_summary(model, expanded, Xp_scaled, warnings_list=output_metrics["warnings"])
         else:
             model, X, y, _, warn = fit_logistic([pred])
             if warn: output_metrics["warnings"].append(warn)
             if model is None:
                 print(f"**{pred}:** Failed\n")
                 continue
-            print(f"**Predictor:** `{pred}`\n")
             summary = get_model_summary(model, expanded, X, warnings_list=output_metrics["warnings"])
-            print_summary_table(summary)
             metrics = calculate_metrics(model, X, y)
-            print(f"\n**AUC:** {metrics['auc']:.4f}  \n---\n")
+            roc_auc = metrics['auc']
             y_proba = model.predict_proba(X)[:, 1]
             fpr, tpr, _ = roc_curve(y, y_proba)
-            roc_auc = auc(fpr, tpr)
             dca_data.append((pred, y, y_proba))
 
         roc_data.append((pred, fpr, tpr, roc_auc))
+
+        pred_row = {"predictor": pred, "auc": float(roc_auc)}
+        if summary:
+            non_intercept = [r for r in summary if r["variable"] != "Intercept"]
+            if non_intercept:
+                r = non_intercept[0]
+                pred_row["or"] = r.get("or")
+                pred_row["ci_lower"] = r.get("ci_lower")
+                pred_row["ci_upper"] = r.get("ci_upper")
+                pred_row["p_value"] = r.get("p_value")
+                pred_row["coef"] = r.get("coef")
+        uni_results.append(pred_row)
 
     # Один график ROC со всеми кривыми
     if roc_data:
@@ -682,7 +690,7 @@ if regression_type == "uni":
         plt.tight_layout()
         plot_filename = f"logistic_uni_{timestamp}"
         save_plot(plot_filename, fig)
-        output_metrics["plots"] = [f"{plot_filename}.png"]
+        all_plots = [f"{plot_filename}.png"]
         print(f"\n![Logistic Univariate](/plots/{plot_filename}.png)\n")
 
         if dca_data:
@@ -690,7 +698,29 @@ if regression_type == "uni":
             probas = [d[2] for d in dca_data]
             yt = dca_data[0][1]
             plot_dca(yt, probas, names, "logistic_uni", timestamp)
+            all_plots.append(f"logistic_uni_dca_{timestamp}.png")
             plot_calibration(yt, probas, names, "logistic_uni", timestamp)
+            all_plots.append(f"logistic_uni_calibration_{timestamp}.png")
+        output_metrics["plots"] = all_plots
+
+    # Summary table for all predictors
+    if uni_results:
+        print("\n### Summary: All Predictors\n")
+        print("| Predictor | OR | 95% CI | p-value | AUC |")
+        print("|-----------|-----|--------|---------|-----|")
+        for r in uni_results:
+            or_val = f"{r['or']:.3f}" if r.get('or') is not None else "—"
+            ci = f"{r['ci_lower']:.3f}–{r['ci_upper']:.3f}" if r.get('ci_lower') is not None and r.get('ci_upper') is not None else "—"
+            pval = fmt_p(r.get('p_value')) if r.get('p_value') is not None else "—"
+            auc_val = f"{r['auc']:.4f}"
+            sig = "**" if r.get('p_value') is not None and r['p_value'] < 0.05 else ""
+            print(f"| `{r['predictor']}` | {or_val} | {ci} | {pval}{sig} | {auc_val} |")
+        print()
+
+        output_metrics["univariate_results"] = uni_results
+        best = max(uni_results, key=lambda x: x["auc"])
+        output_metrics["auc"] = best["auc"]
+        output_metrics["best_predictor"] = best["predictor"]
 
 # ==================== MULTIVARIATE ====================
 elif regression_type in ["multi", "enter"]:
@@ -827,7 +857,7 @@ elif regression_type in ["multi", "enter"]:
     plt.tight_layout()
     plot_filename = f"logistic_multi_{timestamp}"
     save_plot(plot_filename, fig)
-    output_metrics["plots"] = [f"{plot_filename}.png"]
+    all_plots = [f"{plot_filename}.png"]
     print(f"\n![Logistic Multivariate](/plots/{plot_filename}.png)\n")
 
     # DCA and Calibration for Multi
@@ -838,7 +868,10 @@ elif regression_type in ["multi", "enter"]:
     else:
         dca_y_true = y
     plot_dca(dca_y_true, [y_proba], ["Model"], "logistic_multi", timestamp)
+    all_plots.append(f"logistic_multi_dca_{timestamp}.png")
     plot_calibration(dca_y_true, [y_proba], ["Model"], "logistic_multi", timestamp)
+    all_plots.append(f"logistic_multi_calibration_{timestamp}.png")
+    output_metrics["plots"] = all_plots
     save_predictions_to_df(save_pred_col, valid_pred)
 
 # ==================== FORWARD ====================
@@ -913,7 +946,7 @@ elif regression_type == "forward":
 
 
         # Summary table from full-data model (avoids scaler inconsistency)
-        summary_model, summary_X, summary_y, summary_exp, warn = fit_logistic(current)
+        summary_model, summary_X, summary_y, summary_exp, warn = fit_logistic(selected)
         if warn: output_metrics["warnings"].append(warn)
         summary = get_model_summary(summary_model, summary_exp, summary_X, warnings_list=output_metrics["warnings"])
         if summary:
@@ -939,11 +972,14 @@ elif regression_type == "forward":
         plt.tight_layout()
         plot_filename = f"logistic_backward_{timestamp}"
         save_plot(plot_filename, fig)
-        output_metrics["plots"] = [f"{plot_filename}.png"]
+        all_plots = [f"{plot_filename}.png"]
         print(f"\n![Logistic Backward](/plots/{plot_filename}.png)\n")
         plot_dca(y_true, [y_proba], ["Model"], "logistic_backward", timestamp)
+        all_plots.append(f"logistic_backward_dca_{timestamp}.png")
         plot_calibration(y_true, [y_proba], ["Model"], "logistic_backward", timestamp)
-        save_predictions_to_df(save_pred_col, current)
+        all_plots.append(f"logistic_backward_calibration_{timestamp}.png")
+        output_metrics["plots"] = all_plots
+        save_predictions_to_df(save_pred_col, selected)
     else:
         output_metrics["warnings"].append("All predictors removed")
 

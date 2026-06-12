@@ -35,20 +35,25 @@ export class BaseModel {
         return block;
     }
     
-    async displayPlots(block, exactPrefix = null) {
+    async displayPlots(block, exactPrefix = null, plotFiles = null) {
         try {
-            const response = await fetch(`${API_BASE}/analysis/charts`);
-            const data = await response.json();
-            
-            // Используем точный префикс если передан, иначе templatePrefix
-            const prefix = exactPrefix || this.templatePrefix;
-            
-            console.log(`Looking for plots with prefix: ${prefix}`);
-            
-            // Фильтруем графики по префиксу
-            const matching = data.charts
-                .filter(c => c.startsWith(prefix))
-                .sort();
+            let matching;
+
+            if (plotFiles && plotFiles.length > 0) {
+                matching = plotFiles.slice();
+                console.log(`Using exact plot list from metrics:`, matching);
+            } else {
+                const response = await fetch(`${API_BASE}/analysis/charts`);
+                const data = await response.json();
+
+                const prefix = exactPrefix || this.templatePrefix;
+                console.log(`Looking for plots with prefix: ${prefix}`);
+
+                matching = data.charts
+                    .filter(c => c.startsWith(prefix))
+                    .sort();
+                console.log(`Found ${matching.length} matching plots:`, matching);
+            }
             
             console.log(`Found ${matching.length} matching plots:`, matching);
             

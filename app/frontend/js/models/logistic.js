@@ -100,19 +100,9 @@ export class LogisticModel extends BaseModel {
             loadingDiv.remove();
             this.renderResults(block, result, card);
             
-            // Определяем точный префикс для графика
-            let exactPrefix = 'logistic';
-            if (params.regression_type === 'uni') {
-                exactPrefix = 'logistic_uni';
-            } else if (params.regression_type === 'forward') {
-                exactPrefix = 'logistic_forward';
-            } else if (params.regression_type === 'backward') {
-                exactPrefix = 'logistic_backward';
-            } else {
-                exactPrefix = 'logistic_multi';
-            }
+            const plotFiles = result.metrics?.plots || null;
             
-            await this.displayPlots(block, exactPrefix);
+            await this.displayPlots(block, null, plotFiles);
             
         } catch (error) {
             console.error('Logistic analysis error:', error);
@@ -529,8 +519,37 @@ export class LogisticModel extends BaseModel {
         }
         
         html += `</div></div>`;
-        
-        if (metrics.hosmer_lemeshow && typeof metrics.hosmer_lemeshow.p_value === 'number') {
+
+        if (metrics.univariate_results && metrics.univariate_results.length > 0) {
+            html += `<div class="diagnostic-card">`;
+            html += `<h3 class="diagnostic-card-title">Predictor Comparison</h3>`;
+            html += `<div class="diagnostic-card-content">`;
+            html += `<table style="width:100%; border-collapse:collapse; font-size:13px;">`;
+            html += `<thead><tr style="border-bottom:2px solid var(--border-primary);">`;
+            html += `<th style="text-align:left;padding:6px 8px;">Predictor</th>`;
+            html += `<th style="text-align:right;padding:6px 8px;">OR</th>`;
+            html += `<th style="text-align:right;padding:6px 8px;">95% CI</th>`;
+            html += `<th style="text-align:right;padding:6px 8px;">p-value</th>`;
+            html += `<th style="text-align:right;padding:6px 8px;">AUC</th>`;
+            html += `</tr></thead><tbody>`;
+            metrics.univariate_results.forEach(r => {
+                const orVal = r.or != null ? r.or.toFixed(3) : '—';
+                const ci = (r.ci_lower != null && r.ci_upper != null) ? `${r.ci_lower.toFixed(3)}–${r.ci_upper.toFixed(3)}` : '—';
+                const p = r.p_value != null ? (r.p_value < 0.0001 ? '<0.0001' : r.p_value.toFixed(4)) : '—';
+                const aucVal = r.auc != null ? r.auc.toFixed(4) : '—';
+                const sig = (r.p_value != null && r.p_value < 0.05) ? 'font-weight:600;' : '';
+                const best = (metrics.best_predictor === r.predictor) ? 'background:var(--bg-secondary);' : '';
+                html += `<tr style="border-bottom:1px solid var(--border-primary);${best}">`;
+                html += `<td style="padding:6px 8px;${sig}">${r.predictor}</td>`;
+                html += `<td style="text-align:right;padding:6px 8px;">${orVal}</td>`;
+                html += `<td style="text-align:right;padding:6px 8px;">${ci}</td>`;
+                html += `<td style="text-align:right;padding:6px 8px;">${p}</td>`;
+                html += `<td style="text-align:right;padding:6px 8px;${sig}">${aucVal}</td>`;
+                html += `</tr>`;
+            });
+            html += `</tbody></table>`;
+            html += `</div></div>`;
+        }
             html += `<div class="diagnostic-card">`;
             html += `<h3 class="diagnostic-card-title">Goodness of Fit (Hosmer-Lemeshow)</h3>`;
             html += `<div class="diagnostic-card-content">`;
