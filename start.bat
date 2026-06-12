@@ -1,24 +1,23 @@
 @echo off
-chcp 65001 >nul 2>&1
 title PDD_STAT
 cd /d "%~dp0"
 
 :: =============================================
-:: Автоустановка если .venv нет
+:: Auto-setup if .venv missing
 :: =============================================
 if not exist ".venv\" (
-    echo Первый запуск — выполняю установку...
+    echo First run - running setup...
     call setup.bat
     if errorlevel 1 (
         echo.
-        echo Установка не удалась. Запустите setup.bat вручную.
+        echo Setup failed. Run setup.bat manually.
         pause
         exit /b 1
     )
 )
 
 :: =============================================
-:: Поиск Python (тот же алгоритм что и в setup.bat)
+:: Search Python (same logic as setup.bat)
 :: =============================================
 set "PYTHON_CMD="
 
@@ -53,8 +52,8 @@ if not errorlevel 1 (
 )
 
 echo.
-echo ОШИБКА: Python не найден.
-echo Запустите setup.bat для установки.
+echo ERROR: Python not found.
+echo Run setup.bat to install.
 echo.
 pause
 exit /b 1
@@ -62,13 +61,13 @@ exit /b 1
 :start_found
 
 :: =============================================
-:: Активация venv
+:: Activate venv
 :: =============================================
 call .venv\Scripts\activate.bat
 if errorlevel 1 (
     echo.
-    echo ОШИБКА: виртуальное окружение повреждено.
-    echo Запустите setup.bat заново.
+    echo ERROR: virtual environment is broken.
+    Run setup.bat again.
     echo.
     pause
     exit /b 1
@@ -77,17 +76,17 @@ if errorlevel 1 (
 cd app\backend
 
 echo ============================================
-echo  PDD_STAT — сервер запущен
-echo  Откройте: http://127.0.0.1:8000
-echo  Ctrl+C для остановки
+echo  PDD_STAT server started
+echo  Open: http://127.0.0.1:8000
+echo  Ctrl+C to stop
 echo ============================================
 
-:: Открыть браузер
+:: Open browser
 start "" http://127.0.0.1:8000
 
-:: Запустить сервер
+:: Start server
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 echo.
-echo Сервер остановлен.
+echo Server stopped.
 pause
