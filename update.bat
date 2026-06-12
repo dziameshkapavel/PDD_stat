@@ -165,7 +165,7 @@ if exist ".venv\" (
     )
     echo.
     echo Ensuring autograd-gamma is installed...
-    pip install autograd-gamma
+    pip install autograd-gamma==0.4.2
     if errorlevel 1 (
         echo [WARNING] autograd-gamma install failed.
         echo    Cox regression may be unavailable.

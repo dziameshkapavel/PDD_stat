@@ -243,11 +243,11 @@ if errorlevel 1 (
 
 echo.
 echo Installing autograd-gamma (required by lifelines on Windows)...
-pip install autograd-gamma
+pip install autograd-gamma==0.4.2
 if errorlevel 1 (
     echo [WARNING] autograd-gamma install failed.
     echo    This is required for Cox regression. Install manually:
-    echo    pip install autograd-gamma
+    echo    pip install autograd-gamma==0.4.2
 )
 
 echo.
@@ -289,7 +289,7 @@ python -c "import autograd_gamma; print('[OK] autograd-gamma installed')" 2>nul
 if errorlevel 1 (
     echo [WARNING] autograd-gamma not installed.
     echo    Cox regression will fail. Install manually:
-    echo    pip install autograd-gamma
+    echo    pip install autograd-gamma==0.4.2
 )
 
 :: =============================================

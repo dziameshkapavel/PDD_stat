@@ -28,7 +28,7 @@ dependencies = [
     "httpx",
     "pyarrow",
     "autograd",
-    "autograd-gamma",
+    "autograd-gamma==0.4.2",
     "pyyaml",
 ]
 
