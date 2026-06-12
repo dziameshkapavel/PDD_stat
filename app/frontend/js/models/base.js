@@ -38,15 +38,15 @@ export class BaseModel {
     async displayPlots(block, exactPrefix = null, plotFiles = null) {
         try {
             let matching;
+            const prefix = exactPrefix || this.templatePrefix;
 
-            if (plotFiles && plotFiles.length > 0) {
+            if (plotFiles !== null) {
                 matching = plotFiles.slice();
                 console.log(`Using exact plot list from metrics:`, matching);
             } else {
                 const response = await fetch(`${API_BASE}/analysis/charts`);
                 const data = await response.json();
 
-                const prefix = exactPrefix || this.templatePrefix;
                 console.log(`Looking for plots with prefix: ${prefix}`);
 
                 matching = data.charts
