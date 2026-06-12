@@ -57,13 +57,51 @@ echo.
 
 :git_ok
 
+:: Check if this is a git repository
+git rev-parse --git-dir >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo This folder is not a git repository.
+    echo It was probably downloaded as a ZIP file.
+    echo.
+    echo Initializing git in this folder...
+    echo.
+    git init
+    git remote add origin https://github.com/dziameshkapavel/PDD_stat.git
+    git fetch origin main
+    git checkout main
+    if errorlevel 1 (
+        echo.
+        echo ERROR: Could not initialize repository.
+        echo Delete this folder and clone properly:
+        echo   git clone https://github.com/dziameshkapavel/PDD_stat.git
+        pause
+        exit /b 1
+    )
+    echo [OK] Repository initialized
+    echo.
+)
+
 :: Pull updates
 echo Pulling updates from repository...
-git pull
+echo.
+git remote -v
+echo.
+git pull 2>&1
 if errorlevel 1 (
     echo.
     echo ERROR: failed to pull updates.
-    echo Check your internet connection.
+    echo.
+    echo Possible causes:
+    echo   1. Windows Defender or antivirus is blocking Git
+    echo   2. Git Credential Manager popup was blocked
+    echo   3. Repository is not accessible
+    echo.
+    echo Try running manually in this folder:
+    echo   git pull
+    echo.
+    echo If git pull asks for login, use a Personal Access Token:
+    echo   https://github.com/settings/tokens
     pause
     exit /b 1
 )
