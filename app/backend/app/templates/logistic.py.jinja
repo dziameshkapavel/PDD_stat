@@ -165,7 +165,8 @@ output_metrics = {
     "hosmer_lemeshow": {},
     "vif": {},
     "warnings": [],
-    "model_steps": []
+    "model_steps": [],
+    "plots": []
 }
 
 print("## Logistic Regression\n")
@@ -716,8 +717,7 @@ if regression_type == "uni":
                 plot_calibration(yt, probas, names, "logistic_uni", timestamp)
                 all_plots.append(f"logistic_uni_calibration_{timestamp}.png")
 
-        if all_plots:
-            output_metrics["plots"] = all_plots
+        output_metrics["plots"] = all_plots
 
     # Summary table for all predictors
     if uni_results:
@@ -892,8 +892,7 @@ elif regression_type in ["multi", "enter"]:
         plot_calibration(dca_y_true, [y_proba], ["Model"], "logistic_multi", timestamp)
         all_plots.append(f"logistic_multi_calibration_{timestamp}.png")
 
-    if all_plots:
-        output_metrics["plots"] = all_plots
+    output_metrics["plots"] = all_plots
     save_predictions_to_df(save_pred_col, valid_pred)
 
 # ==================== FORWARD ====================
@@ -1004,8 +1003,7 @@ elif regression_type == "forward":
         if show_cal_plot:
             plot_calibration(y_true, [y_proba], ["Model"], "logistic_forward", timestamp)
             all_plots.append(f"logistic_forward_calibration_{timestamp}.png")
-        if all_plots:
-            output_metrics["plots"] = all_plots
+        output_metrics["plots"] = all_plots
         save_predictions_to_df(save_pred_col, selected)
     else:
         output_metrics["warnings"].append("All predictors removed")

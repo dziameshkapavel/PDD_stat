@@ -67,7 +67,8 @@ output_metrics = {
     "vif": {},
     "warnings": [],
     "model_steps": [],
-    "table": []
+    "table": [],
+    "plots": []
 }
 
 print(f"## Cox Regression (Proportional Hazards)\n")
@@ -970,8 +971,7 @@ if cph is not None and ('table' in output_metrics and output_metrics["table"]):
         print(f"![Residuals](/plots/{fn_r}.png)\n")
         plt.close(fig_r)
 
-    if all_plots:
-        output_metrics["plots"] = all_plots
+    output_metrics["plots"] = all_plots
 
 # ВАЖНО: Вывод метрик в JSON для бэкенда
 output_metrics["n_total"] = len(df_cox)
