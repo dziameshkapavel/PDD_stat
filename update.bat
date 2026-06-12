@@ -95,13 +95,17 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: Remove untracked files from ZIP extraction (preserves gitignored dirs like projects/)
+echo Cleaning untracked files from previous ZIP extraction...
+git clean -fd >nul 2>&1
+
 echo Resetting to latest version...
 
 git rev-parse --verify origin/main >nul 2>&1
 if errorlevel 1 (
-    git checkout -b master origin/master
+    git checkout -f -b master origin/master
 ) else (
-    git checkout -b main origin/main
+    git checkout -f -b main origin/main
 )
 if errorlevel 1 (
     echo ERROR: failed to create local branch.
@@ -122,31 +126,35 @@ exit /b 1
 
 :pull_updates
 
-:: Pull updates
-echo Pulling updates from repository...
+:: Pull updates (fetch + hard reset to avoid untracked file conflicts)
+echo Fetching updates from repository...
 echo.
 git remote -v
 echo.
 
-:: Use explicit remote+branch to avoid "no tracking info" error
-git pull origin main 2>&1
+git fetch origin
 if errorlevel 1 (
-    git pull origin master 2>&1
+    echo.
+    echo ERROR: failed to fetch updates.
+    echo Check your internet connection.
+    pause
+    exit /b 1
+)
+
+:: Remove untracked files (preserves gitignored dirs like projects/*/)
+echo Cleaning untracked files...
+git clean -fd >nul 2>&1
+
+echo Resetting to latest version...
+git rev-parse --verify origin/main >nul 2>&1
+if errorlevel 1 (
+    git reset --hard origin/master
+) else (
+    git reset --hard origin/main
 )
 if errorlevel 1 (
     echo.
-    echo ERROR: failed to pull updates.
-    echo.
-    echo Possible causes:
-    echo   1. Windows Defender or antivirus is blocking Git
-    echo   2. Git Credential Manager popup was blocked
-    echo   3. Repository is not accessible
-    echo.
-    echo Try running manually in this folder:
-    echo   git pull origin main
-    echo.
-    echo If git pull asks for login, use a Personal Access Token:
-    echo   https://github.com/settings/tokens
+    echo ERROR: failed to reset.
     pause
     exit /b 1
 )
