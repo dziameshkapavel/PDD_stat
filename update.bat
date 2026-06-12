@@ -63,17 +63,9 @@ if not errorlevel 1 goto :pull_updates
 
 echo.
 echo This folder is not a git repository (probably ZIP download).
+echo Auto-converting to git repository...
 echo.
-echo  [A] Auto-convert to git repository (recommended)
-echo      Downloads git metadata, preserves your files.
-echo      You will be able to update with update.bat later.
-echo.
-echo  [B] Skip update
-echo.
-choice /c AB /m "Choose"
-if errorlevel 2 goto :skip_update
-if errorlevel 1 goto :auto_convert
-goto :skip_update
+goto :auto_convert
 
 :auto_convert
 echo.

@@ -251,15 +251,9 @@ if not errorlevel 1 goto :git_repo_ok
 
 echo.
 echo This folder is not a git repository (probably ZIP download).
+echo Auto-converting to git repository...
 echo.
-echo  [A] Auto-convert to git repository (recommended)
-echo      Downloads metadata, preserves your files.
-echo      update.bat will work after conversion.
-echo.
-echo  [B] Skip (setup continues, but update.bat won't work)
-echo.
-choice /c AB /m "Choose"
-if errorlevel 2 goto :git_repo_skip
+goto :auto_convert
 
 echo.
 echo Initializing git repository...
