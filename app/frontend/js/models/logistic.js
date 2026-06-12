@@ -100,7 +100,7 @@ export class LogisticModel extends BaseModel {
             loadingDiv.remove();
             this.renderResults(block, result, card);
             
-            const plotFiles = result.metrics?.plots || null;
+            const plotFiles = (result.metrics && result.metrics.plots) ? result.metrics.plots : null;
             
             await this.displayPlots(block, null, plotFiles);
             
