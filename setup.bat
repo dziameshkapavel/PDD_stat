@@ -111,27 +111,37 @@ echo  Recommended: Python 3.12
 echo  (all packages install without compilation)
 echo.
 
-where winget >nul 2>&1
-if not errorlevel 1 (
-    echo  [A] Install Python 3.12 via winget (automatic)
-    echo  [B] Open download page in browser
+echo  [A] Download and install Python 3.12 automatically
+echo  [B] Open download page in browser
+echo.
+choice /c AB /m "Choose"
+if errorlevel 1 goto :install_auto
+if errorlevel 2 goto :install_manual
+
+:install_auto
+echo.
+echo Downloading Python 3.12 installer...
+echo This may take 1-2 minutes depending on your connection.
+echo.
+
+set "PY_INSTALLER=%TEMP%\python-3.12.7-amd64.exe"
+powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe' -OutFile '%PY_INSTALLER%' -UseBasicParsing"
+if not exist "%PY_INSTALLER%" (
     echo.
-    choice /c AB /m "Choose"
-    if errorlevel 1 goto :install_winget
-    if errorlevel 2 goto :install_manual
-) else (
+    echo ERROR: Download failed.
     goto :install_manual
 )
 
-:install_winget
-echo.
-echo Installing Python 3.12 via winget...
-winget install Python.Python.3.12 --accept-package-agreements --accept-source-agreements
+echo Installing Python 3.12 (silent mode)...
+"%PY_INSTALLER%" /quiet InstallAllUsers=0 PrependPath=1 Include_test=0
 if errorlevel 1 (
     echo.
-    echo ERROR: winget failed to install Python.
+    echo ERROR: Installation failed.
+    del "%PY_INSTALLER%" >nul 2>&1
     goto :install_manual
 )
+
+del "%PY_INSTALLER%" >nul 2>&1
 echo.
 echo Python installed! Refreshing PATH...
 set "PATH=%LOCALAPPDATA%\Programs\Python\Python312;%LOCALAPPDATA%\Programs\Python\Python312\Scripts;%PATH%"
