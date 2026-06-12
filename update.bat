@@ -48,4 +48,4 @@ echo.
 echo ============================================
 echo  Update complete!
 echo ============================================
-timeout /t 5 /nobreak >nul
+pause
