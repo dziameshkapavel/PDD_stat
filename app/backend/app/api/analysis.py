@@ -1,5 +1,6 @@
 import json
 import math
+from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -1121,9 +1122,10 @@ class ArticleDraftRequest(BaseModel):
 @router.post("/report/draft-article")
 async def generate_article_draft(req: ArticleDraftRequest):
     """Генерирует драфт научной статьи в DOCX на основе истории анализов и найденной литературы PubMed"""
+    import json
     import re
     from datetime import datetime
-    import json
+
     from docx import Document
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.shared import Pt, RGBColor
@@ -1160,7 +1162,7 @@ async def generate_article_draft(req: ArticleDraftRequest):
     # 3. Build prompt using ContextBuilder for analyses
     cb = ContextBuilder(loader.project_path)
     selected_ids = req.selected_ids if req.analyses != "all" else []
-    
+
     # Get structured history metrics for validation
     history_path = loader.project_path / "state" / "analysis_history.json"
     history_metrics = {}
@@ -1217,14 +1219,14 @@ async def generate_article_draft(req: ArticleDraftRequest):
 
     prompt_lines.append(f"\n## DATASET SUMMARY:\n{dataset_summary}")
     prompt_lines.append(f"\n## CALCULATIONS HISTORY:\n{analyses_context}")
-    
+
     prompt_lines.append("\nIMPORTANT: Do NOT output any internal <think> blocks, greetings, or meta-comments. Output ONLY the manuscript text directly.")
     prompt = "\n".join(prompt_lines)
 
     # 5. Call AI Client with ResponseValidator (Auto-Retry)
     client = AIClientFactory.create(ai_config)
     max_tokens = 4000
-    
+
     async def llm_rewrite(correction_msg: str) -> str:
         res = await client.chat(
             model=model,
@@ -1248,13 +1250,13 @@ async def generate_article_draft(req: ArticleDraftRequest):
         )
         if not initial_res.get('success'):
             raise HTTPException(status_code=500, detail=initial_res.get('error', 'AI request failed'))
-        
+
         initial_content = initial_res.get('content', '')
         initial_content = re.sub(r'<think>.*?</think>', '', initial_content, flags=re.DOTALL).strip()
         initial_content = re.sub(r'<think>.*', '', initial_content).strip()
 
         lang_code = "ru" if req.language.lower() in ["russian", "ru", "русский"] else "en"
-        
+
         validated_text, passed, v_result = await ResponseValidator.auto_retry(
             response=initial_content,
             metrics=history_metrics,
@@ -1263,7 +1265,7 @@ async def generate_article_draft(req: ArticleDraftRequest):
             response_language=lang_code,
             pubmed_articles=pubmed_articles
         )
-        
+
         ai_content = ResponseValidator.add_validation_notice(validated_text, v_result)
 
     except Exception as e:
@@ -1382,6 +1384,7 @@ async def generate_article_draft(req: ArticleDraftRequest):
 async def download_report(filename: str):
     """Скачать сгенерированный отчёт"""
     from fastapi.responses import FileResponse
+    loader = get_loader()
     safe_filename = Path(filename).name
     filepath = loader.project_path / "state" / "reports" / safe_filename
     if not filepath.exists():

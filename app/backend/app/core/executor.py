@@ -61,8 +61,8 @@ class Executor:
 
     def _init_namespace(self):
         """Инициализирует пространство имён для выполнения кода"""
-        import json
         import builtins
+        import json
         from pathlib import Path
 
         from app.core.cox_selector import CoxVariableSelector
@@ -202,7 +202,7 @@ class Executor:
                 result_lines.append(' ' * indent + 'print("[PLOT] saved")')
         # AST-анализ на запрещенные импорты
         import ast
-        ALLOWED_USER_IMPORTS = {
+        allowed_user_imports = {
             'pandas', 'numpy', 'matplotlib', 'scipy', 'lifelines', 'json',
             'time', 'pathlib', 'warnings', 'statsmodels', 'sklearn', 'itertools',
             'typing', 'math', 'seaborn', 'collections', 'docx', 'jinja2',
@@ -214,23 +214,22 @@ class Executor:
                 if isinstance(node, ast.Import):
                     for alias in node.names:
                         root = alias.name.split('.')[0]
-                        if root not in ALLOWED_USER_IMPORTS:
+                        if root not in allowed_user_imports:
                             return {
                                 "success": False,
                                 "output": "",
                                 "error": f"Import of module '{alias.name}' is not allowed in sandbox",
                                 "traceback": ""
                             }
-                elif isinstance(node, ast.ImportFrom):
-                    if node.module:
-                        root = node.module.split('.')[0]
-                        if root not in ALLOWED_USER_IMPORTS:
-                            return {
-                                "success": False,
-                                "output": "",
-                                "error": f"Import from module '{node.module}' is not allowed in sandbox",
-                                "traceback": ""
-                            }
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    root = node.module.split('.')[0]
+                    if root not in allowed_user_imports:
+                        return {
+                            "success": False,
+                            "output": "",
+                            "error": f"Import from module '{node.module}' is not allowed in sandbox",
+                            "traceback": ""
+                        }
         except SyntaxError:
             pass
 
