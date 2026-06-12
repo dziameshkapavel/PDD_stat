@@ -91,13 +91,15 @@ reference_groups = {{ reference_groups|default({})|tojson }}
 # Подготовка данных
 df_model = df[[target_col] + valid_cov].copy()
 
-# Encode target: event_value -> 1, rest -> 0
-if df_model[target_col].dtype == 'object' or df_model[target_col].dtype.name == 'category':
-    unique_vals = sorted(df_model[target_col].astype(str).unique())
-    if len(unique_vals) != 2:
-        raise ValueError(f"Target variable must be binary, found {unique_vals}")
-df_model[target_col] = (df_model[target_col] == event_value).astype(int)
-print(f"**Target:** event = {event_value}\n")
+# Encode target: event_value (0 or 1) determines which class is event
+unique_vals = sorted(df_model[target_col].astype(str).unique())
+if len(unique_vals) != 2:
+    raise ValueError(f"Target variable must be binary, found {len(unique_vals)} unique values: {unique_vals}")
+if event_value not in (0, 1):
+    raise ValueError(f"event_value must be 0 or 1, got {event_value}")
+event_str = unique_vals[event_value]
+df_model[target_col] = (df_model[target_col].astype(str) == event_str).astype(int)
+print(f"**Target:** event = {event_str}\n")
 
 def prepare_dummies(df_in, covariates_list, ref_groups, cov_types):
     df_out = df_in.copy()
@@ -168,7 +170,7 @@ n_total = len(df_model)
 n_positive = int(df_model[target_col].sum())
 n_negative = n_total - n_positive
 print(f"**Observations:** {n_total}")
-print(f"**Events ({event_value}):** {n_positive} ({n_positive/n_total*100:.1f}%)")
+print(f"**Events ({event_str}):** {n_positive} ({n_positive/n_total*100:.1f}%)")
 print(f"**Non-events (0):** {n_negative} ({n_negative/n_total*100:.1f}%)\n")
 
 # LAS-107: Small sample warning

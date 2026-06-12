@@ -250,12 +250,15 @@ if encoding_map:
         print(f"   * `{col}`: Reference = `{info['reference']}`, Categories = {info['categories']}")
     print()
 
-# Encode target: event_value -> 1, rest -> 0
-if df_log[target_col].dtype == 'object' or df_log[target_col].dtype.name == 'category':
-    unique_vals = sorted(df_log[target_col].astype(str).unique())
-    if len(unique_vals) != 2:
-        raise ValueError(f"Target variable must be binary, found {unique_vals}")
-df_log[target_col] = (df_log[target_col] == event_value).astype(int)
+# Encode target: event_value (0 or 1) determines which class is event
+unique_vals = sorted(df_log[target_col].astype(str).unique())
+if len(unique_vals) != 2:
+    raise ValueError(f"Target variable must be binary, found {len(unique_vals)} unique values: {unique_vals}")
+if event_value not in (0, 1):
+    raise ValueError(f"event_value must be 0 or 1, got {event_value}")
+event_str = unique_vals[event_value]
+df_log[target_col] = (df_log[target_col].astype(str) == event_str).astype(int)
+print(f"**Target:** event = {event_str}")
 
 n_before = len(df_log)
 df_log = df_log.dropna()
@@ -271,7 +274,7 @@ if unique_targets != 2:
 n_cases = df_log[target_col].sum()
 n_controls = len(df_log) - n_cases
 print(f"**Observations (complete cases):** {len(df_log)}  ")
-print(f"**Events ({event_value}):** {int(n_cases)}  ")
+print(f"**Events ({event_str}):** {int(n_cases)}  ")
 print(f"**Non-events (0):** {int(n_controls)}  \n")
 
 # EPV check (LOG-103)
