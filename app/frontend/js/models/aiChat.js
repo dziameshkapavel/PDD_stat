@@ -142,9 +142,9 @@ RULES (follow strictly):
         container.scrollTop = container.scrollHeight;
 
         try {
-            const model = this.config && config.last_used_model || 'llama3:8b';
-            const temperature = this.coderMode ? 0 : (this.config && config.temperature || 0.7);
-            const maxTokens = this.coderMode ? 4000 : (this.config && config.max_tokens || 2000);
+            const model = this.config && this.config.last_used_model || 'llama3:8b';
+            const temperature = this.coderMode ? 0 : (this.config && this.config.temperature || 0.7);
+            const maxTokens = this.coderMode ? 4000 : (this.config && this.config.max_tokens || 2000);
 
             const fullMessages = [];
             if (this.coderMode) {
@@ -317,8 +317,8 @@ RULES (follow strictly):
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     title: `${this.coderMode ? 'AI Coder' : 'AI Chat'}: ${((this.messages.find(m => m.role === 'user') || {}).content || '').slice(0, 50) || 'Chat'}`,
-                    model: this.config && config.last_used_model || 'unknown',
-                    provider: this.config && config.provider || 'unknown',
+                    model: this.config && this.config.last_used_model || 'unknown',
+                    provider: this.config && this.config.provider || 'unknown',
                     messages: this.messages
                 })
             });
