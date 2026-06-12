@@ -190,7 +190,113 @@ if errorlevel 1 (
 )
 
 :: =============================================
-:: 6. Create virtual environment
+:: 6. Check / install Git
+:: =============================================
+echo.
+echo Checking Git...
+
+where git >nul 2>&1
+if not errorlevel 1 (
+    echo [OK] Git found
+    goto :check_git_repo
+)
+
+echo Git not found. Installing automatically...
+echo.
+
+set "GIT_INSTALLER=%TEMP%\git-install.exe"
+set "GIT_URL=https://github.com/git-for-windows/git/releases/download/v2.54.0.windows.1/Git-2.54.0-64-bit.exe"
+
+where curl >nul 2>&1
+if not errorlevel 1 (
+    curl -L -o "%GIT_INSTALLER%" "%GIT_URL%"
+    goto :git_download_check
+)
+
+powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%GIT_URL%' -OutFile '%GIT_INSTALLER%' -UseBasicParsing"
+
+:git_download_check
+if not exist "%GIT_INSTALLER%" (
+    echo [WARNING] Git download failed. Install manually:
+    echo   https://git-scm.com/download/win
+    echo   Setup will continue, but update.bat will not work.
+    echo.
+    goto :check_git_repo
+)
+
+echo Installing Git...
+"%GIT_INSTALLER%" /VERYSILENT /NORESTART /NOCANCEL /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /COMPONENTS="icons,ext\reg\shellhere,assoc,assoc_sh"
+del "%GIT_INSTALLER%" >nul 2>&1
+
+set "PATH=%ProgramFiles%\Git\cmd;%LOCALAPPDATA%\Programs\Git\cmd;%PATH%"
+
+where git >nul 2>&1
+if errorlevel 1 (
+    echo [WARNING] Git installed but not found in PATH.
+    echo   Run setup.bat again or install manually.
+    echo.
+    goto :check_git_repo
+)
+
+echo [OK] Git installed
+echo.
+
+:check_git_repo
+
+:: =============================================
+:: 7. Check git repository (ZIP download → auto-convert)
+:: =============================================
+git rev-parse --git-dir >nul 2>&1
+if not errorlevel 1 goto :git_repo_ok
+
+echo.
+echo This folder is not a git repository (probably ZIP download).
+echo.
+echo  [A] Auto-convert to git repository (recommended)
+echo      Downloads metadata, preserves your files.
+echo      update.bat will work after conversion.
+echo.
+echo  [B] Skip (setup continues, but update.bat won't work)
+echo.
+choice /c AB /m "Choose"
+if errorlevel 2 goto :git_repo_skip
+
+echo.
+echo Initializing git repository...
+git init
+if errorlevel 1 (
+    echo [WARNING] git init failed.
+    goto :git_repo_skip
+)
+
+git remote add origin https://github.com/dziameshkapavel/PDD_stat.git >nul 2>&1
+echo Fetching from remote...
+git fetch origin
+if errorlevel 1 goto :git_repo_skip
+
+git rev-parse --verify origin/main >nul 2>&1
+if errorlevel 1 (
+    git checkout -f -b master origin/master
+) else (
+    git checkout -f -b main origin/main
+)
+if errorlevel 1 goto :git_repo_skip
+
+echo.
+echo [OK] Folder converted to git repository.
+echo.
+goto :git_repo_ok
+
+:git_repo_skip
+echo.
+echo [WARNING] Git repository not set up.
+echo   update.bat will not work, but setup continues.
+echo.
+
+:git_repo_ok
+
+:: =============================================
+:: 8. Create virtual environment
 :: =============================================
 if not exist ".venv\" (
     echo.
@@ -209,7 +315,7 @@ if not exist ".venv\" (
 )
 
 :: =============================================
-:: 7. Activate and install dependencies
+:: 9. Activate and install dependencies
 :: =============================================
 call .venv\Scripts\activate.bat
 if errorlevel 1 (
@@ -263,7 +369,7 @@ echo Installing dev tools...
 pip install pytest pytest-asyncio pytest-timeout
 
 :: =============================================
-:: 8. Verify critical packages
+:: 10. Verify critical packages
 :: =============================================
 echo.
 echo Verifying critical packages...
