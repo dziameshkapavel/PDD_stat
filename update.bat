@@ -15,7 +15,20 @@ echo Git not found. Installing automatically...
 echo.
 
 set "GIT_INSTALLER=%TEMP%\git-install.exe"
-powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://github.com/git-scm/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe' -OutFile '%GIT_INSTALLER%' -UseBasicParsing"
+
+set "GIT_URL=https://github.com/git-for-windows/git/releases/download/v2.54.0.windows.1/Git-2.54.0-64-bit.exe"
+
+:: Try curl first (built into Windows 10+)
+where curl >nul 2>&1
+if not errorlevel 1 (
+    curl -L -o "%GIT_INSTALLER%" "%GIT_URL%"
+    goto :check_download
+)
+
+:: Fallback to PowerShell
+powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%GIT_URL%' -OutFile '%GIT_INSTALLER%' -UseBasicParsing"
+
+:check_download
 if not exist "%GIT_INSTALLER%" (
     echo ERROR: Download failed.
     echo Download manually: https://git-scm.com/download/win
