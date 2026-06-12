@@ -31,7 +31,7 @@ export class PubMedSearchPanel {
 
     _buildHTML() {
         return `
-            <div class="modal-content" style="max-width:820px;">
+            <div class="modal-content" style="max-width:1025px;">
                 <div class="modal-header">
                     <h3>PubMed Literature Search</h3>
                     <button class="modal-close" id="pubmedCloseBtn">&times;</button>
