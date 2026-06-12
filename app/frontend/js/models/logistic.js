@@ -303,16 +303,17 @@ export class LogisticModel extends BaseModel {
         // Парсим таблицу из output
         const tableData = this._parseMarkdownTable(result.output || '');
         
-        if (tableData.length > 0) {
+        if (tableData.length > 1) {
+            const header = tableData[0];
             let html = '<table class="results-table"><thead><tr>';
-            html += '<th>Variable</th><th>β (coef)</th><th>OR</th><th>95% CI</th><th>p-value</th>';
+            header.forEach(h => html += `<th>${h}</th>`);
             html += '</tr></thead><tbody>';
             
-            tableData.forEach(row => {
+            for (let i = 1; i < tableData.length; i++) {
                 html += '<tr>';
-                row.forEach(cell => html += `<td>${cell}</td>`);
+                tableData[i].forEach(cell => html += `<td>${cell}</td>`);
                 html += '</tr>';
-            });
+            }
             
             html += '</tbody></table>';
             tableContainer.innerHTML = html;
@@ -339,6 +340,8 @@ export class LogisticModel extends BaseModel {
             
             if ((line.includes('| Variable | β') || line.includes('| Predictor | OR')) && line.includes('|')) {
                 inTable = true;
+                const cells = line.split('|').filter(c => c.trim() !== '');
+                tableData.push(cells.map(c => c.trim()));
                 continue;
             }
             
