@@ -47,7 +47,7 @@ export class VariablesPanel {
             if (selectedVars.event === v.name) cls += ' event-selected';
             if (selectedVars.group === v.name) cls += ' group-selected';
             if (selectedVars.stratify === v.name) cls += ' stratify-selected';
-            if (selectedVars.covariates && covariates.has(v.name)) cls += ' selected';
+            if (selectedVars.covariates && selectedVars.covariates.has(v.name)) cls += ' selected';
             
             const typeShort = v.type === 'numeric' ? 'num' : 
                             v.type === 'categorical' ? 'cat' : 

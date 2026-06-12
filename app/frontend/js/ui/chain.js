@@ -47,7 +47,7 @@ export class ChainPanel {
     }
 
     _render() {
-        const list = this.container && container.querySelector('#chainList');
+        const list = this.container && this.container.querySelector('#chainList');
         if (!list) return;
 
         list.innerHTML = '';
@@ -270,7 +270,7 @@ export class ChainPanel {
 
     addItem(item) {
         this.chainItems.push(item);
-        const list = this.container && container.querySelector('#chainList');
+        const list = this.container && this.container.querySelector('#chainList');
         if (list) {
             const el = this._createChainItem(item, this.chainItems.length - 1);
             list.appendChild(el);
@@ -280,7 +280,7 @@ export class ChainPanel {
 
     clear() {
         this.chainItems = [];
-        const list = this.container && container.querySelector('#chainList');
+        const list = this.container && this.container.querySelector('#chainList');
         if (list) {
             list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px;">No analyses yet</div>';
         }

@@ -287,7 +287,7 @@ export class KaplanMeierModel extends BaseModel {
         let h = '<div style="padding:16px;display:flex;flex-direction:column;gap:16px;">';
         
         // Log-Rank Test card
-        const pOverall = typeof m.logrank_overall === 'number' ? m.logrank_overall : (m.logrank_overall && logrank_overall.p_value ?? null);
+        const pOverall = typeof m.logrank_overall === 'number' ? m.logrank_overall : (m.logrank_overall && (logrank_overall.p_value ?? null));
         const pairwise = m.logrank_pairwise;
         if (pOverall || (pairwise && pairwise.length)) {
             h += `<div class="diagnostic-card"><h3 class="diagnostic-card-title">Log-Rank Test</h3><div class="diagnostic-card-content">`;

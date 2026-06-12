@@ -122,12 +122,12 @@ export class SurvivalEvaluationModel extends BaseModel {
         const bootstrapInput = card.querySelector('.bootstrap-input');
         const bootstrapSeedInput = card.querySelector('.bootstrap-seed-input');
         const comparisonCheck = card.querySelector('.comparison-check');
-        
-        const timeCol = timeInput && timeInput.value && value.trim() || vars.time || '';
-        const eventCol = eventInput && eventInput.value && value.trim() || vars.event || '';
+        const timeCol = timeInput && timeInput.value && timeInput.value.trim() || vars.time || '';
+
+        const eventCol = eventInput && eventInput.value && eventInput.value.trim() || vars.event || '';
         
         let predCols = [];
-        if (predictorsInput && predictorsInput.value && value.trim()) {
+        if (predictorsInput && predictorsInput.value && predictorsInput.value.trim()) {
             predCols = predictorsInput.value.split(',').map(s => s.trim()).filter(s => s);
         } else if (vars.predictors instanceof Set) {
             predCols = Array.from(vars.predictors);
@@ -146,7 +146,7 @@ export class SurvivalEvaluationModel extends BaseModel {
         const runCalibration = false;
         
         const stratifyInput = card.querySelector('.stratify-input');
-        const stratifyCol = stratifyInput && stratifyInput.value && value.trim() || vars.stratify || '';
+        const stratifyCol = stratifyInput && stratifyInput.value && stratifyInput.value.trim() || vars.stratify || '';
         
         let xTickStep = 6, xLabel = 'Time, months', yTickStep = 0.1, yLabel = 'AUC';
         const axesRow = card.querySelector('.chart-axes-row');
@@ -201,7 +201,7 @@ export class SurvivalEvaluationModel extends BaseModel {
                     html += '</tbody></table>';
                 }
                 
-                const timeAuc = metrics.time_auc && time_auc.[s.label] || {};
+                const timeAuc = metrics.time_auc && metrics.time_auc[s.label] || {};
                 if (Object.keys(timeAuc).length > 0) {
                     // Use user-specified time points if any, otherwise show nothing
                     const userPoints = params.time_points ? params.time_points.split(',').map(t => parseInt(t.trim())).filter(t => !isNaN(t)) : [];
@@ -214,11 +214,11 @@ export class SurvivalEvaluationModel extends BaseModel {
                         for (const [m, data] of Object.entries(timeAuc)) {
                             html += `<tr><td><strong>${m}</strong></td>`;
                             sortedTimes.forEach(t => {
-                                const cell = data && data.[String(t)];
+                                const cell = data && data[String(t)];
                                 if (cell) {
-                                    const auc = cell.auc && auc.toFixed(3) || '—';
-                                    const ciLow = cell.ci_low && ci_low.toFixed(3) || '';
-                                    const ciHigh = cell.ci_high && ci_high.toFixed(3) || '';
+                                    const auc = cell.auc != null ? Number(cell.auc).toFixed(3) : '—';
+                                    const ciLow = cell.ci_low != null ? Number(cell.ci_low).toFixed(3) : '';
+                                    const ciHigh = cell.ci_high != null ? Number(cell.ci_high).toFixed(3) : '';
                                     const p = cell.p_value;
                                     const pStr = (p != null) ? ` p=${Number(p).toFixed(4)}` : '';
                                     if (ciLow && ciHigh) {
@@ -281,9 +281,9 @@ export class SurvivalEvaluationModel extends BaseModel {
         
         sortedModels.forEach(m => {
             const c = cIndices[m] || {};
-            const val = c.value && value.toFixed(4) || '—';
-            const ciLow = c.ci_low && ci_low.toFixed(4) || '—';
-            const ciHigh = c.ci_high && ci_high.toFixed(4) || '—';
+            const val = c.value != null ? Number(c.value).toFixed(4) : '—';
+            const ciLow = c.ci_low != null ? Number(c.ci_low).toFixed(4) : '—';
+            const ciHigh = c.ci_high != null ? Number(c.ci_high).toFixed(4) : '—';
             
             // Color coding
             let color = 'var(--text-muted)';

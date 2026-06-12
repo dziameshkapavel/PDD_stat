@@ -84,7 +84,7 @@ export class ProjectManager {
     }
     
     async handleCreateProject() {
-        const name = this.newProjectNameInput && newProjectNameInput.value && value.trim();
+        const name = this.newProjectNameInput && this.newProjectNameInput.value && this.newProjectNameInput.value.trim();
         const file = this.newProjectFileInput && newProjectFileInput.files[0];
         
         if (!name) {

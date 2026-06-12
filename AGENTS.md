@@ -8,11 +8,11 @@ Language: **Russian** (comments, strings, UI). Agent responses may be in English
 # Start dev server
 cd app/backend && source ../../.venv/bin/activate && python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
-# Run tests (70 total)
-cd app/backend && python -m pytest tests/ -v
+# Run all tests (70 total)
+cd app/backend && python -m pytest tests/ -v --timeout=60
 
 # Run single test file
-cd app/backend && python -m pytest tests/test_response_validator.py -v
+cd app/backend && python -m pytest tests/test_response_validator.py -v --timeout=60
 
 # Lint (ruff)
 cd app/backend && ruff check .
@@ -22,7 +22,7 @@ cd app/backend && ruff check .
 
 ## Windows installation
 
-Three `.bat` scripts in project root:
+Three `.bat` scripts in project root — use **ASCII only** (Russian UTF-8 breaks cmd.exe):
 
 | Script | Purpose |
 |--------|---------|
@@ -30,56 +30,59 @@ Three `.bat` scripts in project root:
 | `start.bat` | Launch dev server (auto-finds Python, activates venv) |
 | `update.bat` | Pull latest changes from GitHub, update deps |
 
-- `setup.bat` auto-downloads Python 3.12 if missing, disables MS Store stubs.
-- `update.bat` auto-installs Git 2.54.0 if missing; detects ZIP downloads and tells user to clone properly.
-- All `.bat` files use **ASCII only** — Russian UTF-8 breaks cmd.exe.
-
 ## Architecture
 
-- **Backend**: FastAPI, entrypoint `app/backend/app/main.py`. 3 routers: `/api/projects`, `/api/analysis`, `/api/ai`.
+- **Backend**: FastAPI, entrypoint `app/backend/app/main.py`. 3 routers: `/api/projects`, `/api/analysis`, `/api/ai`. Healthcheck at `/api/health`.
 - **Frontend**: Vanilla HTML/CSS/JS at `app/frontend/` — served as static files by backend. No build step. **No optional chaining (`?.`)** — must work in Chrome < 80.
-- **Core logic**: `app/backend/app/core/` — `executor.py` (exec with sandboxed namespace), `modeling_orchestrator.py` (Jinja2 template engine), `project_manager.py`, `data_loader.py`, `rule_engine.py`, `cox_selector.py`, `auth.py` (API key auth), `pubmed_api.py` (PubMed/NCBI client).
-- **AI module**: `app/backend/app/core/ai/` — `prompt_manager.py` (YAML prompts, hot reload), `context_builder.py`, `response_validator.py` (anti-hallucination, auto-retry), `ai_clients.py` (Ollama/Groq), `tools.py` (template metadata/schemas).
+- **Core logic** in `app/backend/app/core/` — `executor.py` (sandboxed exec), `modeling_orchestrator.py` (Jinja2 template engine), `project_manager.py`, `data_loader.py`, `rule_engine.py`, `cox_selector.py`, `auth.py`, `pubmed_api.py`.
+- **AI module** in `app/backend/app/core/ai/` — `prompt_manager.py` (YAML prompts, hot reload), `context_builder.py`, `response_validator.py` (anti-hallucination, auto-retry), `ai_clients.py` (Ollama/Groq), `tools.py`.
+- **Prompts** in `app/backend/prompts/` — YAML system prompts: `roles/` (coder, consultant), `rules/` (formatting, safety).
 - **Templates**: 20 `*.py.jinja` files in `app/backend/app/templates/`.
 - **Projects** stored in `projects/<name>/` with subdirs: `data/`, `state/`, `outputs/`, `plots/`, `logs/`.
-- `app/backend/app/services/` and `app/backend/app/models/` are empty.
 
 ## Key execution flow
 
 1. UI → `POST /api/analysis/run` with `template` + `params`
 2. `ModelingOrchestrator` renders Jinja2 from `templates/*.py.jinja`
 3. Code `exec()`-ed via `Executor` with controlled namespace (`df`, `pd`, `np`, `plt`, `save_plot`, `get_label`, `fmt_p`, `CoxVariableSelector`)
-4. Results as JSON; metrics extracted from `<!-- JSON_METRICS_START/END -->` comments in output
+4. Results returned as JSON; metrics extracted from `<!-- JSON_METRICS_START --> ... <!-- JSON_METRICS_END -->` comments in stdout
 
 ## Critical quirks
 
-- **`plt.show()`/`plt.figure()` are auto-stripped** before execution; use `save_plot(name)` to save plots.
-- Active project tracked in `app/backend/app/active_project.txt`. There is also a stale `app/backend/active_project.txt` — **unused, ignore it**.
-- `numeric_compare` template uses `value`/`group` params (not `value_col`/`group_col`) — matches frontend, do not change.
-- Backend strings/comments are **in Russian**.
-- History capped at 200 entries (`analysis_history.json`).
-- Executor timeout: 60s via SIGALRM (Unix main thread only).
-- AST analysis blocks dangerous imports (`os`, `subprocess`, `sys`, `socket`, etc.) in template code.
-- Frontend JS has **no optional chaining (`?.`)** — replaced with `&&` or ternary for Chrome < 80 compatibility.
+- **`plt.show()`/`plt.figure()` are auto-stripped** before execution; use `save_plot(name)` to save plots (PNG, 150dpi).
+- **Active project** tracked in `app/backend/app/active_project.txt` (read by `main.py` and `projects.py`).
+- **`numeric_compare` template** uses `value`/`group` params (not `value_col`/`group_col`).
+- **Web UI labels**: Backend strings (comments, error messages, log entries) are in Russian.
+- **History capped** at 200 entries (`analysis_history.json`).
+- **Executor timeout** 60s via SIGALRM (Unix main thread only).
+- **AST analysis** blocks dangerous imports (`os`, `subprocess`, `sys`, `socket`, etc.) in template code.
+- **Allowed imports** in templates: `pandas`, `numpy`, `matplotlib`, `scipy`, `lifelines`, `json`, `time`, `pathlib`, `warnings`, `statsmodels`, `sklearn`, `itertools`, `typing`, `math`, `seaborn`, `collections`, `docx`, `jinja2`, `pyarrow`, `openpyxl`, `autograd`, `shutil`, `numbers`.
+- **Log files** (`pdd_stat_*.log`) accumulate in the working directory where the server was started.
 
 ## Persistence
 
-| What | Where | Format |
-|------|-------|--------|
-| Clean data | `state/project_data.parquet` | Parquet |
-| Raw upload | `state/raw.parquet` | Parquet |
-| Analysis history | `state/analysis_history.json` | JSON (max 200) |
-| Variable labels | `state/variable_labels.json` | JSON |
-| AI config | `state/ai_config.json` | JSON |
-| Project context | `state/project_context.json` | JSON |
-| Reports | `state/reports/` | `.docx` / `.html` |
-| Plots | `plots/*.png` | PNG |
+Per-project under `projects/<name>/state/`:
+| File | Format |
+|------|--------|
+| `project_data.parquet` | Parquet (snappy, fallback lz4, then none) |
+| `raw.parquet` | Parquet |
+| `analysis_history.json` | JSON (max 200 entries) |
+| `variable_labels.json` | JSON |
+| `ai_config.json` | JSON |
+| `project_context.json` | JSON |
+| `reports/` | `.docx` / `.html` |
+
+Plots at `projects/<name>/plots/*.png`.
 
 ## Testing
 
-- **70 tests**: 38 unit (`test_response_validator.py`) + 20 API (`test_api.py`) + 12 hallucination tests.
-- All tests require Python 3.11+ (`.venv/bin/python`).
+- **70 tests** (all pass): 38 unit + 20 API + 12 hallucination/systematic in `app/backend/tests/`.
+- Requires Python 3.11+ (`.venv/bin/python`). CI also runs `pytest --timeout=60`.
 - **Linter**: ruff (E/F/W/I/N/UP/B/SIM), `pyproject.toml` config, line-length=120.
+
+## CI
+
+`.github/workflows/ci.yml` — runs `ruff check .` then `pytest tests/ -v --timeout=60` on pushes to `main`/`master`/`develop`.
 
 ## AI providers
 
@@ -90,14 +93,12 @@ Three `.bat` scripts in project root:
 
 Old Groq model names (`llama3-70b-8192`) do not work.
 
-## Dependencies
-
-`app/backend/requirements.txt`. Key: FastAPI, uvicorn, pandas, matplotlib, numpy, lifelines, scikit-learn, statsmodels, shap, scikit-survival, seaborn, python-docx, jinja2, httpx, pyarrow, openpyxl, autograd, autograd-gamma, tabulate, python-multipart, scipy, pyyaml.
-
 ## Docker
 
 ```bash
 docker compose up -d --build   # Python 3.11-slim, 2 workers, healthcheck
+docker compose down            # stop
+PDD_STAT_API_KEY=my-key docker compose up -d  # with API key
 ```
 
 Production: `gunicorn -k uvicorn.workers.UvicornWorker -w 4`.

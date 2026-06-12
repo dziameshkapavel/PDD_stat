@@ -550,6 +550,7 @@ export class LogisticModel extends BaseModel {
             html += `</tbody></table>`;
             html += `</div></div>`;
         }
+        if (metrics.hosmer_lemeshow) {
             html += `<div class="diagnostic-card">`;
             html += `<h3 class="diagnostic-card-title">Goodness of Fit (Hosmer-Lemeshow)</h3>`;
             html += `<div class="diagnostic-card-content">`;

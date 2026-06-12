@@ -46,8 +46,8 @@ export class RandomForestModel extends BaseModel {
         const topSelect = card.querySelector('.top-features-select');
         const shapCheck = card.querySelector('.shap-check');
         
-        const target = targetInput && targetInput.value && value.trim() || '';
-        const exclusions = exclusionsInput && exclusionsInput.value && value.trim() || '';
+        const target = targetInput && targetInput.value && targetInput.value.trim() || '';
+        const exclusions = exclusionsInput && exclusionsInput.value && exclusionsInput.value.trim() || '';
         const topN = topSelect ? parseInt(topSelect.value) : 15;
         const calculateShap = shapCheck && shapCheck.checked || false;
         
