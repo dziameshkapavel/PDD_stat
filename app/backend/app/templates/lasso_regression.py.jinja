@@ -43,6 +43,10 @@ target_col = "{{ target_col }}"
 covariates = {{ covariates|default([])|tojson }}
 C_value = {{ C_value|default(1.0)|float }}
 auto_select_C = {{ auto_select_C|default(True) }}
+show_coef_plot = {{ show_coef_plot|default(false) }}
+show_cv_plot = {{ show_cv_plot|default(false) }}
+show_dca_plot = {{ show_dca_plot|default(false) }}
+show_cal_plot = {{ show_cal_plot|default(false) }}
 
 def safe_int(x):
     try:
@@ -318,7 +322,7 @@ print(f"**Intercept:** {intercept:.4f}\n")
 timestamp = str(int(time.time()))
 
 # График коэффициентов
-if n_selected > 0:
+if show_coef_plot and n_selected > 0:
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     
     # Plot 1: Selected features
@@ -352,7 +356,7 @@ if n_selected > 0:
     print(f"![LASSO Coefficients](/plots/{plot_filename}.png)\n")
 
 # CV curve если авто
-if auto_select_C:
+if show_cv_plot and auto_select_C:
     fig, ax = plt.subplots(figsize=(10, 5))
     Cs = grid.param_grid['C']
     scores = grid.cv_results_['mean_test_score']
@@ -372,54 +376,56 @@ if auto_select_C:
     print(f"![LASSO CV](/plots/{cv_plot}.png)\n")
 
 # ========== DCA ==========
-print("### Decision Curve Analysis (DCA)\n")
-
-thresholds = np.linspace(0.01, 0.99, 99)
-key_ths = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50]
-
-print("| Threshold | Model NB | Treat All NB | Treat None NB | Net Benefit Gain |")
-print("|-----------|----------|---------------|---------------|------------------|")
-for t in key_ths:
-    nb_m = net_benefit(y, y_pred_proba, t)
-    nb_a = net_benefit(y, np.ones(len(y)), t)
-    print(f"| {t*100:.0f}% | {nb_m:.4f} | {nb_a:.4f} | 0.0000 | {nb_m-nb_a:+.4f} |")
-print()
-
-fig_dca, ax_dca = plt.subplots(figsize=(10, 6))
-ta = [net_benefit(y, np.ones(len(y)), t) for t in thresholds]
-ax_dca.plot(thresholds, ta, color='#1f77b4', lw=2, label='Treat All')
-ax_dca.plot(thresholds, [0]*len(thresholds), color='#d62728', lw=2, label='Treat None')
-nb_model = [net_benefit(y, y_pred_proba, t) for t in thresholds]
-ax_dca.plot(thresholds, nb_model, color='#2ca02c', lw=2, label='LASSO Model')
-ax_dca.set_xlabel('Threshold Probability', fontsize=12)
-ax_dca.set_ylabel('Net Benefit', fontsize=12)
-ax_dca.set_xlim(0, 1)
-ax_dca.set_ylim(-0.05, max(max(ta), max(nb_model)) + 0.05)
-ax_dca.legend(loc='upper right', fontsize=9)
-ax_dca.grid(True, alpha=0.3)
-ax_dca.spines['top'].set_visible(False)
-ax_dca.spines['right'].set_visible(False)
-plt.tight_layout()
-dca_fn = f"lasso_dca_{timestamp}"
-save_plot(dca_fn, fig_dca)
-print(f"![LASSO DCA](/plots/{dca_fn}.png)\n")
+if show_dca_plot:
+    print("### Decision Curve Analysis (DCA)\n")
+    
+    thresholds = np.linspace(0.01, 0.99, 99)
+    key_ths = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50]
+    
+    print("| Threshold | Model NB | Treat All NB | Treat None NB | Net Benefit Gain |")
+    print("|-----------|----------|---------------|---------------|------------------|")
+    for t in key_ths:
+        nb_m = net_benefit(y, y_pred_proba, t)
+        nb_a = net_benefit(y, np.ones(len(y)), t)
+        print(f"| {t*100:.0f}% | {nb_m:.4f} | {nb_a:.4f} | 0.0000 | {nb_m-nb_a:+.4f} |")
+    print()
+    
+    fig_dca, ax_dca = plt.subplots(figsize=(10, 6))
+    ta = [net_benefit(y, np.ones(len(y)), t) for t in thresholds]
+    ax_dca.plot(thresholds, ta, color='#1f77b4', lw=2, label='Treat All')
+    ax_dca.plot(thresholds, [0]*len(thresholds), color='#d62728', lw=2, label='Treat None')
+    nb_model = [net_benefit(y, y_pred_proba, t) for t in thresholds]
+    ax_dca.plot(thresholds, nb_model, color='#2ca02c', lw=2, label='LASSO Model')
+    ax_dca.set_xlabel('Threshold Probability', fontsize=12)
+    ax_dca.set_ylabel('Net Benefit', fontsize=12)
+    ax_dca.set_xlim(0, 1)
+    ax_dca.set_ylim(-0.05, max(max(ta), max(nb_model)) + 0.05)
+    ax_dca.legend(loc='upper right', fontsize=9)
+    ax_dca.grid(True, alpha=0.3)
+    ax_dca.spines['top'].set_visible(False)
+    ax_dca.spines['right'].set_visible(False)
+    plt.tight_layout()
+    dca_fn = f"lasso_dca_{timestamp}"
+    save_plot(dca_fn, fig_dca)
+    print(f"![LASSO DCA](/plots/{dca_fn}.png)\n")
 
 # ========== Calibration ==========
-print("### Calibration Plot\n")
-fig_cal, ax_cal = plt.subplots(figsize=(8, 8))
-prob_true, prob_pred = calibration_curve(y, y_pred_proba, n_bins=10, strategy='uniform')
-brier = ((y - y_pred_proba)**2).mean()
-ax_cal.plot(prob_pred, prob_true, 'o-', color='steelblue', ms=8, label=f'LASSO (Brier={brier:.3f})')
-ax_cal.plot([0, 1], [0, 1], '--', color='gray', label='Perfect calibration')
-ax_cal.set_xlabel('Predicted Probability')
-ax_cal.set_ylabel('Observed Proportion')
-ax_cal.set_title('Calibration Plot')
-ax_cal.legend(fontsize=10)
-ax_cal.grid(True, alpha=0.3)
-plt.tight_layout()
-cal_fn = f"lasso_calibration_{timestamp}"
-save_plot(cal_fn, fig_cal)
-print(f"![LASSO Calibration](/plots/{cal_fn}.png)\n")
+if show_cal_plot:
+    print("### Calibration Plot\n")
+    fig_cal, ax_cal = plt.subplots(figsize=(8, 8))
+    prob_true, prob_pred = calibration_curve(y, y_pred_proba, n_bins=10, strategy='uniform')
+    brier = ((y - y_pred_proba)**2).mean()
+    ax_cal.plot(prob_pred, prob_true, 'o-', color='steelblue', ms=8, label=f'LASSO (Brier={brier:.3f})')
+    ax_cal.plot([0, 1], [0, 1], '--', color='gray', label='Perfect calibration')
+    ax_cal.set_xlabel('Predicted Probability')
+    ax_cal.set_ylabel('Observed Proportion')
+    ax_cal.set_title('Calibration Plot')
+    ax_cal.legend(fontsize=10)
+    ax_cal.grid(True, alpha=0.3)
+    plt.tight_layout()
+    cal_fn = f"lasso_calibration_{timestamp}"
+    save_plot(cal_fn, fig_cal)
+    print(f"![LASSO Calibration](/plots/{cal_fn}.png)\n")
 
 # ========== JSON METRICS FOR AI ==========
 output_metrics = {

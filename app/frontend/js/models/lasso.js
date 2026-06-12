@@ -183,6 +183,11 @@ export class LassoModel extends BaseModel {
         const cInput = card.querySelector('.c-value-input');
         const covariate_types = card.covariateTypes || {};
         
+        const plotCoef = card.querySelector('.plot-coef-check');
+        const plotCv = card.querySelector('.plot-cv-check');
+        const plotDca = card.querySelector('.plot-dca-check');
+        const plotCal = card.querySelector('.plot-cal-check');
+        
         // Collect reference groups
         const reference_groups = {};
         card.querySelectorAll('.ref-group-item').forEach(item => {
@@ -199,7 +204,11 @@ export class LassoModel extends BaseModel {
             auto_select_C: autoCheck ? autoCheck.checked : true,
             C_value: cInput ? parseFloat(cInput.value) || 1.0 : 1.0,
             covariate_types,
-            reference_groups
+            reference_groups,
+            show_coef_plot: plotCoef ? plotCoef.checked : false,
+            show_cv_plot: plotCv ? plotCv.checked : false,
+            show_dca_plot: plotDca ? plotDca.checked : false,
+            show_cal_plot: plotCal ? plotCal.checked : false
         };
     }
     
