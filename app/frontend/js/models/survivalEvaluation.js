@@ -103,7 +103,8 @@ export class SurvivalEvaluationModel extends BaseModel {
             
             loadingDiv.remove();
             this.renderResults(block, result, params);
-            await this.displayPlots(block, 'surv_eval');
+            const plotFiles = (result.metrics && result.metrics.plots) ? result.metrics.plots : null;
+            await this.displayPlots(block, null, plotFiles);
             
         } catch (e) {
             loadingDiv.remove();
