@@ -95,10 +95,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Remove untracked files from ZIP extraction (preserves gitignored dirs like projects/)
-echo Cleaning untracked files from previous ZIP extraction...
-git clean -fd >nul 2>&1
-
 echo Resetting to latest version...
 
 git rev-parse --verify origin/main >nul 2>&1
@@ -140,10 +136,6 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-
-:: Remove untracked files (preserves gitignored dirs like projects/*/)
-echo Cleaning untracked files...
-git clean -fd >nul 2>&1
 
 echo Resetting to latest version...
 git rev-parse --verify origin/main >nul 2>&1
