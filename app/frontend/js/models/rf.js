@@ -397,7 +397,7 @@ export class RandomForestModel extends BaseModel {
             });
             const result = await response.json();
             loadingDiv.remove();
-            if (result.success && result.metrics && metrics.model_path) {
+            if (result.success && result.metrics && result.metrics.model_path) {
                 block.innerHTML = `<div style="padding:16px;color:var(--accent-green);">Model saved: ${result.metrics.model_path.split('/').pop()}</div>`;
             } else {
                 block.innerHTML = `<div style="padding:16px;color:var(--accent-red);">Failed to save model</div>`;

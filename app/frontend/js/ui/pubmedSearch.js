@@ -99,7 +99,7 @@ export class PubMedSearchPanel {
         try {
             const resp = await fetch(`${API_BASE}/ai/context`);
             const data = await resp.json();
-            this.articles = data.context && context.pubmed_articles || [];
+            this.articles = data.context && data.context.pubmed_articles || [];
         } catch (e) {
             this.articles = [];
         }
