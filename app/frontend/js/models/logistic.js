@@ -332,7 +332,7 @@ export class LogisticModel extends BaseModel {
         for (let line of lines) {
             line = line.trim();
             
-            if (line.includes('| Variable | β (coef) | OR |') || line.includes('| Variable | β (coef) | OR |')) {
+            if ((line.includes('| Variable | β') || line.includes('| Predictor | OR')) && line.includes('|')) {
                 inTable = true;
                 continue;
             }
@@ -348,7 +348,7 @@ export class LogisticModel extends BaseModel {
             
             if (inTable && line.startsWith('|')) {
                 const cells = line.split('|').filter(c => c.trim() !== '');
-                if (cells.length >= 5) {
+                if (cells.length >= 3) {
                     tableData.push(cells.map(c => c.trim()));
                 }
             }
