@@ -253,9 +253,10 @@ export class CoxModel extends BaseModel {
             }
             
             loadingDiv.remove();
-            
+
             this.renderResults(block, result, card);
-            await this.displayPlots(block);
+            const plotFiles = (result.metrics && result.metrics.plots) ? result.metrics.plots : null;
+            await this.displayPlots(block, null, plotFiles);
             
         } catch (error) {
             console.error('Cox analysis error:', error);
@@ -309,7 +310,10 @@ export class CoxModel extends BaseModel {
             covariate_types,
             p_enter: regressionType === 'forward' ? pValue : 0.05,
             p_remove: regressionType === 'backward' ? pValue : 0.10,
-            plot_adjust_var: plotAdjustVar
+            plot_adjust_var: plotAdjustVar,
+            show_forest_plot: !!(card.querySelector('.plot-forest-check') && card.querySelector('.plot-forest-check').checked),
+            show_survival_plot: !!(card.querySelector('.plot-survival-check') && card.querySelector('.plot-survival-check').checked),
+            show_residuals_plot: !!(card.querySelector('.plot-residuals-check') && card.querySelector('.plot-residuals-check').checked)
         };
     }
     

@@ -267,7 +267,10 @@ export class LogisticModel extends BaseModel {
             validation: validation,
             covariate_types,
             reference_groups,
-            event_value: eventSelect ? parseInt(eventSelect.value) : 1
+            event_value: eventSelect ? parseInt(eventSelect.value) : 1,
+            show_roc_plot: !!(card.querySelector('.plot-roc-check') && card.querySelector('.plot-roc-check').checked),
+            show_dca_plot: !!(card.querySelector('.plot-dca-check') && card.querySelector('.plot-dca-check').checked),
+            show_cal_plot: !!(card.querySelector('.plot-cal-check') && card.querySelector('.plot-cal-check').checked)
         };
     }
     

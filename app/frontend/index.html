@@ -275,6 +275,23 @@
                         </select>
                     </div>
                 </div>
+                <div class="form-group">
+                    <label style="margin-bottom:6px;font-size:12px;color:var(--text-muted);display:block;">Plots (optional)</label>
+                    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px;">
+                            <input type="checkbox" class="plot-forest-check" style="width:16px;height:16px;">
+                            <span>Forest Plot</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px;">
+                            <input type="checkbox" class="plot-survival-check" style="width:16px;height:16px;">
+                            <span>Survival Curves</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px;">
+                            <input type="checkbox" class="plot-residuals-check" style="width:16px;height:16px;">
+                            <span>Residuals</span>
+                        </label>
+                    </div>
+                </div>
                 <button class="run-btn">▶ Run</button>
                 <div style="clear:both;"></div>
             </div>
@@ -363,6 +380,23 @@
                             <button class="btn-secondary validation-btn" data-validation="split">Train/Test</button>
                             <button class="btn-secondary validation-btn" data-validation="cv">Cross-val</button>
                         </div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label style="margin-bottom:6px;font-size:12px;color:var(--text-muted);display:block;">Plots (optional)</label>
+                    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px;">
+                            <input type="checkbox" class="plot-roc-check" style="width:16px;height:16px;">
+                            <span>ROC</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px;">
+                            <input type="checkbox" class="plot-dca-check" style="width:16px;height:16px;">
+                            <span>DCA</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px;">
+                            <input type="checkbox" class="plot-cal-check" style="width:16px;height:16px;">
+                            <span>Calibration</span>
+                        </label>
                     </div>
                 </div>
                 <button class="run-btn">▶ Run</button>

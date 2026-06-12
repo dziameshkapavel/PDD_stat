@@ -112,6 +112,9 @@ validation_strategy = "{{ validation|default('none') }}"
 save_pred_col = "{{ save_pred_col|default('') }}"
 use_balanced = {{ use_balanced|default('false')|lower == 'true' }}
 cw = 'balanced' if use_balanced else None
+show_roc_plot = {{ show_roc_plot|default(false) }}
+show_dca_plot = {{ show_dca_plot|default(false) }}
+show_cal_plot = {{ show_cal_plot|default(false) }}
 
 def make_json_serializable(obj):
     if isinstance(obj, dict):
@@ -674,40 +677,47 @@ if regression_type == "uni":
                 pred_row["coef"] = r.get("coef")
         uni_results.append(pred_row)
 
-    # Один график ROC со всеми кривыми
+    # Plots
     if roc_data:
         timestamp = str(int(time.time()))
-        fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+        all_plots = []
 
-        colors = plt.cm.tab10(np.linspace(0, 1, len(roc_data)))
+        if show_roc_plot:
+            fig, ax = plt.subplots(1, 1, figsize=(10, 8))
 
-        for i, (pred, fpr, tpr, roc_auc) in enumerate(roc_data):
-            ax.plot(fpr, tpr, color=colors[i], lw=2, label=f'{pred} (AUC = {roc_auc:.3f})')
+            colors = plt.cm.tab10(np.linspace(0, 1, len(roc_data)))
 
-        ax.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', alpha=0.5)
-        ax.set_xlim([0.0, 1.0])
-        ax.set_ylim([0.0, 1.05])
-        ax.set_xlabel('False Positive Rate')
-        ax.set_ylabel('True Positive Rate')
-        ax.set_title('ROC Curves - Univariate Analysis')
-        ax.legend(loc="lower right", fontsize=9)
-        ax.grid(True, alpha=0.3)
+            for i, (pred, fpr, tpr, roc_auc) in enumerate(roc_data):
+                ax.plot(fpr, tpr, color=colors[i], lw=2, label=f'{pred} (AUC = {roc_auc:.3f})')
 
-        plt.tight_layout()
-        plot_filename = f"logistic_uni_{timestamp}"
-        save_plot(plot_filename, fig)
-        all_plots = [f"{plot_filename}.png"]
-        print(f"\n![Logistic Univariate](/plots/{plot_filename}.png)\n")
+            ax.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', alpha=0.5)
+            ax.set_xlim([0.0, 1.0])
+            ax.set_ylim([0.0, 1.05])
+            ax.set_xlabel('False Positive Rate')
+            ax.set_ylabel('True Positive Rate')
+            ax.set_title('ROC Curves - Univariate Analysis')
+            ax.legend(loc="lower right", fontsize=9)
+            ax.grid(True, alpha=0.3)
+
+            plt.tight_layout()
+            plot_filename = f"logistic_uni_{timestamp}"
+            save_plot(plot_filename, fig)
+            all_plots.append(f"{plot_filename}.png")
+            print(f"\n![Logistic Univariate](/plots/{plot_filename}.png)\n")
 
         if dca_data:
             names = [d[0] for d in dca_data]
             probas = [d[2] for d in dca_data]
             yt = dca_data[0][1]
-            plot_dca(yt, probas, names, "logistic_uni", timestamp)
-            all_plots.append(f"logistic_uni_dca_{timestamp}.png")
-            plot_calibration(yt, probas, names, "logistic_uni", timestamp)
-            all_plots.append(f"logistic_uni_calibration_{timestamp}.png")
-        output_metrics["plots"] = all_plots
+            if show_dca_plot:
+                plot_dca(yt, probas, names, "logistic_uni", timestamp)
+                all_plots.append(f"logistic_uni_dca_{timestamp}.png")
+            if show_cal_plot:
+                plot_calibration(yt, probas, names, "logistic_uni", timestamp)
+                all_plots.append(f"logistic_uni_calibration_{timestamp}.png")
+
+        if all_plots:
+            output_metrics["plots"] = all_plots
 
     # Summary table for all predictors
     if uni_results:
@@ -849,22 +859,24 @@ elif regression_type in ["multi", "enter"]:
 
     # ROC
     timestamp = str(int(time.time()))
-    fig, ax = plt.subplots(1, 1, figsize=(8, 8))
-    ax.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC (AUC = {roc_auc:.3f})')
-    ax.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', alpha=0.5)
-    ax.set_xlim([0.0, 1.0])
-    ax.set_ylim([0.0, 1.05])
-    ax.set_xlabel('False Positive Rate')
-    ax.set_ylabel('True Positive Rate')
-    ax.set_title('ROC Curve - Multivariate Model')
-    ax.legend(loc="lower right")
-    ax.grid(True, alpha=0.3)
+    all_plots = []
+    if show_roc_plot:
+        fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+        ax.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC (AUC = {roc_auc:.3f})')
+        ax.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', alpha=0.5)
+        ax.set_xlim([0.0, 1.0])
+        ax.set_ylim([0.0, 1.05])
+        ax.set_xlabel('False Positive Rate')
+        ax.set_ylabel('True Positive Rate')
+        ax.set_title('ROC Curve - Multivariate Model')
+        ax.legend(loc="lower right")
+        ax.grid(True, alpha=0.3)
 
-    plt.tight_layout()
-    plot_filename = f"logistic_multi_{timestamp}"
-    save_plot(plot_filename, fig)
-    all_plots = [f"{plot_filename}.png"]
-    print(f"\n![Logistic Multivariate](/plots/{plot_filename}.png)\n")
+        plt.tight_layout()
+        plot_filename = f"logistic_multi_{timestamp}"
+        save_plot(plot_filename, fig)
+        all_plots.append(f"{plot_filename}.png")
+        print(f"\n![Logistic Multivariate](/plots/{plot_filename}.png)\n")
 
     # DCA and Calibration for Multi
     if validation_strategy == "split":
@@ -873,11 +885,15 @@ elif regression_type in ["multi", "enter"]:
         dca_y_true = y_all
     else:
         dca_y_true = y
-    plot_dca(dca_y_true, [y_proba], ["Model"], "logistic_multi", timestamp)
-    all_plots.append(f"logistic_multi_dca_{timestamp}.png")
-    plot_calibration(dca_y_true, [y_proba], ["Model"], "logistic_multi", timestamp)
-    all_plots.append(f"logistic_multi_calibration_{timestamp}.png")
-    output_metrics["plots"] = all_plots
+    if show_dca_plot:
+        plot_dca(dca_y_true, [y_proba], ["Model"], "logistic_multi", timestamp)
+        all_plots.append(f"logistic_multi_dca_{timestamp}.png")
+    if show_cal_plot:
+        plot_calibration(dca_y_true, [y_proba], ["Model"], "logistic_multi", timestamp)
+        all_plots.append(f"logistic_multi_calibration_{timestamp}.png")
+
+    if all_plots:
+        output_metrics["plots"] = all_plots
     save_predictions_to_df(save_pred_col, valid_pred)
 
 # ==================== FORWARD ====================
@@ -964,27 +980,32 @@ elif regression_type == "forward":
 
         # ROC
         timestamp = str(int(time.time()))
-        fig, ax = plt.subplots(1, 1, figsize=(8, 8))
-        roc_auc = auc_val
-        ax.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC (AUC = {roc_auc:.3f})')
-        ax.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', alpha=0.5)
-        ax.set_xlim([0.0, 1.0])
-        ax.set_ylim([0.0, 1.05])
-        ax.set_xlabel('False Positive Rate')
-        ax.set_ylabel('True Positive Rate')
-        ax.set_title('ROC Curve - Backward Elimination')
-        ax.legend(loc="lower right")
-        ax.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plot_filename = f"logistic_backward_{timestamp}"
-        save_plot(plot_filename, fig)
-        all_plots = [f"{plot_filename}.png"]
-        print(f"\n![Logistic Backward](/plots/{plot_filename}.png)\n")
-        plot_dca(y_true, [y_proba], ["Model"], "logistic_backward", timestamp)
-        all_plots.append(f"logistic_backward_dca_{timestamp}.png")
-        plot_calibration(y_true, [y_proba], ["Model"], "logistic_backward", timestamp)
-        all_plots.append(f"logistic_backward_calibration_{timestamp}.png")
-        output_metrics["plots"] = all_plots
+        all_plots = []
+        if show_roc_plot:
+            fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+            roc_auc = auc_val
+            ax.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC (AUC = {roc_auc:.3f})')
+            ax.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', alpha=0.5)
+            ax.set_xlim([0.0, 1.0])
+            ax.set_ylim([0.0, 1.05])
+            ax.set_xlabel('False Positive Rate')
+            ax.set_ylabel('True Positive Rate')
+            ax.set_title('ROC Curve - Forward Selection')
+            ax.legend(loc="lower right")
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plot_filename = f"logistic_forward_{timestamp}"
+            save_plot(plot_filename, fig)
+            all_plots.append(f"{plot_filename}.png")
+            print(f"\n![Logistic Forward](/plots/{plot_filename}.png)\n")
+        if show_dca_plot:
+            plot_dca(y_true, [y_proba], ["Model"], "logistic_forward", timestamp)
+            all_plots.append(f"logistic_forward_dca_{timestamp}.png")
+        if show_cal_plot:
+            plot_calibration(y_true, [y_proba], ["Model"], "logistic_forward", timestamp)
+            all_plots.append(f"logistic_forward_calibration_{timestamp}.png")
+        if all_plots:
+            output_metrics["plots"] = all_plots
         save_predictions_to_df(save_pred_col, selected)
     else:
         output_metrics["warnings"].append("All predictors removed")
