@@ -650,17 +650,53 @@ class ContextBuilder:
         return format_articles_for_context(articles)
 
     def build_full_context(self, loader, user_query: str = "") -> str:
-        """Объединяет сводку датасета + последний анализ + PubMed."""
+        """Объединяет сводку датасета + историю анализов + PubMed."""
         parts = [self.build_dataset_summary(loader)]
-        last = self.build_last_analysis_context(loader)
-        if last:
+        history_context = self._build_history_context(loader)
+        if history_context:
             parts.append("")
-            parts.append(last)
+            parts.append(history_context)
         pubmed = self.build_pubmed_context(loader)
         if pubmed:
             parts.append("")
             parts.append(pubmed)
         return "\n".join(parts)
+
+    def _build_history_context(self, loader) -> str | None:
+        """Форматирует последние анализы (до 5) с output_preview и метриками."""
+        history_path = self.state_folder / "analysis_history.json"
+        if not history_path.exists():
+            return None
+        try:
+            with open(history_path, encoding="utf-8") as f:
+                history = json.load(f)
+        except Exception:
+            return None
+        items = [h for h in history if h.get("template") != "ai_chat"]
+        if not items:
+            return None
+        items = items[:5]
+
+        blocks = []
+        for item in items:
+            ts = item.get("timestamp", "")[:16].replace("T", " ")
+            title = item.get("title", item.get("template", "?"))
+            template = item.get("template", "?")
+            metrics = item.get("metrics", {})
+            block = f"## [{ts}] {title}"
+            block += f"\nTemplate: {template}"
+
+            output = item.get("output_preview", "")
+            if output:
+                block += "\n\n### Output text\n" + output[:3000]
+
+            metric_text = self._format_metrics_text(metrics)
+            if metric_text:
+                block += "\n\n### Metrics\n" + metric_text
+
+            blocks.append(block)
+
+        return "\n---\n".join(blocks)
 
     def build_context_for_report(self, loader, selected_ids: list[str]) -> str:
         """Форматирует выбранные анализы для AI-отчёта (report/ai-generate)."""
