@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="marketing_assets/social_preview.png" alt="PDD_STAT Banner" width="100%">
+  <img src="marketing_assets/social_preview.png" alt="PDD_STAT Banner" style="max-width: 720px; width: 100%; height: auto; border-radius: 8px;">
 </p>
 
 <h1 align="center">PDD_STAT · Medical Statistics, No Code Required</h1>
