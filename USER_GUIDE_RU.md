@@ -87,11 +87,16 @@
 
 **macOS:**
 ```bash
+git --version 2>/dev/null || xcode-select --install
+git clone https://github.com/dziameshkapavel/PDD_stat.git && cd PDD_stat
 ./setup_mac.command && ./start_backend.command
 ```
 
 **Windows:**
 ```batch
+git --version >nul 2>&1 || winget install --id Git.Git -e --source winget >nul
+git clone https://github.com/dziameshkapavel/PDD_stat.git
+cd PDD_stat
 setup.bat
 start.bat
 ```
@@ -101,8 +106,9 @@ start.bat
 ### Ручная установка (альтернатива)
 
 ```bash
+git clone https://github.com/dziameshkapavel/PDD_stat.git && cd PDD_stat
+pip install -r app/backend/requirements.txt
 cd app/backend
-pip install -r requirements.txt
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 

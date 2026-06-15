@@ -48,6 +48,7 @@ PDD_STAT is a **free, open-source web application** for statistical analysis of 
 ### macOS (one-click)
 
 ```bash
+git --version 2>/dev/null || xcode-select --install
 git clone https://github.com/dziameshkapavel/PDD_stat.git
 cd PDD_stat
 ./setup_mac.command && ./start_backend.command
@@ -56,6 +57,7 @@ cd PDD_stat
 ### Windows (one-click)
 
 ```batch
+git --version >nul 2>&1 || winget install --id Git.Git -e --source winget >nul
 git clone https://github.com/dziameshkapavel/PDD_stat.git
 cd PDD_stat
 setup.bat
@@ -65,6 +67,7 @@ start.bat
 ### Docker (recommended for servers)
 
 ```bash
+git --version 2>/dev/null || xcode-select --install
 git clone https://github.com/dziameshkapavel/PDD_stat.git
 cd PDD_stat
 docker compose up -d --build
