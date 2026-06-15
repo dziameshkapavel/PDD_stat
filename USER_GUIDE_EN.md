@@ -80,26 +80,33 @@
 
 | Component | Version |
 |-----------|---------|
-| Python | ≥ 3.9 |
+| Python | ≥ 3.11 |
 | pip | ≥ 21.0 |
 
-### Install Dependencies
+### Quick Start (one-click)
+
+**macOS:**
+```bash
+./setup_mac.command && ./start_backend.command
+```
+
+**Windows:**
+```batch
+setup.bat
+start.bat
+```
+
+The scripts auto-detect Python 3.11+, create a virtual environment, install dependencies, and start the server.
+
+### Manual Setup (alternative)
 
 ```bash
 cd app/backend
 pip install -r requirements.txt
-```
-
-### Start the Server
-
-```bash
-cd app/backend
-python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 Open your browser at: **http://127.0.0.1:8000**
-
-The frontend requires no separate build step — the server serves static files from `app/frontend/` automatically.
 
 ---
 
@@ -475,11 +482,10 @@ Central area — container for analysis cards (see section 5).
 
 **"Save Risk" button** — saves predicted risk (linear predictor) as a new column.
 
-**Plots:**
-- Forest plot (HR with 95% CI)
-- Baseline hazard / survival function
-- Martingale residuals (linearity diagnostic for first continuous predictor)
-- Adjusted survival curves (if covariate selected)
+**Plots (checkboxes, all optional):**
+- **Forest plot** — HR with 95% CI
+- **Survival curves** — adjusted survival curves
+- **Residuals** — Martingale residuals (linearity diagnostic)
 
 **Assumption checks:**
 - EPV (Events Per Variable) ≥ 10 — warning if <10
@@ -504,6 +510,7 @@ Central area — container for analysis cards (see section 5).
 | **Multivariate** | All predictors jointly |
 | **Method** | `Enter`, `Forward`, `Backward` |
 | **Validation** | `None`, `Train/Test` (80/20), `Cross-val` (5-fold CV) |
+| **Plots** | Checkboxes: ROC, DCA, Calibration. All optional, select what you need |
 
 **Output metrics:**
 
@@ -532,7 +539,7 @@ Central area — container for analysis cards (see section 5).
 
 **"Save Probabilities" button** — saves predicted probabilities as a new column.
 
-**Plots (3):**
+**Plots (checkboxes, all optional):**
 - ROC curve
 - DCA (Decision Curve Analysis) with Treat All / Treat None baselines
 - Calibration curve with Brier Score
@@ -556,6 +563,7 @@ Central area — container for analysis cards (see section 5).
 | `covariates` | Predictors (empty = all numeric + encoded categorical) |
 | `Auto-select C` | Automatic C selection via 5-fold CV |
 | `C` | Inverse regularization strength (if auto-C off). Smaller C = stronger regularization |
+| **Plots** | Checkboxes: Coef Plot, CV Curve, DCA, Calibration. All optional |
 
 **Output metrics:**
 
@@ -569,7 +577,7 @@ Central area — container for analysis cards (see section 5).
 | `selected_features` | List: feature, OR, coefficient |
 | `intercept` | Model intercept |
 
-**Plots (4):**
+**Plots (checkboxes, all optional):**
 - Coefficient bar plot (selected + top 30 all features)
 - CV curve (if auto-select C)
 - DCA (Decision Curve Analysis)
@@ -592,7 +600,7 @@ Central area — container for analysis cards (see section 5).
 | `target` | Target variable (binary or multiclass) |
 | `exclusions` | Columns to exclude (comma-separated) |
 | `Top features` | 10, 15 (default), 20, All |
-| `SHAP analysis` | Enable SHAP calculation (may be slow) |
+| `SHAP analysis` | Enable SHAP calculation (may be slow on large datasets) |
 
 **Output metrics:**
 
@@ -842,7 +850,7 @@ Click **"AI Settings"** (left panel or above AI Chat):
 | **Groq Model** | Model (list loaded after "Test Connection") |
 | **Temperature** | Generation temperature: 0 = deterministic, 1 = creative |
 | **Max Tokens** | Maximum response length (100-8000) |
-| **System Prompt** | AI instruction prompt (includes project context, dataset info, analysis history) |
+| **System Prompt** | AI instruction prompt (includes project context, dataset info, **up to 5 most recent analyses** with metrics and output preview) |
 
 **Buttons:**
 - **"Test Connection"** — test provider connectivity and load model list
@@ -918,7 +926,7 @@ Click **"Code"** in the header.
 
 **Available variables in code:**
 - `df` — project pandas DataFrame
-- `pd`, `np`, `plt` — standard libraries
+- `pd`, `np`, `plt`, `shap` — standard libraries
 - `save_plot(name)` — save plot with auto-close
 - `fmt_p(p)` — format p-value (shows `<0.0001` if tiny)
 - `get_label(var, value)` — variable/value labels
@@ -929,13 +937,14 @@ Click **"Code"** in the header.
 
 Right panel → **Chain** tab.
 
-- Chronological list of completed analyses (reverse order)
+- Chronological list of completed analyses (reverse order, max 200 entries)
 - Color coding:
   - **Blue** — regression
   - **Green** — survival
   - **Amber** — evaluation
   - **Gray** — basic tests
-  - **Purple** — Random Forest
+  - **Orange** — LASSO
+  - **Purple** — Random Forest / Random Survival Forest
 - Click an item to restore the analysis card with results
 
 ---
