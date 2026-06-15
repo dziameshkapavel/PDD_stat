@@ -1,7 +1,18 @@
-# PDD STAT
+<p align="center">
+  <img src="marketing_assets/social_preview.png" alt="PDD_STAT Banner" width="100%">
+</p>
 
-A web application for statistical analysis of medical data.
-**Backend:** FastAPI (Python) · **Frontend:** Vanilla HTML/JS (no build step)
+<h1 align="center">PDD_STAT · Medical Statistics, No Code Required</h1>
+
+<p align="center">
+  <a href="https://github.com/dziameshkapavel/PDD_stat/actions"><img src="https://github.com/dziameshkapavel/PDD_stat/workflows/CI/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License: MIT">
+</p>
+
+<p align="center">
+  <strong>20+ medical analysis templates</strong> · <strong>AI Assistant</strong> · <strong>PubMed RAG</strong> · <strong>DOCX Export</strong>
+</p>
 
 ---
 
