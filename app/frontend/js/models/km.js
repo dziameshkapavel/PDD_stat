@@ -173,7 +173,8 @@ export class KaplanMeierModel extends BaseModel {
             } else {
                 // Non-stratified - original behavior
                 this.renderResults(block, result);
-                await this.displayPlots(block, 'kaplan_meier');
+                const plotFiles = result.metrics && result.metrics.plots ? result.metrics.plots : [];
+                await this.displayPlots(block, null, plotFiles);
             }
             
         } catch (error) {
