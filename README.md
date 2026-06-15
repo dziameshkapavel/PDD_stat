@@ -8,11 +8,43 @@
   <a href="https://github.com/dziameshkapavel/PDD_stat/actions"><img src="https://github.com/dziameshkapavel/PDD_stat/workflows/CI/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License: MIT">
+  <img src="https://img.shields.io/badge/FastAPI-0.115%2B-009688.svg" alt="FastAPI">
 </p>
 
 <p align="center">
   <strong>20+ medical analysis templates</strong> · <strong>AI Assistant</strong> · <strong>PubMed RAG</strong> · <strong>DOCX Export</strong>
 </p>
+
+<p align="center">
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#templates">Templates</a> •
+  <a href="#ai-assistant">AI Assistant</a> •
+  <a href="#screenshots">Screenshots</a>
+</p>
+
+---
+
+## Why PDD_STAT?
+
+PDD_STAT is a **free, open-source web application** for statistical analysis of medical data. It is built for clinicians, medical students, residents, and clinical researchers who need to perform statistical analyses **without writing code**.
+
+| Feature | PDD_STAT | Jamovi | JASP | GraphPad Prism |
+|---------|----------|--------|------|----------------|
+| **Price** | Free | Free | Free | $300+/year |
+| **Open Source** | ✅ | ✅ | ✅ | ❌ |
+| **Medical Focus** | High | Medium | Medium | High |
+| **Survival Analysis** | Full (KM, Cox, RSF) | Module (limited) | Limited | ✅ |
+| **AI Assistant** | ✅ + PubMed RAG | ❌ | ❌ | ❌ |
+| **DOCX Export** | ✅ | ❌ | ❌ | ✅ |
+| **Docker Deploy** | ✅ | ❌ | ❌ | ❌ |
+| **No-Code UI** | ✅ | ✅ | ✅ | ✅ |
+
+**Key differentiators:**
+- **Full survival analysis suite** — Kaplan-Meier, Cox PH (with forward/backward/stepwise), Random Survival Forest — out of the box, no modules required
+- **AI Assistant with PubMed RAG** — context-aware LLM that searches PubMed, aggregates 5 query variants, and cites real articles to support your analysis
+- **Response validation** — automatic hallucination detection: numbers are checked against source metrics, p-value interpretations are verified, and PubMed citations are matched against abstracts
+- **Publication-ready export** — tables and figures export directly to DOCX with journal formatting (Times New Roman)
+- **Sandbox execution** — all statistical code runs in a controlled environment with AST validation, timeout guards, and filesystem isolation
 
 ---
 
@@ -43,164 +75,78 @@ cd PDD_stat
 docker compose up -d --build
 ```
 
-Then open **http://localhost:8000**.
+Then open **http://localhost:8000** in your browser.
 
-> All scripts auto-detect Python 3.11+, create virtual environment, install dependencies, and start the server. No manual steps required.
-
----
-
-## Table of Contents
-
-- [Prerequisites](#prerequisites)
-- [Installation — macOS](#installation--macos)
-- [Installation — Windows](#installation--windows)
-- [Docker (alternative)](#docker-alternative)
-- [Project Structure](#project-structure)
-- [Tests](#tests)
+> All scripts auto-detect Python 3.11+, create a virtual environment, install dependencies, and start the server. No manual steps required.
 
 ---
 
-## Prerequisites
+## Templates
 
-| What | Why | Check |
-|------|-----|-------|
-| **Git** | Clone the repo | `git --version` |
-| **Python 3.11+** | Run the app | `python3 --version` |
-| **Docker** (optional) | Run via container | `docker --version` |
+PDD_STAT includes **20+ parameterized analysis templates** that generate Python code via Jinja2, execute it in a sandbox, and return structured results with tables and plots.
 
-### Git
+### Basic Statistics
+| Template | Description | Output |
+|----------|-------------|--------|
+| **Descriptive Statistics** | Mean, SD, median, IQR | Tables, histograms |
+| **Categorical Comparison** | χ², Fisher exact | Contingency tables |
+| **Numeric Comparison** | t-test, Mann-Whitney | Group comparisons |
+| **Correlation Analysis** | Pearson, Spearman | Heatmaps |
+| **ANOVA** | One-way ANOVA, Kruskal-Wallis | Post-hoc, effect sizes |
+| **Spline Analysis** | GAM, smoothing splines | Curve plots |
+| **Violin Plots** | Distribution by group | Violin + box plots |
+| **Chart Builder** | Custom visualizations | Configurable charts |
 
-```bash
-git --version
-```
+### Regression & ML
+| Template | Description | Output |
+|----------|-------------|--------|
+| **Cox Regression** | Proportional hazards (uni/multi/forward/backward) | HR, CI, forest plot, survival curves |
+| **Logistic Regression** | Binary outcome (uni/multi/stepwise) | OR, CI, ROC, DCA, calibration |
+| **LASSO Logistic** | Penalized logistic regression | Feature selection, CV curve |
+| **Random Forest** | Classification + feature importance | SHAP values, variable importance |
 
-- **macOS:** `xcode-select --install` or https://git-scm.com/download/mac
-- **Windows:** https://git-scm.com/download/win (defaults are fine)
+### Survival Analysis
+| Template | Description | Output |
+|----------|-------------|--------|
+| **Kaplan-Meier** | Survival curves by group | Curves, log-rank, median survival |
+| **Survival Evaluation** | Model performance | C-index, calibration plots |
+| **Random Survival Forest** | Survival predictions | Risk scores, survival probabilities |
 
-### Python 3.11+
-
-```bash
-python3 --version
-```
-
-Need **3.11 or newer**.
-
-- **macOS (Intel + Apple Silicon):**
-  ```bash
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  brew install python@3.12
-  ```
-  Or download from https://www.python.org/downloads/
-
-- **Windows:**
-  Download from https://www.python.org/downloads/
-  **Important:** check **"Add Python to PATH"** during install.
-
-- **Linux:**
-  ```bash
-  sudo apt update && sudo apt install python3 python3-pip python3-venv
-  ```
-
----
-
-## Installation — macOS
-
-### One-time setup
-
-Double-click **`setup_mac.command`** (or run from terminal):
-
-```bash
-./setup_mac.command
-```
-
-This will:
-1. Find Python 3.12 → 3.11 → 3.10 → 3 (or install via Homebrew)
-2. Create `.venv` at the project root
-3. Install all dependencies (`pip install -r app/backend/requirements.txt`)
-
-**Result:** all 70+ packages installed in `.venv/`.
-
-### Start the app
-
-Double-click **`start_backend.command`** — it will:
-1. Auto-run setup if `.venv` is missing
-2. Launch the server in background
-3. Open http://localhost:8000 in your browser
-
-To stop: `Ctrl+C` in terminal.
-
-### Update
-
-```bash
-./update_mac.command
-```
-
-Pulls latest code and reinstalls dependencies.
+### Evaluation & Diagnostics
+| Template | Description | Output |
+|----------|-------------|--------|
+| **Model Evaluation (Binary)** | Confusion matrix, AUC, sensitivity, specificity | Bootstrap CIs, DCA |
+| **Diagnostic Accuracy** | Sensitivity, specificity, PPV, NPV, LR | 2×2 tables |
+| **ROC Analysis** | AUC, optimal cutoff, confidence intervals | ROC curves |
+| **Agreement Analysis** | Cohen's kappa, weighted kappa | Agreement tables |
+| **Individual Prediction** | Risk scores for individual patients | Probability estimates |
 
 ---
 
-## Installation — Windows
+## AI Assistant
 
-### One-time setup
+PDD_STAT includes an **AI Assistant** that understands your data and analysis history.
 
-Double-click **`setup.bat`** (or run from terminal):
+### Features
+- **Two providers** — local (Ollama) or cloud (Groq API)
+- **Dual modes** — Consultant (medical interpretation) and Coder (code generation)
+- **PubMed RAG** — AI searches PubMed, aggregates results from 5 query variants, and cites real articles
+- **Response validation** — automatic hallucination detection: checks numbers against source metrics, validates p-value interpretation, verifies PubMed citations against abstracts
+- **Auto-retry** — up to 2 correction cycles with LLM when validation fails
 
-```batch
-setup.bat
-```
-
-This will:
-1. Check for 64-bit Python 3.11+
-2. Try `py -3.12` → `py -3.11` → `python` (with version check)
-3. Create `.venv` at the project root
-4. Install all dependencies
-
-### Start the app
-
-Double-click **`start.bat`** — it will:
-1. Auto-run setup if `.venv` is missing
-2. Launch the server
-3. Open http://localhost:8000 in your browser
-
-### Update
-
-```batch
-update.bat
-```
+### Example conversation
+> *User:* "What does the Cox regression result mean for my dataset?"
+>
+> *AI:* "The multivariate Cox model shows a C-index of 0.81, indicating good discrimination. Age (HR 1.04, 95% CI 1.02–1.06, p<0.001) and tumor stage III (HR 2.3, 95% CI 1.5–3.5, p=0.002) are independent predictors of mortality. According to [PMID: 12345678], these findings are consistent with recent cohort studies..."
 
 ---
 
-## Docker (alternative)
+## Screenshots
 
-Docker is **optional**. Use it if:
-- You already have Docker Desktop installed
-- You want a reproducible environment without host Python
-- You're deploying to a server
-
-**Docker is not required** for the "download → double-click → use" flow.
-
-```bash
-docker compose up -d --build
-```
-
-Then open http://localhost:8000.
-
-What it does:
-1. Builds a Python 3.11-slim image (first build: 3–5 min)
-2. Installs all dependencies
-3. Starts uvicorn with 2 workers
-4. Mounts `./projects/` and `./data/` as volumes (data persists across restarts)
-5. Includes healthcheck and auto-restart
-
-Stop:
-```bash
-docker compose down
-```
-
-With API key:
-```bash
-PDD_STAT_API_KEY=my-secret-key docker compose up -d
-```
+<p align="center">
+  <img src="marketing_assets/screenshots/pdd_stat_top.png" width="90%" alt="Main interface">
+</p>
+<p align="center"><em>Main interface with project manager and analysis cards</em></p>
 
 ---
 
@@ -209,37 +155,17 @@ PDD_STAT_API_KEY=my-secret-key docker compose up -d
 ```
 PDD_stat/
 ├── app/
-│   ├── backend/
+│   ├── backend/          # FastAPI + business logic
 │   │   ├── app/
-│   │   │   ├── main.py              # FastAPI entrypoint
-│   │   │   ├── api/                 # API routers (projects, analysis, ai)
-│   │   │   ├── core/                # Business logic
-│   │   │   │   ├── executor.py      # Python code executor
-│   │   │   │   ├── modeling_orchestrator.py  # Template engine (Jinja2)
-│   │   │   │   ├── data_loader.py   # File upload & parsing
-│   │   │   │   ├── rule_engine.py   # Data cleaning rules
-│   │   │   │   ├── pubmed_api.py    # PubMed E-utilities wrapper
-│   │   │   │   ├── auth.py          # Optional API key auth
-│   │   │   │   └── ai/              # AI chat module
-│   │   │   │       ├── ai_clients.py      # Ollama / Groq providers
-│   │   │   │       ├── context_builder.py # Dataset + PubMed context
-│   │   │   │       ├── response_validator.py  # Zahl-check against metrics
-│   │   │   │       ├── prompt_manager.py     # YAML prompt loader
-│   │   │   │       └── tools.py             # Template metadata
-│   │   │   ├── templates/           # 20+ analysis templates (*.py.jinja)
-│   │   │   └── prompts/             # AI system prompts (YAML)
-│   │   ├── tests/                   # 69 tests (pytest)
-│   │   └── requirements.txt
-│   └── frontend/                    # Vanilla HTML/JS/CSS (no build)
-├── projects/                        # User data (gitignored)
+│   │   │   ├── api/      # REST routers (projects, analysis, ai)
+│   │   │   ├── core/     # Executor, AI, PubMed, auth
+│   │   │   ├── templates/# 20+ .py.jinja analysis templates
+│   │   │   └── prompts/  # AI system prompts (YAML)
+│   │   └── tests/        # 70 tests (pytest)
+│   └── frontend/         # Vanilla HTML/JS/CSS (no build step)
+├── projects/             # User data (gitignored)
 ├── Dockerfile
 ├── docker-compose.yml
-├── setup_mac.command                # macOS one-time install
-├── start_backend.command            # macOS launcher
-├── update_mac.command               # macOS updater
-├── setup.bat                        # Windows one-time install
-├── start.bat                        # Windows launcher
-├── update.bat                       # Windows updater
 └── README.md
 ```
 
@@ -252,4 +178,39 @@ cd app/backend
 python3 -m pytest tests/ -v
 ```
 
-69 tests: 38 unit (response validator) + 20 API (FastAPI TestClient) + 11 systematic hallucination tests.
+**70 tests:** 38 unit (response validator) + 21 API (FastAPI TestClient) + 11 systematic hallucination tests.
+
+---
+
+## Contributing
+
+We welcome contributions! Please open an issue or pull request.
+
+- **Good first issues:** documentation, UI improvements, new analysis templates
+- **Help wanted:** frontend tests, additional statistical templates, internationalization
+
+---
+
+## Citation
+
+If you use PDD_STAT in your research, please cite:
+
+```bibtex
+@software{pdd_stat,
+  author = {Demeshko, P.},
+  title = {PDD_STAT: Medical Statistics, No Code Required},
+  url = {https://github.com/dziameshkapavel/PDD_stat},
+  year = {2025}
+}
+```
+
+---
+
+## License
+
+MIT License. 
+---
+
+<p align="center">
+  <sub>Built with ❤️ for clinical researchers by <a href="https://github.com/dziameshkapavel">P. Demeshko</a></sub>
+</p>
