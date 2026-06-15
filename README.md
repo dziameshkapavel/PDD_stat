@@ -38,7 +38,6 @@ PDD_STAT is a **free, open-source web application** for statistical analysis of 
 - **Full survival analysis suite** — Kaplan-Meier, Cox PH (with forward/backward/stepwise), Random Survival Forest — out of the box, no modules required
 - **AI Assistant with PubMed RAG** — context-aware LLM that searches PubMed, aggregates 5 query variants, and cites real articles to support your analysis
 - **Response validation** — automatic hallucination detection: numbers are checked against source metrics, p-value interpretations are verified, and PubMed citations are matched against abstracts
-- **Publication-ready export** — tables and figures export directly to DOCX with journal formatting (Times New Roman)
 - **Sandbox execution** — all statistical code runs in a controlled environment with AST validation, timeout guards, and filesystem isolation
 
 ---
