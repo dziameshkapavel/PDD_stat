@@ -16,6 +16,9 @@ build/
 # User data
 projects/*/
 
+# Marketing / promo assets
+marketing_assets/
+
 # Logs
 *.log
 
