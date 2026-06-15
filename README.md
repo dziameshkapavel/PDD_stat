@@ -18,19 +18,34 @@
 
 ## Quick Start
 
+### macOS (one-click)
+
 ```bash
 git clone https://github.com/dziameshkapavel/PDD_stat.git
 cd PDD_stat
-
-# macOS — double-click or:
 ./setup_mac.command && ./start_backend.command
-
-# Windows — double-click or:
-# setup.bat  (one-time install)
-# start.bat  (starts server)
 ```
 
-Open http://localhost:8000.
+### Windows (one-click)
+
+```batch
+git clone https://github.com/dziameshkapavel/PDD_stat.git
+cd PDD_stat
+setup.bat
+start.bat
+```
+
+### Docker (recommended for servers)
+
+```bash
+git clone https://github.com/dziameshkapavel/PDD_stat.git
+cd PDD_stat
+docker compose up -d --build
+```
+
+Then open **http://localhost:8000**.
+
+> All scripts auto-detect Python 3.11+, create virtual environment, install dependencies, and start the server. No manual steps required.
 
 ---
 
