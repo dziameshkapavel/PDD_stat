@@ -18,8 +18,7 @@
 <p align="center">
   <a href="#quick-start">Quick Start</a> •
   <a href="#templates">Templates</a> •
-  <a href="#ai-assistant">AI Assistant</a> •
-  <a href="#screenshots">Screenshots</a>
+  <a href="#ai-assistant">AI Assistant</a>
 </p>
 
 ---
@@ -138,15 +137,6 @@ PDD_STAT includes an **AI Assistant** that understands your data and analysis hi
 > *User:* "What does the Cox regression result mean for my dataset?"
 >
 > *AI:* "The multivariate Cox model shows a C-index of 0.81, indicating good discrimination. Age (HR 1.04, 95% CI 1.02–1.06, p<0.001) and tumor stage III (HR 2.3, 95% CI 1.5–3.5, p=0.002) are independent predictors of mortality. According to [PMID: 12345678], these findings are consistent with recent cohort studies..."
-
----
-
-## Screenshots
-
-<p align="center">
-  <img src="marketing_assets/screenshots/pdd_stat_top.png" width="90%" alt="Main interface">
-</p>
-<p align="center"><em>Main interface with project manager and analysis cards</em></p>
 
 ---
 
