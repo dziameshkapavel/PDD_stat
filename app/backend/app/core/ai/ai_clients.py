@@ -4,7 +4,6 @@ AI Clients for Ollama (local) and Groq (cloud)
 import json
 import os
 import re
-import traceback
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -83,7 +82,7 @@ class OllamaClient:
                     }
                 return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
         except Exception as e:
-            return {"success": False, "error": _safe_str(f"{str(e)}\n{traceback.format_exc()}")}
+            return {"success": False, "error": f"Error ({model}): {_safe_str(str(e))}"}
 
     async def chat_stream(
         self,
@@ -116,7 +115,7 @@ class OllamaClient:
                         except json.JSONDecodeError:
                             continue
         except Exception as e:
-            yield f"Error: {_safe_str(e)}"
+            yield f"Error ({model}): {_safe_str(str(e))}"
 
 
 class GroqClient:
@@ -193,7 +192,7 @@ class GroqClient:
                     }
                 return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
         except Exception as e:
-            return {"success": False, "error": _safe_str(f"{str(e)}\n{traceback.format_exc()}")}
+            return {"success": False, "error": f"Error ({model}): {_safe_str(str(e))}"}
 
     async def chat_stream(
         self,
@@ -202,7 +201,7 @@ class GroqClient:
         temperature: float = 0.7,
         max_tokens: int = 2000
     ) -> AsyncGenerator[str, None]:
-        """Потоковая отправка сообщений"""
+        """Потоковая отправка сообщений в Groq"""
         try:
             async with httpx.AsyncClient(timeout=120.0) as client, client.stream(
                 'POST',
@@ -229,7 +228,7 @@ class GroqClient:
                         except json.JSONDecodeError:
                             continue
         except Exception as e:
-            yield f"Error: {_safe_str(e)}"
+            yield f"Error ({model}): {_safe_str(str(e))}"
 
 
 class GeminiClient:
@@ -327,8 +326,12 @@ class GeminiClient:
                 except Exception:
                     err_msg = response.text
                 return {"success": False, "error": f"Error ({model}): {err_msg}"}
+        except httpx.ReadTimeout:
+            return {"success": False, "error": f"Error ({model}): Request timed out (60s). The Gemini model is too slow or unavailable. Try again later or use a smaller model."}
+        except httpx.ConnectError:
+            return {"success": False, "error": f"Error ({model}): Could not connect to Gemini API. Check your internet connection."}
         except Exception as e:
-            return {"success": False, "error": _safe_str(f"{str(e)}\n{traceback.format_exc()}")}
+            return {"success": False, "error": f"Error ({model}): {_safe_str(str(e))}"}
 
     async def chat_stream(
         self,
@@ -357,7 +360,7 @@ class GeminiClient:
                         except json.JSONDecodeError:
                             continue
         except Exception as e:
-            yield f"Error: {_safe_str(e)}"
+            yield f"Error ({model}): {_safe_str(str(e))}"
 
 
 class AIClientFactory:
