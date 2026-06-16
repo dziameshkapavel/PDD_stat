@@ -524,6 +524,10 @@ async def chat(req: ChatRequest):
             if not passed:
                 result["validation_errors"] = v_result.errors[:3]
 
+    # Strip HTML tags that some models spontaneously generate
+    content = result.get("content", "")
+    if content:
+        result["content"] = re.sub(r"<[^>]*>", "", content)
     result["role"] = role
     return result
 
