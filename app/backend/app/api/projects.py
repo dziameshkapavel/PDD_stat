@@ -3,6 +3,8 @@ import os
 import shutil
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
@@ -172,6 +174,67 @@ async def get_columns():
             unique_vals = loader.df[col['name']].dropna().unique()[:20].tolist()
             col['unique_values'] = [str(v) for v in unique_vals]
     return {"columns": columns}
+
+
+@router.get("/data")
+async def get_project_data(offset: int = 0, limit: int = 500):
+    loader = get_loader()
+    if loader.df is None:
+        return {"columns": [], "rows": [], "total": 0, "offset": offset, "limit": limit}
+    total = len(loader.df)
+    df_slice = loader.df.iloc[offset:offset + limit]
+
+    def _val(v):
+        if v is None or pd.isna(v):
+            return None
+        if isinstance(v, pd.Timestamp):
+            return v.isoformat()
+        if isinstance(v, (np.integer,)):
+            return int(v)
+        if isinstance(v, (np.floating,)):
+            return float(v)
+        if isinstance(v, (np.bool_,)):
+            return bool(v)
+        return v
+
+    rows = []
+    for _, row in df_slice.iterrows():
+        rows.append([_val(v) for v in row])
+
+    return {
+        "columns": list(df_slice.columns),
+        "rows": rows,
+        "total": total,
+        "offset": offset,
+        "limit": limit
+    }
+
+
+class CellEdit(BaseModel):
+    row: int
+    col: str
+    value: str | int | float | bool | None = None
+
+
+class EditDataRequest(BaseModel):
+    changes: list[CellEdit]
+
+
+@router.post("/data/edit")
+async def edit_project_data(req: EditDataRequest):
+    loader = get_loader()
+    if loader.df is None:
+        raise HTTPException(status_code=400, detail="No data loaded")
+
+    for change in req.changes:
+        if change.row < 0 or change.row >= len(loader.df):
+            continue
+        if change.col not in loader.df.columns:
+            continue
+        loader.df.at[change.row, change.col] = change.value
+
+    loader.save_state()
+    return {"status": "saved"}
 
 
 class ColumnRenameRequest(BaseModel):

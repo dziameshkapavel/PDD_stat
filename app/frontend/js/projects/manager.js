@@ -181,9 +181,16 @@ export class ProjectManager {
         const safeName = projectName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         item.innerHTML = `
             <span class="project-name">${safeName}</span>
+            <button class="data-preview-btn" title="View data">⊞</button>
             <button class="context-project-btn" title="Project context">✎</button>
             <button class="delete-project-btn" title="Delete project">✕</button>
         `;
+        
+        const dataBtn = item.querySelector('.data-preview-btn');
+        dataBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._openDataPreview(projectName);
+        });
         
         const deleteBtn = item.querySelector('.delete-project-btn');
         deleteBtn.addEventListener('click', (e) => {
@@ -358,5 +365,243 @@ export class ProjectManager {
 
     _escape(str) {
         return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async _openDataPreview(projectName) {
+        if (this.state.currentProject !== projectName) {
+            try {
+                await this.openProject(projectName);
+            } catch (error) {
+                this.modals.showAlert('Failed to open project: ' + error.message);
+                return;
+            }
+        }
+        await this._showDataModal();
+    }
+
+    async _showDataModal() {
+        const old = document.getElementById('dataModal');
+        if (old) old.remove();
+
+        let edits = {};
+        let editMode = false;
+        let currentPage = 0;
+        const PAGE_SIZE = 200;
+
+        const modal = document.createElement('div');
+        modal.id = 'dataModal';
+        modal.className = 'modal active data-modal';
+
+        modal.innerHTML = `
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Data Table</h3>
+                    <button class="modal-close" id="dataModalClose">&times;</button>
+                </div>
+                <div class="modal-body data-modal-body"></div>
+                <div class="modal-footer" style="justify-content:space-between;">
+                    <div>
+                        <span class="editing-indicator" style="font-size:12px;"></span>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <button class="btn-secondary" id="dataEditToggleBtn">Edit</button>
+                        <button class="btn-primary" id="dataSaveBtn" style="display:none;">Save</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const body = modal.querySelector('.data-modal-body');
+        const editToggleBtn = modal.querySelector('#dataEditToggleBtn');
+        const saveBtn = modal.querySelector('#dataSaveBtn');
+        const indicator = modal.querySelector('.editing-indicator');
+
+        const renderPage = async (page) => {
+            const offset = page * PAGE_SIZE;
+            let data;
+            try {
+                const resp = await fetch(`${API_BASE}/projects/data?offset=${offset}&limit=${PAGE_SIZE}`);
+                if (!resp.ok) throw new Error(await resp.text());
+                data = await resp.json();
+            } catch (err) {
+                body.innerHTML = `<div class="placeholder-text" style="padding:40px;text-align:center;color:var(--accent-red);">Error: ${this._escape(err.message)}</div>`;
+                return;
+            }
+
+            currentPage = page;
+
+            if (!data.columns.length) {
+                body.innerHTML = '<div class="placeholder-text" style="padding:40px;text-align:center;">Project has no data</div>';
+                return;
+            }
+
+            const wrap = document.createElement('div');
+            wrap.className = 'data-table-wrap';
+
+            const table = document.createElement('table');
+            table.className = 'data-table';
+
+            const thead = document.createElement('thead');
+            const hr = document.createElement('tr');
+            const th0 = document.createElement('th');
+            th0.textContent = '#';
+            hr.appendChild(th0);
+            data.columns.forEach(c => {
+                const th = document.createElement('th');
+                th.textContent = c;
+                hr.appendChild(th);
+            });
+            thead.appendChild(hr);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            data.rows.forEach((row, i) => {
+                const absRow = offset + i;
+                const tr = document.createElement('tr');
+
+                const td0 = document.createElement('td');
+                td0.textContent = absRow + 1;
+                tr.appendChild(td0);
+
+                row.forEach((val, j) => {
+                    const col = data.columns[j];
+                    const key = `${absRow}:${col}`;
+                    const displayVal = edits.hasOwnProperty(key) ? edits[key] : val;
+                    const td = document.createElement('td');
+
+                    if (displayVal === null || displayVal === undefined) {
+                        td.textContent = '—';
+                        td.className = 'cell-null';
+                    } else {
+                        td.textContent = String(displayVal);
+                    }
+
+                    if (editMode) {
+                        td.className = 'cell-edit';
+                        td.addEventListener('click', () => {
+                            if (td.querySelector('input')) return;
+                            const input = document.createElement('input');
+                            const curr = edits.hasOwnProperty(key) ? edits[key] : val;
+                            input.value = curr === null || curr === undefined ? '' : String(curr);
+                            td.textContent = '';
+                            td.appendChild(input);
+                            input.focus();
+
+                            const commit = () => {
+                                const v = input.value;
+                                edits[key] = v === '' ? null : v;
+                                td.textContent = edits[key] === null ? '—' : edits[key];
+                                td.className = 'cell-edit';
+                                const count = Object.keys(edits).length;
+                                indicator.textContent = count ? `✎ ${count} cell(s) edited` : '';
+                                indicator.style.color = count ? 'var(--accent-red)' : '';
+                            };
+
+                            input.addEventListener('blur', commit);
+                            input.addEventListener('keydown', (e) => {
+                                if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+                                if (e.key === 'Escape') {
+                                    delete edits[key];
+                                    td.textContent = val === null || val === undefined ? '—' : String(val);
+                                    td.className = 'cell-edit';
+                                }
+                            });
+                        });
+                    }
+
+                    tr.appendChild(td);
+                });
+
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            wrap.appendChild(table);
+            body.innerHTML = '';
+            body.appendChild(wrap);
+
+            const totalPages = Math.ceil(data.total / PAGE_SIZE);
+            const pagination = modal.querySelector('.data-pagination');
+            if (pagination) pagination.remove();
+
+            const pg = document.createElement('div');
+            pg.className = 'data-pagination';
+
+            const prevBtn = document.createElement('button');
+            prevBtn.className = 'page-btn';
+            prevBtn.textContent = '◀ Prev';
+            prevBtn.disabled = page === 0;
+            prevBtn.addEventListener('click', () => {
+                if (editMode && Object.keys(edits).length && !confirm('Unsaved edits will be lost. Continue?')) return;
+                edits = {}; indicator.textContent = '';
+                renderPage(page - 1);
+            });
+            pg.appendChild(prevBtn);
+
+            const info = document.createElement('span');
+            info.className = 'page-info';
+            info.textContent = `Page ${page + 1} / ${totalPages} (${data.total} rows)`;
+            pg.appendChild(info);
+
+            const nextBtn = document.createElement('button');
+            nextBtn.className = 'page-btn';
+            nextBtn.textContent = 'Next ▶';
+            nextBtn.disabled = page >= totalPages - 1;
+            nextBtn.addEventListener('click', () => {
+                if (editMode && Object.keys(edits).length && !confirm('Unsaved edits will be lost. Continue?')) return;
+                edits = {}; indicator.textContent = '';
+                renderPage(page + 1);
+            });
+            pg.appendChild(nextBtn);
+
+            const footer = modal.querySelector('.modal-footer');
+            footer.insertBefore(pg, footer.firstChild);
+        };
+
+        editToggleBtn.addEventListener('click', () => {
+            editMode = !editMode;
+            editToggleBtn.textContent = editMode ? 'Cancel Edit' : 'Edit';
+            editToggleBtn.className = editMode ? 'btn-primary' : 'btn-secondary';
+            saveBtn.style.display = editMode ? 'inline-block' : 'none';
+            if (!editMode) { edits = {}; indicator.textContent = ''; }
+            renderPage(currentPage);
+        });
+
+        saveBtn.addEventListener('click', async () => {
+            const changes = Object.entries(edits).map(([key, value]) => {
+                const [row, col] = key.split(':');
+                return { row: parseInt(row), col, value: value === null ? null : String(value) };
+            });
+            if (!changes.length) { this.modals.showAlert('No changes'); return; }
+            try {
+                const resp = await fetch(`${API_BASE}/projects/data/edit`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ changes })
+                });
+                if (!resp.ok) throw new Error(await resp.text());
+                edits = {};
+                editMode = false;
+                editToggleBtn.textContent = 'Edit';
+                editToggleBtn.className = 'btn-secondary';
+                saveBtn.style.display = 'none';
+                indicator.textContent = '✓ Saved';
+                indicator.style.color = 'var(--accent-green)';
+                setTimeout(() => { indicator.textContent = ''; indicator.style.color = ''; }, 2000);
+                await renderPage(currentPage);
+            } catch (err) {
+                this.modals.showAlert('Save failed: ' + err.message);
+            }
+        });
+
+        modal.querySelector('#dataModalClose').addEventListener('click', () => modal.remove());
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                if (editMode && Object.keys(edits).length && !confirm('Unsaved edits will be lost. Close?')) return;
+                modal.remove();
+            }
+        });
+
+        await renderPage(0);
     }
 }

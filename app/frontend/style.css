@@ -275,6 +275,19 @@ body {
 }
 .project-item:hover .delete-project-btn { opacity: 1; }
 .delete-project-btn:hover { background: var(--accent-red); color: white; }
+.data-preview-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 5px;
+    border-radius: 4px;
+    opacity: 0;
+}
+.project-item:hover .data-preview-btn { opacity: 1; }
+.data-preview-btn:hover { color: var(--accent-green); background: var(--bg-hover); }
+
 .context-project-btn {
     background: none;
     border: none;
@@ -734,6 +747,159 @@ body {
     cursor: pointer; color: var(--text-muted);
 }
 .upload-btn { margin-top: 8px; }
+
+/* Data Preview Modal */
+.data-modal .modal-content {
+    width: 95vw;
+    max-width: 1400px;
+    height: 90vh;
+    display: flex;
+    flex-direction: column;
+}
+.data-modal .modal-body {
+    flex: 1;
+    padding: 0;
+    max-height: none;
+    overflow: auto;
+}
+.data-modal .modal-header h3 {
+    font-size: 15px;
+}
+.data-modal .modal-footer {
+    padding: 12px 20px;
+}
+.data-preview-info {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin: 0;
+}
+
+.data-table-wrap {
+    overflow: auto;
+    height: 100%;
+}
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+.data-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+.data-table th {
+    background: var(--bg-secondary);
+    padding: 8px 12px;
+    border-bottom: 2px solid var(--border-primary);
+    text-align: left;
+    white-space: nowrap;
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--text-primary);
+}
+.data-table th:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    background: var(--bg-secondary);
+    min-width: 44px;
+    width: 44px;
+    text-align: center;
+}
+.data-table td {
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border-primary);
+    white-space: nowrap;
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-primary);
+}
+.data-table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--bg-card);
+    min-width: 44px;
+    width: 44px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+    border-right: 1px solid var(--border-primary);
+}
+.data-table tbody tr:hover td {
+    background: var(--bg-hover);
+}
+.data-table tbody tr:hover td:first-child {
+    background: var(--bg-hover);
+}
+.data-table td.cell-null {
+    color: var(--text-muted);
+    font-style: italic;
+}
+.data-table td.cell-edit {
+    cursor: pointer;
+    border-radius: 2px;
+}
+.data-table td.cell-edit:hover {
+    background: var(--bg-active);
+    outline: 1px solid var(--accent-blue);
+    outline-offset: -1px;
+}
+.data-table td input {
+    width: 100%;
+    min-width: 60px;
+    border: 1px solid var(--accent-blue);
+    border-radius: 4px;
+    padding: 3px 6px;
+    font-size: 13px;
+    font-family: inherit;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    box-sizing: border-box;
+}
+.data-table td input:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--accent-blue);
+}
+
+.data-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 10px 0;
+}
+.data-pagination .page-btn {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--text-primary);
+    transition: all 0.15s;
+}
+.data-pagination .page-btn:hover:not(:disabled) {
+    background: var(--bg-hover);
+    border-color: var(--accent-blue);
+}
+.data-pagination .page-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+.data-pagination .page-info {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.editing-indicator {
+    font-size: 12px;
+    color: var(--accent-red);
+    margin-left: 12px;
+}
 
 /* Save Risk Button */
 .save-risk-btn {
