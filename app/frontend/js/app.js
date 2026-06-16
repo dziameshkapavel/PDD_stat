@@ -45,10 +45,10 @@ class App {
             modals: new ModalManager(this.state)
         };
         
-        this.variables = new VariablesPanel(this.state);
-        
         // Инициализация менеджеров
         this.projects = new ProjectManager(this.state, this.ui.modals);
+        
+        this.variables = new VariablesPanel(this.state, () => this.projects.openDataPreview());
         
         // AI компоненты
         this.aiSettings = new AISettings();

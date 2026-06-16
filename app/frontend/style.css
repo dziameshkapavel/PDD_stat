@@ -275,19 +275,6 @@ body {
 }
 .project-item:hover .delete-project-btn { opacity: 1; }
 .delete-project-btn:hover { background: var(--accent-red); color: white; }
-.data-preview-btn {
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    font-size: 14px;
-    padding: 2px 5px;
-    border-radius: 4px;
-    opacity: 0;
-}
-.project-item:hover .data-preview-btn { opacity: 1; }
-.data-preview-btn:hover { color: var(--accent-green); background: var(--bg-hover); }
-
 .context-project-btn {
     background: none;
     border: none;
@@ -646,19 +633,11 @@ body {
 .tab-panel.active { display: block; }
 
 .variables-search { padding: 0 0 12px 0; }
-.search-input {
+.show-table-btn {
     width: 100%;
     padding: 10px 12px;
-    background: var(--bg-card);
-    border: 1px solid var(--border-primary);
-    border-radius: var(--radius-md);
-    color: var(--text-primary);
     font-size: 13px;
-}
-.search-input:focus {
-    outline: none;
-    box-shadow: none;
-    border-color: var(--border-primary);
+    border-radius: var(--radius-md);
 }
 .variables-list { display: flex; flex-direction: column; gap: 4px; }
 .variable-item {

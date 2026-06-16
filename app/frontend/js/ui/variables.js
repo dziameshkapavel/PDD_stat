@@ -1,10 +1,10 @@
 // js/ui/variables.js - Отображение списка переменных
 export class VariablesPanel {
-    constructor(state) {
+    constructor(state, onShowTable) {
         this.state = state;
         this.container = document.getElementById('variablesList');
-        this.searchInput = document.getElementById('varSearch');
-        this.filterText = '';
+        this.showTableBtn = document.getElementById('showTableBtn');
+        this.onShowTable = onShowTable;
     }
     
     init() {
@@ -15,19 +15,13 @@ export class VariablesPanel {
     }
     
     setupListeners() {
-        if (this.searchInput) {
-            this.searchInput.addEventListener('input', (e) => {
-                this.filterText = e.target.value;
-                this.render();
-            });
+        if (this.showTableBtn && this.onShowTable) {
+            this.showTableBtn.addEventListener('click', () => this.onShowTable());
         }
     }
     
     render() {
         const variables = this.state.getVariableList();
-        const filtered = variables.filter(v => 
-            v.name.toLowerCase().includes(this.filterText.toLowerCase())
-        );
         
         const activeField = this.state.getActiveField();
         console.log('=== VariablesPanel render ===');

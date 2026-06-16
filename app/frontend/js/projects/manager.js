@@ -181,16 +181,9 @@ export class ProjectManager {
         const safeName = projectName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         item.innerHTML = `
             <span class="project-name">${safeName}</span>
-            <button class="data-preview-btn" title="View data">⊞</button>
             <button class="context-project-btn" title="Project context">✎</button>
             <button class="delete-project-btn" title="Delete project">✕</button>
         `;
-        
-        const dataBtn = item.querySelector('.data-preview-btn');
-        dataBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this._openDataPreview(projectName);
-        });
         
         const deleteBtn = item.querySelector('.delete-project-btn');
         deleteBtn.addEventListener('click', (e) => {
@@ -367,14 +360,10 @@ export class ProjectManager {
         return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    async _openDataPreview(projectName) {
-        if (this.state.currentProject !== projectName) {
-            try {
-                await this.openProject(projectName);
-            } catch (error) {
-                this.modals.showAlert('Failed to open project: ' + error.message);
-                return;
-            }
+    async openDataPreview() {
+        if (!this.state.currentProject) {
+            this.modals.showAlert('No project open');
+            return;
         }
         await this._showDataModal();
     }
