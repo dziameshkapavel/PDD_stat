@@ -2,10 +2,13 @@
 ResponseValidator — проверка ответа ИИ на соответствие исходным данным.
 """
 
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Pattern to remove hallucinated 95% CI for C-index
 # Matches "C-index = 0.808 (95%CI 0.65-0.81)" and variants
@@ -62,7 +65,7 @@ NUM_PATTERNS = {
     ),
     "c_index": re.compile(r"(?:c-index|C-index|concordance|C-индекс)[^0-9]*?([0-9]+[.][0-9]+)", re.IGNORECASE),
     "auc": re.compile(r"(?:AUC|auc)\s*[=:≈]?\s*([0-9]+[.][0-9]+)", re.IGNORECASE),
-    "percentage": re.compile(r"(?<!\d)([0-9]+[.]?[0-9]*)\s*%(?!\s*(?:CI|confidence))"),
+    "percentage": re.compile(r"(?<!\d)([0-9]+[.]?[0-9]*)\s*%(?!\s*(?:CI|confidence|ДИ|доверит))"),
     "ci": re.compile(
         r"(?:95%\s*(?:CI|confidence\s*interval)\s*[=:≈]?\s*)?"
         r"([0-9]+[.][0-9]+)\s*[-–]\s*([0-9]+[.][0-9]+)",
@@ -578,6 +581,15 @@ class ResponseValidator:
             examples = "; ".join(f"{fn.raw} ({fn.label})" for fn in unmatched[:5])
             errors.append(
                 f"Numbers not found in source metrics (potential hallucination): {examples}"
+            )
+
+        # CI diagnostic: log when CI bounds don't match source
+        ci_unmatched = [fn for fn in unmatched if fn.label == "ci"]
+        if ci_unmatched:
+            logger.warning(
+                "CI numbers not found in source_rounded: %s | source_rounded=%s",
+                [(fn.raw, fn.value) for fn in ci_unmatched],
+                sorted(source_rounded),
             )
 
         # 3b. Systematic check: check ALL decimal numbers against source

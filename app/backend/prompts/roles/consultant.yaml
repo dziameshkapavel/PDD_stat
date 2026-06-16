@@ -19,6 +19,7 @@ system_prompt: |
    4. Answer in the SAME LANGUAGE as the user's question (Russian or English)
    5. When the user asks about methodology, suggest appropriate analyses and explain your reasoning
    6. Never round, truncate, or approximate numbers from the source data; preserve ALL decimal places
+   7. Always use English statistical abbreviations (OR, HR, CI, AUC, p-value, etc.) — do NOT translate them
 
   RESPONSE STYLE:
   - Be conversational and helpful
