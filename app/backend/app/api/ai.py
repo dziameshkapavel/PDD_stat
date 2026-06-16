@@ -391,6 +391,41 @@ async def pubmed_suggest(req: PubMedSuggestRequest):
     }
 
 
+# Thinking token patterns for various models
+_COT_BLOCKS = [
+    (re.compile(r'<unused\d+>.*?</unused\d+>', re.DOTALL), ''),
+    (re.compile(r'\[think\].*?\[/think\]', re.DOTALL), ''),
+    (re.compile(r'<antml:reasoning>.*?</antml:reasoning>', re.DOTALL), ''),
+    (re.compile(r'<reasoning>.*?</reasoning>', re.DOTALL), ''),
+]
+
+_COT_PREAMBLE = re.compile(
+    r'^(?:(?:Let me|I need to|I\'ll|I should|Oh\b|Hmm\b|Wait\b|'
+    r'The user|My role|I am|'
+    r'Прошу прощения|Извини|Пользователь|Мне нужно|Давай)'
+    r'(?:[^.\n]*\.(?=\s|$))?|'
+    r'(?:So|Okay|Alright|First|'
+    r'Хорошо|Так|Понял|Во-первых|Прежде всего)'
+    r'[,.\s](?:[^.\n]*\.(?=\s|$))?)+',
+    re.IGNORECASE,
+)
+
+
+def _clean_response(text: str) -> str:
+    """Remove thinking blocks and CoT preamble sentences from model output."""
+    result = text
+    for pattern, replacement in _COT_BLOCKS:
+        result = pattern.sub(replacement, result)
+    result = result.strip()
+    # Strip leading preamble sentence(s) — these are meta-commentary, not part of answer
+    while True:
+        match = _COT_PREAMBLE.match(result)
+        if not match:
+            break
+        result = result[match.end():].strip()
+    return result
+
+
 @router.post("/chat")
 async def chat(req: ChatRequest):
     loader = get_loader()
@@ -444,7 +479,7 @@ async def chat(req: ChatRequest):
         final_content = result.get("content", "")
         if not final_content:
             final_content = "I'm ready to help with your analysis."
-        result["content"] = final_content
+        result["content"] = _clean_response(final_content)
 
     except Exception as e:
         tb = traceback.format_exc()
@@ -479,7 +514,7 @@ async def chat(req: ChatRequest):
                     model=model, messages=corr_sanitized,
                     temperature=0.1, max_tokens=max_tokens
                 )
-                return corr_result.get("content", "")
+                return _clean_response(corr_result.get("content", ""))
 
             pubmed_articles = project_context.get('pubmed_articles', [])
 
