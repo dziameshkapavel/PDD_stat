@@ -97,8 +97,48 @@ def test_logistic_univariate_interpretation_section():
         "Дополнительные метрики:\n"
         "* AUC (площадь под кривой ROC) = 0.7988"
     )
-    result = _check_validation(response, metrics, 5, 5, "logistic_univariate_full")
+    result =     _check_validation(response, metrics, 5, 5, "logistic_univariate_full")
     assert result.total_decimals >= 5
+
+
+def test_logistic_univariate_russian():
+    """Univariate logistic with CYRILLIC OR (ОШ) and CI (ДИ) — user reported bug."""
+    metrics = {
+        "univariate_results": [
+            {
+                "predictor": "MTV_SUV>4",
+                "auc": 0.7988,
+                "or": 0.362,
+                "ci_lower": 0.247,
+                "ci_upper": 0.531,
+                "p_value": 0.00001234,
+                "coef": -1.015,
+            }
+        ],
+        "auc": 0.7988,
+    }
+    response = (
+        "Отношение шансов (ОШ): 0.362 (95% ДИ 0.247–0.531)\n"
+        "AUC: 0.7988\n"
+        "p<0.0001"
+    )
+    _check_validation(response, metrics, 5, 5, "logistic_univariate_russian")
+
+
+def test_logistic_univariate_russian_ci_completeness():
+    """Cyrillic OR and CI should not trigger CI completeness error."""
+    metrics = {
+        "univariate_results": [{"or": 0.362, "ci_lower": 0.247,
+                                "ci_upper": 0.531, "p_value": 0.00001234,
+                                "auc": 0.7988, "coef": -1.015}],
+        "auc": 0.7988,
+    }
+    response = (
+        "ОШ = 0.362 (95% ДИ: 0.247–0.531), p<0.0001, AUC=0.7988"
+    )
+    result = _check_validation(response, metrics, 5, 5, "logistic_univariate_russian_ci")
+    # No CI completeness errors for "ОШ" with "ДИ"
+    assert not any("without 95% CI" in e for e in result.errors)
 
 
 def test_logistic_univariate_multi_predictors():

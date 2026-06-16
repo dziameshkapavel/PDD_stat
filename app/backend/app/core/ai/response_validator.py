@@ -56,8 +56,14 @@ SIGNIFICANCE_PATTERNS_EN = re.compile(
 
 # Regex patterns to extract numbers with context labels
 NUM_PATTERNS = {
-    "hr": re.compile(r"(?:HR|hazard\s*ratio)\s*(?:\([^)]*\))?\s*[=:≈]?\s*([0-9]+[.][0-9]+)", re.IGNORECASE),
-    "or": re.compile(r"(?:OR|odds\s*ratio)\s*(?:\([^)]*\))?\s*[=:≈]?\s*([0-9]+[.][0-9]+)", re.IGNORECASE),
+    "hr": re.compile(
+        r"(?:HR|hazard\s*ratio|ОР|отношение\s+рисков)\s*(?:\([^)]*\))?\s*[=:≈]?\s*([0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
+    "or": re.compile(
+        r"(?:OR|odds\s*ratio|ОШ|отношение\s+шансов)\s*(?:\([^)]*\))?\s*[=:≈]?\s*([0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
     "beta": re.compile(r"[ββ]\s*[=:≈]?\s*(-?[0-9]+[.][0-9]+)", re.IGNORECASE),
     "p_value": re.compile(
         r"(?:p|p-value|p\s*value|p-значение)\s*[=:≈<>]?\s*([0-9]+[.]?[0-9]*(?:e[+-]?[0-9]+)?)",
@@ -67,7 +73,7 @@ NUM_PATTERNS = {
     "auc": re.compile(r"(?:AUC|auc)\s*(?:\([^)]*\))?\s*[=:≈]?\s*([0-9]+[.][0-9]+)", re.IGNORECASE),
     "percentage": re.compile(r"(?<!\d)([0-9]+[.]?[0-9]*)\s*%(?!\s*(?:CI|confidence|ДИ|доверит))"),
     "ci": re.compile(
-        r"(?:95%\s*(?:CI|confidence\s*interval)\s*[=:≈]?\s*)?"
+        r"(?:95%\s*(?:CI|confidence\s*interval|ДИ|доверительный\s*интервал)\s*[=:≈]?\s*)?"
         r"([0-9]+[.][0-9]+)\s*[-–]\s*([0-9]+[.][0-9]+)",
         re.IGNORECASE
     ),
@@ -137,8 +143,8 @@ NUM_PATTERNS = {
 
 # Check for CI presence near HR/OR
 CI_NEAR_HR = re.compile(
-    r"(?:HR|hazard\s*ratio|OR|odds\s*ratio)[^.]*?"
-    r"(?:95%\s*(?:CI|confidence\s*interval)|"
+    r"(?:HR|hazard\s*ratio|OR|odds\s*ratio|ОР|ОШ|отношение\s+рисков|отношение\s+шансов)[^.]*?"
+    r"(?:95%\s*(?:CI|confidence\s*interval|ДИ|доверительный\s*интервал)|"
     r"[0-9]+[.]?[0-9]*\s*[-–]\s*[0-9]+[.]?[0-9]*)",
     re.IGNORECASE,
 )
@@ -540,7 +546,10 @@ class ResponseValidator:
     def _check_ci_completeness(text: str) -> list[str]:
         """Проверяет, что при упоминании HR/OR указан 95% CI."""
         errors = []
-        mentions = re.findall(r"\b(HR|hazard\s*ratio|OR|odds\s*ratio)\b", text, re.IGNORECASE)
+        mentions = re.findall(
+            r"\b(HR|hazard\s*ratio|OR|odds\s*ratio|ОР|ОШ|отношение\s+рисков|отношение\s+шансов)\b",
+            text, re.IGNORECASE
+        )
         for mention in set(m.lower().replace(" ", "_") for m in mentions):
             for match in re.finditer(
                 rf"\b{re.escape(mention.replace('_', ' ?'))}\b", text, re.IGNORECASE
@@ -558,7 +567,8 @@ class ResponseValidator:
                 has_number = bool(re.search(r"[=:≈]\s*[0-9]+[.][0-9]+", segment))
                 has_ci = bool(
                     re.search(
-                        r"95%\s*(?:CI|confidence\s*interval)|[0-9]+[.]?[0-9]*\s*[-–]\s*[0-9]+[.]?[0-9]*",
+                        r"95%\s*(?:CI|confidence\s*interval|ДИ|доверительный\s*интервал)|"
+                        r"[0-9]+[.]?[0-9]*\s*[-–]\s*[0-9]+[.]?[0-9]*",
                         segment,
                     )
                 )
