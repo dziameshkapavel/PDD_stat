@@ -474,7 +474,7 @@ async def chat(req: ChatRequest):
         return result
 
     if not req.coder_mode:
-        metrics = context_builder.load_last_analysis_metrics(loader)
+        metrics = context_builder.load_combined_metrics(loader, n=5)
         if metrics:
             async def rewrite_fn(correction: str) -> str:
                 corr_messages = [

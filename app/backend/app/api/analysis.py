@@ -1,5 +1,8 @@
+import contextlib
 import json
 import math
+import os
+import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -28,8 +31,12 @@ def _save_to_history(project_path, template, params, result):
 
     # Загружаем существующую историю
     if history_path.exists():
-        with open(history_path, encoding='utf-8') as f:
-            history = json.load(f)
+        try:
+            with open(history_path, encoding='utf-8') as f:
+                history = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"[HISTORY] Failed to load history file, starting fresh: {e}")
+            history = []
     else:
         history = []
 
@@ -66,8 +73,20 @@ def _save_to_history(project_path, template, params, result):
     history = history[:200]
 
     # Сохраняем — sanitize NaN/Inf to None
-    with open(history_path, 'w', encoding='utf-8') as f:
-        json.dump(_sanitize_json(history), f, indent=2, ensure_ascii=False, default=str)
+    # Atomic write: write to temp file, then rename to prevent corruption
+    sanitized = _sanitize_json(history)
+    fd, tmp_path = tempfile.mkstemp(
+        suffix=".json", prefix="analysis_history_", dir=str(history_path.parent)
+    )
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(sanitized, f, indent=2, ensure_ascii=False, default=str)
+        os.replace(tmp_path, str(history_path))
+    except Exception:
+        # Cleanup temp file on failure
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise
 
     print(f"[HISTORY] Saved run {record['id']} to {history_path}")
 

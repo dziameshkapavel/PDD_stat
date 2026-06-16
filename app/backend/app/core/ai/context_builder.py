@@ -34,15 +34,21 @@ class ContextBuilder:
             lines.append(f"Categorical: {', '.join(cats[:5])}" + (f" (+{len(cats)-5} more)" if len(cats) > 5 else ""))
         return "\n".join(lines)
 
-    def load_last_analysis(self, loader) -> dict[str, Any] | None:
-        """Загружает последний (первый) не-ai_chat анализ из истории."""
+    def _load_history(self) -> list[dict[str, Any]] | None:
+        """Loads analysis history from disk. Returns None on error."""
         history_path = self.state_folder / "analysis_history.json"
         if not history_path.exists():
             return None
         try:
             with open(history_path, encoding="utf-8") as f:
-                history = json.load(f)
+                return json.load(f)
         except Exception:
+            return None
+
+    def load_last_analysis(self, loader) -> dict[str, Any] | None:
+        """Загружает последний (первый) не-ai_chat анализ из истории."""
+        history = self._load_history()
+        if not history:
             return None
         for item in history:
             if item.get("template") != "ai_chat":
@@ -55,6 +61,28 @@ class ContextBuilder:
         if item is None:
             return None
         return item.get("metrics", {})
+
+    def load_combined_metrics(self, loader, n: int = 5) -> dict[str, Any] | None:
+        """Возвращает метрики из последних N не-ai_chat анализов, объединённые под префиксами.
+
+        Каждый анализ помещается под ключ вида 'analysis_<i>_<template>',
+        чтобы сохранить совместимость с _flatten_metrics и avoid key collision.
+        """
+        history = self._load_history()
+        if not history:
+            return None
+        items = [h for h in history if h.get("template") != "ai_chat"]
+        if not items:
+            return None
+        combined = {}
+        for i, item in enumerate(items[:n]):
+            template = item.get("template", "unknown")
+            metrics = item.get("metrics", {})
+            if metrics:
+                combined[f"analysis_{i}_{template}"] = metrics
+        if not combined:
+            return None
+        return combined
 
     def _format_coefficients(self, coeffs: list[dict], model_type: str) -> list[str]:
         """Форматирует список коэффициентов (HR/OR)."""
