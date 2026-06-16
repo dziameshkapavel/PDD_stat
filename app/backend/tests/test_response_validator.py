@@ -275,7 +275,7 @@ def test_validation_notice_ru():
     result = ResponseValidator.add_validation_notice(
         "HR=1.5 — значимый предиктор", vr
     )
-    assert "Проверено" in result
+    assert "Verified" in result
     assert "2/2" in result
 
 

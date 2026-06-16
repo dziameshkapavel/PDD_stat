@@ -434,34 +434,21 @@ class ResponseValidator:
     @staticmethod
     def add_validation_notice(response: str, v_result: ValidationResult) -> str:
         """Добавляет в конец ответа уведомление о проверке чисел."""
-        lang = ResponseValidator._detect_language(response)
-
         parts = []
         if v_result.numbers_checked > 0:
             ratio = f"{v_result.numbers_matched}/{v_result.numbers_checked}"
-            if v_result.numbers_matched == v_result.numbers_checked:
-                if lang == "ru":
-                    parts.append(f"✅ Проверено: {ratio} чисел совпадают с источником")
-                else:
-                    parts.append(f"✅ Verified: {ratio} numbers match source data")
-            else:
+            line = f"✅ Verified: {ratio} numbers match source data"
+            if v_result.numbers_matched < v_result.numbers_checked:
                 unmatched = [
                     f"{val} ({ResponseValidator._fmt_label(label)})"
                     for val, label in v_result.unmapped_numbers
                 ]
                 if unmatched:
-                    if lang == "ru":
-                        parts.append(f"✅ Проверено: {ratio} чисел совпадают с источником")
-                        parts.append(f"❌ Не найдены в источнике: {'; '.join(unmatched[:5])}")
-                    else:
-                        parts.append(f"✅ Verified: {ratio} numbers match source data")
-                        parts.append(f"❌ Not found in source: {'; '.join(unmatched[:5])}")
+                    line += "\n" + f"❌ Not found in source: {'; '.join(unmatched[:5])}"
+            parts.append(line)
 
         if v_result.citations_checked > 0:
-            if lang == "ru":
-                parts.append(f"📖 Цитаты: {v_result.citations_matched}/{v_result.citations_checked} проверены")
-            else:
-                parts.append(f"📖 Citations: {v_result.citations_matched}/{v_result.citations_checked} verified")
+            parts.append(f"📖 Citations: {v_result.citations_matched}/{v_result.citations_checked} verified")
 
         if parts:
             return response + "\n\n" + "\n".join(parts)
