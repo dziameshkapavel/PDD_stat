@@ -133,19 +133,19 @@ class ValidationResult:
 class ResponseValidator:
     """Проверяет ответ ИИ на соответствие исходным метрикам."""
 
-    # Tolerance for numerical comparison
-    TOLERANCE = 0.01
+    # Tolerance for numerical comparison — exact match only
+    TOLERANCE = 0.0
 
     @staticmethod
     def _check_number_in_source(
         number: float,
         source_rounded: set,
-        abs_tolerance: float = 0.01,
-        rel_tolerance: float = 0.01,
+        abs_tolerance: float = 0.0,
+        rel_tolerance: float = 0.0,
     ) -> bool:
         """
-        Проверяет число в источнике: абсолютный допуск ±0.01 или
-        относительный ±1% (для больших значений, например chi²=29.5).
+        Проверяет число в источнике: ТОЛЬКО точное совпадение
+        после округления обоих значений до 2 знаков.
         """
         rounded = round(number, 2)
         for sv in source_rounded:
@@ -278,8 +278,8 @@ class ResponseValidator:
         unknown = 0
 
         for val in all_decimals:
-            # Skip if already caught by parse_numbers (within tolerance)
-            if any(abs(val - lv) <= 0.01 for lv in labeled_values):
+            # Skip if already caught by parse_numbers (exact match only)
+            if any(abs(val - lv) <= ResponseValidator.TOLERANCE for lv in labeled_values):
                 matched += 1
                 continue
             if ResponseValidator._check_number_in_source(val, source_rounded):
@@ -561,7 +561,7 @@ class ResponseValidator:
         matched = 0
         for fn in found_numbers:
             if self._check_number_in_source(fn.value, source_rounded,
-                                            self.TOLERANCE, 0.01):
+                                            self.TOLERANCE, self.TOLERANCE):
                 matched += 1
             else:
                 unmatched.append(fn)
@@ -646,6 +646,8 @@ class ResponseValidator:
                     f"{error_text}\n\n"
                     "Исправь ответ. Используй ТОЛЬКО числа из раздела "
                     '"LAST ANALYSIS". '
+                    "Не округляй числа — используй ТОЧНЫЕ значения, "
+                    "сохраняя все знаки после запятой как в источнике. "
                     "Для цитат статей используй ТОЛЬКО числа, "
                     "которые реально есть в абстракте статьи. "
                     "Не извиняйся, не начинай с 'Прошу прощения' — "
@@ -658,6 +660,8 @@ class ResponseValidator:
                     f"{error_text}\n\n"
                     "Correct the response. Use ONLY numbers from the "
                     '"LAST ANALYSIS" section. '
+                    "Do NOT round numbers — use EXACT values, "
+                    "preserving all decimal places as in the source. "
                     "For cited articles, use ONLY numbers that actually "
                     "appear in the article abstract. "
                     "Do NOT apologize or start with 'I'm sorry' — "

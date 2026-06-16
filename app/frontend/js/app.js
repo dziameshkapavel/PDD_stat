@@ -16,8 +16,8 @@ import { ROCModel } from './models/roc.js';
 import { ModelEvalBinaryModel } from './models/modelEvalBinary.js';
 import { NumericCompareModel } from './models/numericCompare.js';
 import { LassoModel } from './models/lasso.js';
-import { AIChatModel } from './models/aiChat.js';
 import { AISettings } from './ui/aiSettings.js';
+import { ChatPanel } from './ui/chatPanel.js';
 import { ReportsPanel } from './ui/reports.js';
 import { CorrelationModel } from './models/correlation.js';
 import { SplineModel } from './models/spline.js';
@@ -52,6 +52,7 @@ class App {
         
         // AI компоненты
         this.aiSettings = new AISettings();
+        this.chatPanel = new ChatPanel();
         this.reports = new ReportsPanel();
         this.chain = new ChainPanel();
         this.chain.init();
@@ -79,7 +80,6 @@ class App {
         ModelFactory.register('modeleval', ModelEvalBinaryModel);
         ModelFactory.register('numeric', NumericCompareModel);
         ModelFactory.register('lasso', LassoModel);
-        ModelFactory.register('aichat', AIChatModel);
         console.log('Registered models:', ModelFactory.getAvailableModels());
         ModelFactory.register('correlation', CorrelationModel);
         ModelFactory.register('spline', SplineModel);
@@ -145,7 +145,7 @@ class App {
         const aiChatBtn = document.getElementById('aiChatBtn');
         if (aiChatBtn) {
             aiChatBtn.addEventListener('click', () => {
-                this._selectTemplate('aichat');
+                this.chatPanel.toggle();
             });
         }
         

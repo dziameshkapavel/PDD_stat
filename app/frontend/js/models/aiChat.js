@@ -1,115 +1,38 @@
-// js/models/aiChat.js - AI Chat Card
-import { BaseModel } from './base.js';
+// js/models/aiChat.js - AI Chat logic provider
 import { API_BASE } from '../core/api.js';
 
-export class AIChatModel extends BaseModel {
-    constructor(state, ui) {
-        super(state, ui);
-        this.templateName = 'ai_chat';
-        this.templatePrefix = 'ai_chat';
+export class AIChatModel {
+    constructor() {
         this.messages = [];
         this.config = null;
         this.coderMode = false;
+        this.chatPanel = null;
+        this._configPromise = null;
     }
 
-    createCard() {
-        const template = document.getElementById('aiChatCardTemplate');
-        if (!template) return null;
-
-        const card = template.content.cloneNode(true).querySelector('.analysis-card');
-        card.id = `aichat_${Date.now()}`;
-
-        this.ui.panels.addCard(card);
-        this._addCoderButton(card);
-        this._loadConfig().then(() => this._updateHeader(card));
-
-        card.querySelector('.send-btn').addEventListener('click', () => this._sendMessage(card));
-        card.querySelector('.card-close-btn').addEventListener('click', () => this.removeCard(card));
-
-        const input = card.querySelector('.chat-input');
-        input.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                this._sendMessage(card);
-            }
-        });
-
-        this.messages = [];
-        return card;
+    async loadConfig() {
+        if (this._configPromise) return this._configPromise;
+        this._configPromise = this._fetchConfig();
+        try {
+            await this._configPromise;
+        } finally {
+            this._configPromise = null;
+        }
     }
 
-    async _loadConfig() {
+    async _fetchConfig() {
         try {
             const response = await fetch(`${API_BASE}/ai/config`);
             const data = await response.json();
             this.config = data.config;
         } catch (e) {
+            console.warn('AI config fetch failed, using defaults:', e);
             this.config = { provider: 'ollama', last_used_model: 'llama3:8b', temperature: 0.7, max_tokens: 2000 };
         }
     }
 
-    _addCoderButton(card) {
-        const header = card.querySelector('.card-header');
-        const cardActions = card.querySelector('.card-actions');
-
-        if (!header || !cardActions) return;
-
-        const coderBtn = document.createElement('button');
-        coderBtn.className = 'coder-btn';
-        coderBtn.textContent = 'Coder';
-        coderBtn.style.cssText = `
-            font-size: 12px;
-            padding: 6px 12px;
-            background: rgba(255, 255, 255, 0.3);
-            border: 1px solid rgba(0, 0, 0, 0.05);
-            border-radius: 30px;
-            color: var(--text-primary);
-            cursor: pointer;
-            transition: all 0.2s ease;
-            backdrop-filter: blur(5px);
-            -webkit-backdrop-filter: blur(5px);
-            font-weight: 500;
-            margin-right: 6px;
-        `;
-
-        coderBtn.addEventListener('click', () => {
-            this.coderMode = !this.coderMode;
-            if (this.coderMode) {
-                coderBtn.style.background = 'rgba(255, 59, 48, 0.15)';
-                coderBtn.style.color = 'var(--accent-red)';
-                coderBtn.style.borderColor = 'var(--accent-red)';
-            } else {
-                coderBtn.style.background = '';
-                coderBtn.style.color = '';
-                coderBtn.style.borderColor = '';
-            }
-            this._updateHeader(card);
-        });
-
-        const closeBtn = cardActions.querySelector('.card-close-btn');
-        cardActions.insertBefore(coderBtn, closeBtn);
-    }
-
-    _updateHeader(card) {
-        const label = card.querySelector('.model-label');
-        if (!label || !this.config) return;
-
-        const prefix = this.coderMode ? 'AI Coder' : 'AI Assistant';
-        const provider = this.config.provider === 'ollama' ? 'local' : 'cloud';
-        const model = this.config.last_used_model || 'llama3:8b';
-        label.textContent = `${prefix} ${model} (${provider})`;
-
-        const title = card.querySelector('.card-title');
-        if (this.coderMode) {
-            card.style.borderLeft = '3px solid var(--accent-red)';
-        } else {
-            card.style.borderLeft = '';
-        }
-    }
-
     _getSystemPrompt() {
-        if (this.coderMode) {
-            return `You are PDD_STAT Coder. Your ONLY job is to write executable Python code.
+        return `You are PDD_STAT Coder. Your ONLY job is to write executable Python code.
 RULES (follow strictly):
 - Return ONLY Python code. No explanations. No markdown.
 - Use df['column'] for DataFrame columns.
@@ -122,29 +45,33 @@ RULES (follow strictly):
 - PREFER .iloc over .loc when indexing by position.
 - AFTER executing code: if error occurs, automatically fix and retry up to 3 times.
 - If still failing after 3 attempts, print the error for the user.`;
-        }
-        return '';
     }
 
-    async _sendMessage(card) {
-        const input = card.querySelector('.chat-input');
-        const text = input.value.trim();
+    _getModel() {
+        return (this.config && this.config.last_used_model) || 'llama3:8b';
+    }
+
+    _getTemperature() {
+        return this.coderMode ? 0 : (this.config && this.config.temperature || 0.7);
+    }
+
+    _getMaxTokens() {
+        return this.coderMode ? 4000 : (this.config && this.config.max_tokens || 2000);
+    }
+
+    async sendMessage() {
+        const text = this.chatPanel.getText();
         if (!text) return;
 
-        const container = card.querySelector('.chat-messages');
-        this._addMessage(container, 'user', text);
-        input.value = '';
-        input.focus();
-
+        this.addMessage('user', text);
+        this.chatPanel.clearInput();
         this.messages.push({ role: 'user', content: text });
 
-        const typingDiv = this._addTypingIndicator(container);
-        container.scrollTop = container.scrollHeight;
+        this.chatPanel.expand();
+        const typingDiv = this.chatPanel.addTypingIndicator();
 
         try {
-            const model = this.config && this.config.last_used_model || 'llama3:8b';
-            const temperature = this.coderMode ? 0 : (this.config && this.config.temperature || 0.7);
-            const maxTokens = this.coderMode ? 4000 : (this.config && this.config.max_tokens || 2000);
+            const model = this._getModel();
 
             const fullMessages = [];
             if (this.coderMode) {
@@ -157,19 +84,18 @@ RULES (follow strictly):
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     messages: fullMessages,
-                    model: model,
-                    temperature: temperature,
-                    max_tokens: maxTokens,
+                    model,
+                    temperature: this._getTemperature(),
+                    max_tokens: this._getMaxTokens(),
                     coder_mode: this.coderMode
                 })
             });
 
             const result = await response.json();
-            clearInterval(typingDiv._timerInterval);
-            typingDiv.remove();
+            this.chatPanel.removeTypingIndicator(typingDiv);
 
             if (result.success) {
-                this._addMessage(container, 'assistant', result.content);
+                this.addMessage('assistant', result.content);
                 this.messages.push({ role: 'assistant', content: result.content });
 
                 if (this.coderMode) {
@@ -177,56 +103,49 @@ RULES (follow strictly):
                     for (const block of pythonBlocks) {
                         const code = block.replace(/```python\n?/, '').replace(/```/, '').trim();
                         if (code) {
-                            await this._executeCode(code, container);
+                            await this._executeCode(code);
                         }
                     }
                 }
             } else {
-                this._addMessage(container, 'assistant', `Error: ${result.error || 'Unknown error'}`);
+                const errMsg = result.error || 'Unknown error';
+                this.addMessage('assistant', `Error (${model}): ${errMsg}`);
             }
-
         } catch (e) {
-            clearInterval(typingDiv._timerInterval);
-            typingDiv.remove();
-            this._addMessage(container, 'assistant', `Error: ${e.message}`);
+            this.chatPanel.removeTypingIndicator(typingDiv);
+            this.addMessage('assistant', `Error: ${e.message}`);
         }
 
-        container.scrollTop = container.scrollHeight;
-        this._saveDialog();
+        this.saveDialog();
     }
 
-    _addMessage(container, role, text) {
-        const msg = document.createElement('div');
-        msg.className = `chat-message ${role}`;
-
+    addMessage(role, text) {
         text = text.replace(/\\text\{([^}]+)\}/g, '$1');
         text = text.replace(/\$\$([^$]+)\$\$/g, '$1');
         text = text.replace(/\$([^$]+)\$/g, '$1');
 
-        let formatted;
+        let html;
         if (role === 'system') {
-            formatted = text.replace(/!\[([^\]]*)\]\(\/plots\/([^)]+)\)/g,
+            html = text.replace(/!\[([^\]]*)\]\(\/plots\/([^)]+)\)/g,
                 '<img src="/plots/$2" style="max-width:100%;border-radius:8px;border:1px solid var(--border-primary);margin:8px 0;" />');
         } else if (this.coderMode && role === 'assistant') {
-            formatted = `<pre style="background:var(--bg-tertiary);padding:12px;border-radius:6px;overflow-x:auto;font-size:12px;margin:0;"><code>${text}</code></pre>`;
+            html = `<pre style="background:var(--bg-tertiary);padding:12px;border-radius:6px;overflow-x:auto;font-size:12px;margin:0;"><code>${this._escapeHtml(text)}</code></pre>`;
         } else {
-            formatted = this._renderMarkdown(text);
+            html = this._renderMarkdown(text);
         }
-
-        msg.innerHTML = `<div class="chat-bubble">${formatted}</div>`;
-        container.appendChild(msg);
+        this.chatPanel.appendMessage(role, html);
     }
 
     _escapeHtml(text) {
         return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
-    async _executeCode(code, container) {
+    async _executeCode(code) {
         try {
             const execRes = await fetch(`${API_BASE}/analysis/code/run`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ code: code })
+                body: JSON.stringify({ code })
             });
             const execData = await execRes.json();
 
@@ -234,32 +153,21 @@ RULES (follow strictly):
                 const output = (execData.output || '').trim();
                 if (output) {
                     const coderResult = `[CODER OUTPUT — use these exact numbers]\n${output}`;
-                    this._addMessage(container, 'system', coderResult);
+                    this.addMessage('system', coderResult);
                     this.messages.push({ role: 'user', content: `[SYSTEM] The following is the output from the last executed code. Use only these numbers in your analysis:\n${output}` });
                 } else {
-                    this._addMessage(container, 'system', `> [Code executed]`);
+                    this.addMessage('system', '> [Code executed]');
                 }
 
-                await this._showRecentPlots(container);
+                const createdPlots = execData.created_plots || [];
+                for (const plot of createdPlots) {
+                    this.addMessage('system', `![${plot}](/plots/${plot})`);
+                }
             } else {
-                this._addMessage(container, 'system', `Error: ${execData.error}`);
+                this.addMessage('system', `Error: ${execData.error}`);
             }
         } catch (e) {
-            this._addMessage(container, 'system', `Execution error: ${e.message}`);
-        }
-    }
-
-    async _showRecentPlots(container) {
-        try {
-            const res = await fetch(`${API_BASE}/analysis/charts`);
-            const data = await res.json();
-            const plots = (data.charts || []).sort().reverse().slice(0, 5);
-
-            for (const plot of plots) {
-                this._addMessage(container, 'system', `![${plot}](/plots/${plot})`);
-            }
-        } catch (e) {
-            console.error('Failed to load plots:', e);
+            this.addMessage('system', `Execution error: ${e.message}`);
         }
     }
 
@@ -277,40 +185,7 @@ RULES (follow strictly):
         return html;
     }
 
-    _addTypingIndicator(container) {
-        const div = document.createElement('div');
-        div.className = 'chat-message assistant';
-        const startTime = Date.now();
-        div.innerHTML = `
-            <div class="chat-bubble" style="display:flex;align-items:center;gap:8px;padding:12px 16px;">
-                <span style="display:flex;gap:3px;">
-                    <span class="typing-dot">\u25CF</span>
-                    <span class="typing-dot" style="animation-delay:0.2s">\u25CF</span>
-                    <span class="typing-dot" style="animation-delay:0.4s">\u25CF</span>
-                </span>
-                <span class="typing-timer" style="font-size:11px;color:var(--text-secondary);opacity:0.7;">0s</span>
-            </div>`;
-        container.appendChild(div);
-
-        const timerInterval = setInterval(() => {
-            const elapsed = Math.floor((Date.now() - startTime) / 1000);
-            const timerEl = div.querySelector('.typing-timer');
-            if (timerEl) {
-                if (elapsed < 60) {
-                    timerEl.textContent = `${elapsed}s`;
-                } else {
-                    const min = Math.floor(elapsed / 60);
-                    const sec = elapsed % 60;
-                    timerEl.textContent = `${min}m ${sec}s`;
-                }
-            }
-        }, 1000);
-
-        div._timerInterval = timerInterval;
-        return div;
-    }
-
-    async _saveDialog() {
+    async saveDialog() {
         try {
             await fetch(`${API_BASE}/analysis/history/chat`, {
                 method: 'POST',
@@ -325,10 +200,5 @@ RULES (follow strictly):
         } catch (e) {
             console.error('Failed to save dialog:', e);
         }
-    }
-
-    removeCard(card) {
-        this._saveDialog();
-        super.removeCard(card);
     }
 }

@@ -39,6 +39,7 @@ class Executor:
         self.plots_folder.mkdir(parents=True, exist_ok=True)
         self.df: pd.DataFrame | None = None
         self.namespace = {}
+        self._created_plots: list[str] = []
         self._load_data()
         self._init_namespace()
 
@@ -145,7 +146,8 @@ class Executor:
 
     def _save_plot(self, name: str, fig=None) -> str:
         safe_name = name.replace('/', '_').replace('\\', '_')
-        plot_path = self.plots_folder / f"{safe_name}.png"
+        filename = f"{safe_name}.png"
+        plot_path = self.plots_folder / filename
 
         if fig is not None:
             fig.savefig(plot_path, dpi=150, bbox_inches='tight')
@@ -153,6 +155,7 @@ class Executor:
             plt.savefig(plot_path, dpi=150, bbox_inches='tight')
         plt.close('all')
 
+        self._created_plots.append(filename)
         return str(plot_path)
 
     def execute_code(self, code: str) -> dict[str, Any]:
@@ -242,6 +245,7 @@ class Executor:
         # Пересоздаём namespace для чистоты между шаблонами
         self._init_namespace()
         self.namespace['df'] = self.df
+        self._created_plots = []
 
         try:
             # Timeout guard via SIGALRM (Unix only, main thread only)
@@ -275,7 +279,8 @@ class Executor:
             return {
                 "success": True,
                 "output": stdout_capture.getvalue(),
-                "error": None
+                "error": None,
+                "created_plots": self._created_plots
             }
 
         except Exception as e:

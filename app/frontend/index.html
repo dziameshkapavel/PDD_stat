@@ -74,7 +74,7 @@
             </div>
             
             <!-- AI Chat -->
-            <button class="header-btn" id="aiChatBtn" style="background: rgba(52, 199, 89, 0.15); color: var(--accent-green); border-color: var(--accent-green);">
+            <button class="header-btn" id="aiChatBtn">
                 AI Chat
             </button>
 
@@ -120,28 +120,49 @@
 
         <!-- Main Workspace -->
         <main class="main-workspace" id="mainWorkspace">
-            <div class="empty-state" id="emptyState">
-                <div class="empty-icon">📊</div>
-                <h3>No analysis selected</h3>
-                <p>Choose a template from the "Templates" menu to start</p>
-            </div>
-            
-            <div class="analysis-cards-container" id="analysisCards"></div>
-            
-            <div class="code-editor-container hidden" id="codeEditorContainer">
-                <div class="code-editor-header">
-                    <span>Python Script</span>
-                    <button class="btn-secondary" id="exitCodeModeBtn">Exit Code Mode</button>
-                </div>
-                <textarea class="code-editor" id="codeEditor" placeholder="# Paste or write your Python code here..."></textarea>
-                <div class="code-editor-footer" style="display:flex; justify-content: space-between; align-items: center;">
-                    <button class="btn-secondary" id="clearHistoryBtn" style="color: var(--accent-red); border-color: var(--accent-red);">Clear History & Plots</button>
-                    <div style="display:flex; gap:8px;">
-                        <button class="btn-secondary" id="clearCodeBtn">Clear Code</button>
-                        <button class="btn-primary" id="runCodeBtn">Run</button>
+            <div class="workspace-scroll">
+                <div class="workspace-body">
+                    <div class="empty-state" id="emptyState">
+                        <div class="empty-icon">📊</div>
+                        <h3>No analysis selected</h3>
+                        <p>Choose a template from the "Templates" menu to start</p>
+                    </div>
+                    
+                    <div class="analysis-cards-container" id="analysisCards"></div>
+                    
+                    <div class="code-editor-container hidden" id="codeEditorContainer">
+                        <div class="code-editor-header">
+                            <span>Python Script</span>
+                            <button class="btn-secondary" id="exitCodeModeBtn">Exit Code Mode</button>
+                        </div>
+                        <textarea class="code-editor" id="codeEditor" placeholder="# Paste or write your Python code here..."></textarea>
+                        <div class="code-editor-footer" style="display:flex; justify-content: space-between; align-items: center;">
+                            <button class="btn-secondary" id="clearHistoryBtn" style="color: var(--accent-red); border-color: var(--accent-red);">Clear History & Plots</button>
+                            <div style="display:flex; gap:8px;">
+                                <button class="btn-secondary" id="clearCodeBtn">Clear Code</button>
+                                <button class="btn-primary" id="runCodeBtn">Run</button>
+                            </div>
+                        </div>
+                        <div class="code-results-container" id="codeResultsContainer"></div>
                     </div>
                 </div>
-                <div class="code-results-container" id="codeResultsContainer"></div>
+            </div>
+
+            <!-- Chat Panel -->
+            <div class="chat-panel" id="chatPanel">
+                <div class="chat-panel-header" id="chatPanelHeader" hidden>
+                    <span class="chat-model-label" id="chatModelLabel">AI Assistant</span>
+                    <div>
+                        <button class="chat-collapse-btn" id="chatCollapseBtn" title="Minimize">_</button>
+                        <button class="chat-close-btn" id="chatCloseBtn" title="Close">×</button>
+                    </div>
+                </div>
+                <div class="chat-messages" id="chatMessages" style="max-height:0;"></div>
+                <div class="chat-input-row">
+                    <textarea class="chat-input" id="chatField" rows="1" placeholder="Ask a question..."></textarea>
+                    <button class="chat-coder-btn" id="coderToggle">Coder</button>
+                    <button class="send-btn" id="chatSendBtn">↑</button>
+                </div>
             </div>
         </main>
 
@@ -645,24 +666,6 @@
                 <div style="clear:both;"></div>
             </div>
             <div class="card-results-container"></div>
-        </div>
-    </template>
-
-    <template id="aiChatCardTemplate">
-        <div class="analysis-card" data-template="aichat">
-            <div class="card-header">
-                <span class="card-title">AI Assistant <span class="model-label">Loading...</span></span>
-                <div class="card-actions">
-                    <button class="card-close-btn" title="Close chat">✕</button>
-                </div>
-            </div>
-            <div style="padding: 0;">
-                <div class="chat-messages" style="margin: 0 0 12px 0;"></div>
-                <div class="chat-input-row" style="padding: 0;">
-                    <textarea class="chat-input" rows="3" placeholder="Ask a question about your data or results..."></textarea>
-                    <button class="send-btn">↑</button>
-                </div>
-            </div>
         </div>
     </template>
 

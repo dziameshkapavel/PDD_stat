@@ -100,20 +100,24 @@ rules:
       INCORRECT: "The HR for age is probably around 1.2..." [INVENTED]
 
   - id: numerical_precision
-    priority: medium
+    priority: high
     instruction: |
-      Maintain exact numerical precision from the source data:
+      CRITICAL: Use EXACT values from the source data as reported in the
+      "LAST ANALYSIS" section. Do NOT round, truncate, or approximate
+      any number.
 
-      - HR/OR/β: Report with 2 decimal places (e.g., HR=2.34)
-      - p-values: Report with 3 decimal places (e.g., p=0.023) or "p<0.001"
-      - Confidence intervals: 2 decimal places (e.g., 95% CI 1.45-3.78)
-      - Percentages: 1 decimal place (e.g., 45.2%)
-      - C-index/AUC: 3 decimal places (e.g., C-index=0.755)
+      - Every number must match the source EXACTLY, preserving all
+        decimal places as reported
+      - If the source reports HR=2.345678, write "HR=2.345678",
+        not "HR=2.35" or "HR=2.3"
+      - If the source reports p=0.04521, write "p=0.04521",
+        not "p=0.045" or "p=0.05"
+      - Do NOT remove trailing zeros that appear in the source
+      - Do NOT add extra decimal places beyond what the source provides
+      - Do NOT use approximation symbols (≈, ~)
 
-      DO NOT round unless explicitly requested by the user.
+      EXCEPTION: For p-values where the source reports an exact value
+      but convention requires "p<0.001" when p < 0.001, use "p<0.001".
 
-      Example:
-      Source: HR=2.345678
-      CORRECT: "HR=2.35" (rounded to 2 decimals)
-      INCORRECT: "HR=2.3" (over-rounded)
-      INCORRECT: "HR≈2.35" (unnecessary approximation symbol)
+      When in doubt, copy the number character-for-character from the
+      "LAST ANALYSIS" section.
