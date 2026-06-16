@@ -7,6 +7,11 @@ export class ModalManager {
         this.applyCleaningBtn = document.getElementById('applyCleaningBtn');
         this.skipCleaningBtn = document.getElementById('skipCleaningBtn');
         this.cleaningModalClose = document.getElementById('cleaningModalClose');
+        
+        this.confirmModal = document.getElementById('confirmModal');
+        this.confirmModalMessage = document.getElementById('confirmModalMessage');
+        this.confirmOkBtn = document.getElementById('confirmOkBtn');
+        this.confirmCancelBtn = document.getElementById('confirmCancelBtn');
     }
     
     init() {
@@ -59,11 +64,45 @@ export class ModalManager {
     }
     
     showAlert(message, type = 'info') {
-        alert(message); // В будущем можно заменить на кастомный тост
+        alert(message);
     }
     
     showConfirm(message) {
-        return confirm(message);
+        return new Promise((resolve) => {
+            if (!this.confirmModal || !this.confirmModalMessage) {
+                resolve(confirm(message));
+                return;
+            }
+            
+            this.confirmModalMessage.textContent = message;
+            
+            const okHandler = () => {
+                this._hideConfirmModal();
+                resolve(true);
+            };
+            const cancelHandler = () => {
+                this._hideConfirmModal();
+                resolve(false);
+            };
+            const closeHandler = (e) => {
+                if (e.target === this.confirmModal) {
+                    this._hideConfirmModal();
+                    resolve(false);
+                }
+            };
+            
+            this.confirmOkBtn.addEventListener('click', okHandler, { once: true });
+            this.confirmCancelBtn.addEventListener('click', cancelHandler, { once: true });
+            this.confirmModal.addEventListener('click', closeHandler, { once: true });
+            
+            this.confirmModal.classList.remove('hidden');
+            this.confirmModal.classList.add('active');
+        });
+    }
+    
+    _hideConfirmModal() {
+        this.confirmModal.classList.remove('active');
+        setTimeout(() => this.confirmModal.classList.add('hidden'), 300);
     }
     
     showPrompt(message, defaultValue = '') {

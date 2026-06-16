@@ -63,7 +63,7 @@ async def create_project(name: str):
     pm = ProjectManager()
     try:
         project_path = pm.create_project(name)
-        state["current_project_name"] = name
+        state["current_project_name"] = project_path.name
         state["cached_cleaning_plan"] = None
         active_path = Path(__file__).parent.parent / "active_project.txt"
         active_path.write_text(str(project_path))
@@ -236,12 +236,12 @@ async def delete_project(name: str):
                 raise HTTPException(status_code=500, detail="Cannot delete project. Close files and try again.")
             time.sleep(1)
 
-    if state.get("current_project_name") == name:
+    if state.get("current_project_name") == safe_name:
         state["current_project_name"] = None
         state["cached_cleaning_plan"] = None
         active_path = Path(__file__).parent.parent / "active_project.txt"
         active_path.write_text("")
-    return {"status": "deleted", "name": name}
+    return {"status": "deleted", "name": safe_name}
 
 
 @router.get("/plots")

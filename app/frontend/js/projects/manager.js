@@ -142,29 +142,45 @@ export class ProjectManager {
     }
     
     async loadProjectsList() {
-        try {
-            const data = await APIClient.call("/projects/");
-            const projects = data.projects || [];
-            
-            const header = this.projectsList.querySelector('.projects-header');
-            this.projectsList.innerHTML = '';
-            if (header) this.projectsList.appendChild(header);
-            
-            projects.forEach(proj => {
-                const item = this._createProjectItem(proj);
-                this.projectsList.appendChild(item);
-            });
-        } catch (error) {
-            console.error('Failed to load projects:', error);
+        const header = this.projectsList.querySelector('.projects-header');
+        
+        const MAX_RETRIES = 3;
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            try {
+                const data = await APIClient.call("/projects/");
+                const projects = data.projects || [];
+                
+                this.projectsList.innerHTML = '';
+                if (header) this.projectsList.appendChild(header);
+                
+                projects.forEach(proj => {
+                    const item = this._createProjectItem(proj);
+                    this.projectsList.appendChild(item);
+                });
+                return;
+            } catch (error) {
+                console.error('Failed to load projects (attempt', attempt + 1, '):', error);
+                if (attempt < MAX_RETRIES - 1) {
+                    await new Promise(r => setTimeout(r, 1500));
+                }
+            }
         }
+        
+        this.projectsList.innerHTML = '';
+        if (header) this.projectsList.appendChild(header);
+        const msg = document.createElement('div');
+        msg.className = 'placeholder-text';
+        msg.textContent = '⚠ Could not load project list. Is the backend running?';
+        this.projectsList.appendChild(msg);
     }
     
     _createProjectItem(projectName) {
         const item = document.createElement('div');
         item.className = 'project-item';
         item.dataset.projectId = projectName;
+        const safeName = projectName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         item.innerHTML = `
-            <span class="project-name">${projectName}</span>
+            <span class="project-name">${safeName}</span>
             <button class="context-project-btn" title="Project context">✎</button>
             <button class="delete-project-btn" title="Delete project">✕</button>
         `;
@@ -205,7 +221,8 @@ export class ProjectManager {
     }
     
     async deleteProject(name) {
-        if (!this.modals.showConfirm(`Delete project "${name}"?`)) return;
+        const confirmed = await this.modals.showConfirm(`Delete project "${name}"?`);
+        if (!confirmed) return;
         
         try {
             await APIClient.call(`/projects/${encodeURIComponent(name)}`, { method: 'DELETE' });
