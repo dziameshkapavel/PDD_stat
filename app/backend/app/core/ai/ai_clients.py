@@ -321,7 +321,12 @@ class GeminiClient:
                         "model": model,
                         "usage": data.get('usageMetadata', {})
                     }
-                return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
+                try:
+                    err_body = response.json()
+                    err_msg = err_body.get('error', {}).get('message', response.text)
+                except Exception:
+                    err_msg = response.text
+                return {"success": False, "error": f"Error ({model}): {err_msg}"}
         except Exception as e:
             return {"success": False, "error": _safe_str(f"{str(e)}\n{traceback.format_exc()}")}
 
