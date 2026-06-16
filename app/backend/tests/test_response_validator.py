@@ -412,13 +412,14 @@ def test_validate_systematic_finds_hallucinated_decimal():
     assert result.unknown_decimals >= 1
 
 
-def test_validate_notice_has_total_decimals():
-    """Валидационное уведомление включает строку total_decimals."""
+def test_validate_notice_shows_unmatched():
+    """Валидационное уведомление показывает конкретные несовпавшие числа."""
     vr = ValidationResult(
-        passed=True, errors=[], numbers_found=2,
-        numbers_checked=2, numbers_matched=2,
-        total_decimals=3, decimals_matched=3, unknown_decimals=0,
+        passed=False, errors=[], numbers_found=3,
+        numbers_checked=3, numbers_matched=2,
+        unmapped_numbers=[("0.362", "or")],
     )
     result = ResponseValidator.add_validation_notice("HR=1.5, AUC=0.82", vr)
-    assert "Все числа" in result or "All numbers" in result
-    assert "3/3" in result
+    assert "2/3" in result
+    assert "0.362" in result
+    assert "OR" in result

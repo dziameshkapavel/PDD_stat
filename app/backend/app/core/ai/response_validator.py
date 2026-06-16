@@ -128,6 +128,7 @@ class ValidationResult:
     total_decimals: int = 0
     decimals_matched: int = 0
     unknown_decimals: int = 0
+    unmapped_numbers: list[tuple[str, str]] = field(default_factory=list)  # [(value_str, label), ...]
 
 
 class ResponseValidator:
@@ -420,6 +421,17 @@ class ResponseValidator:
         return errors
 
     @staticmethod
+    def _fmt_label(label: str) -> str:
+        """Human-readable label for display."""
+        mapping = {
+            "hr": "HR", "or": "OR", "auc": "AUC", "ci": "CI",
+            "p_value": "p", "c_index": "C-index", "beta": "β",
+            "kappa": "κ", "brier": "Brier", "cal_intercept": "cal_intercept",
+            "cal_slope": "cal_slope",
+        }
+        return mapping.get(label, label)
+
+    @staticmethod
     def add_validation_notice(response: str, v_result: ValidationResult) -> str:
         """Добавляет в конец ответа уведомление о проверке чисел."""
         lang = ResponseValidator._detect_language(response)
@@ -433,17 +445,10 @@ class ResponseValidator:
                 else:
                     parts.append(f"✅ Verified: {ratio} numbers match source data")
             else:
-                # Extract specific unmatched numbers from errors
-                unmatched = []
-                for err in v_result.errors:
-                    if "Numbers not found in source metrics" in err:
-                        for m in re.finditer(r"([\d.]+)\s*\(([^)]+)\)", err):
-                            val_str, label = m.group(1), m.group(2)
-                            try:
-                                val_str = f"{float(val_str):.3g}"
-                            except ValueError:
-                                pass
-                            unmatched.append(f"{val_str} ({label})")
+                unmatched = [
+                    f"{val} ({ResponseValidator._fmt_label(label)})"
+                    for val, label in v_result.unmapped_numbers
+                ]
                 if unmatched:
                     if lang == "ru":
                         parts.append(f"✅ Проверено: {ratio} чисел совпадают с источником")
@@ -619,6 +624,14 @@ class ResponseValidator:
                 citations_matched = max(0, pmids_checked - len(citation_errors))
             errors.extend(citation_errors)
 
+        unmapped = []
+        for fn in unmatched[:5]:
+            try:
+                val = f"{fn.value:.3g}"
+            except (ValueError, OverflowError):
+                val = str(fn.value)
+            unmapped.append((val, fn.label))
+
         return ValidationResult(
             passed=len(errors) == 0,
             errors=errors,
@@ -630,6 +643,7 @@ class ResponseValidator:
             total_decimals=total_decimals,
             decimals_matched=decimals_matched,
             unknown_decimals=unknown,
+            unmapped_numbers=unmapped,
         )
 
     @classmethod
