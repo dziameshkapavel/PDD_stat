@@ -937,8 +937,8 @@ async def generate_ai_report(req: AIReportRequest):
     loader = get_loader()
 
     # 1. Check AI config
+    from app.api.ai import _clean_ai_content, load_context
     from app.api.ai import load_config as load_ai_config
-    from app.api.ai import load_context
     from app.core.ai.ai_clients import AIClientFactory
     from app.core.ai.context_builder import ContextBuilder
 
@@ -1041,10 +1041,7 @@ async def generate_ai_report(req: AIReportRequest):
     if not ai_content.strip():
         raise HTTPException(status_code=500, detail="AI returned empty response")
 
-    # Strip any <think> blocks (internal reasoning)
-    ai_content = re.sub(r'<think>.*?</think>', '', ai_content, flags=re.DOTALL).strip()
-    # Strip lone <think> without closing tag
-    ai_content = re.sub(r'<think>.*', '', ai_content).strip()
+    ai_content = _clean_ai_content(ai_content)
 
     # 6. Convert AI markdown response to DOCX
     doc = Document()
@@ -1176,8 +1173,8 @@ async def generate_article_draft(req: ArticleDraftRequest):
     loader = get_loader()
 
     # 1. Check AI config
+    from app.api.ai import _clean_ai_content, load_context
     from app.api.ai import load_config as load_ai_config
-    from app.api.ai import load_context
     from app.core.ai.ai_clients import AIClientFactory
     from app.core.ai.context_builder import ContextBuilder
     from app.core.ai.response_validator import ResponseValidator
@@ -1298,9 +1295,7 @@ async def generate_article_draft(req: ArticleDraftRequest):
         if not initial_res.get('success'):
             raise HTTPException(status_code=500, detail=initial_res.get('error', 'AI request failed'))
 
-        initial_content = initial_res.get('content', '')
-        initial_content = re.sub(r'<think>.*?</think>', '', initial_content, flags=re.DOTALL).strip()
-        initial_content = re.sub(r'<think>.*', '', initial_content).strip()
+        initial_content = _clean_ai_content(initial_res.get('content', ''))
 
         lang_code = "ru" if req.language.lower() in ["russian", "ru", "русский"] else "en"
 
@@ -1314,6 +1309,7 @@ async def generate_article_draft(req: ArticleDraftRequest):
         )
 
         ai_content = ResponseValidator.add_validation_notice(validated_text, v_result)
+        ai_content = _clean_ai_content(ai_content)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI drafting failed: {str(e)}")

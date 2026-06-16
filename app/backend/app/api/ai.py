@@ -1,3 +1,4 @@
+import html
 import json
 import re
 import traceback
@@ -431,6 +432,13 @@ def _normalize_pvalues(text: str) -> str:
     return text
 
 
+def _clean_ai_content(text: str) -> str:
+    """Strip HTML tags and decode HTML entities from AI responses."""
+    text = re.sub(r"<[^>]*>", "", text)
+    text = html.unescape(text)
+    return text
+
+
 @router.post("/chat")
 async def chat(req: ChatRequest):
     loader = get_loader()
@@ -520,7 +528,7 @@ async def chat(req: ChatRequest):
                     model=model, messages=corr_sanitized,
                     temperature=0.1, max_tokens=max_tokens
                 )
-                return _normalize_pvalues(corr_result.get("content", ""))
+                return _clean_ai_content(_normalize_pvalues(corr_result.get("content", "")))
 
             pubmed_articles = project_context.get('pubmed_articles', [])
 
@@ -545,10 +553,10 @@ async def chat(req: ChatRequest):
             if not passed:
                 result["validation_errors"] = v_result.errors[:3]
 
-    # Strip HTML tags that some models spontaneously generate
+    # Strip HTML tags & entities that some models spontaneously generate
     content = result.get("content", "")
     if content:
-        result["content"] = re.sub(r"<[^>]*>", "", content)
+        result["content"] = _clean_ai_content(content)
     result["role"] = role
     return result
 
@@ -656,7 +664,7 @@ async def run_pipeline(req: RunPipelineRequest):
                         max_tokens=500
                     )
                     if ai_result.get("success"):
-                        step_output["ai_comment"] = ai_result["content"]
+                        step_output["ai_comment"] = _clean_ai_content(ai_result["content"])
                 except Exception:
                     step_output["ai_comment"] = None
 
@@ -696,7 +704,7 @@ async def run_pipeline(req: RunPipelineRequest):
                     temperature=0.3,
                     max_tokens=500
                 )
-                summary = ai_result.get("content", "") if ai_result.get("success") else None
+                summary = _clean_ai_content(ai_result.get("content", "")) if ai_result.get("success") else None
         except Exception:
             summary = None
 
