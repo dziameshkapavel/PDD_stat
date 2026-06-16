@@ -22,6 +22,14 @@ from app.core.data_loader import normalize_dataframe
 
 EXEC_TIMEOUT = int(os.environ.get('PDD_STAT_EXEC_TIMEOUT', '60'))
 
+# Modules allowed in sandbox (both AST filter and runtime __import__)
+ALLOWED_IMPORTS = {
+    'pandas', 'numpy', 'matplotlib', 'scipy', 'lifelines', 'json',
+    'time', 'pathlib', 'warnings', 'statsmodels', 'sklearn', 'itertools',
+    'typing', 'math', 'seaborn', 'collections', 'docx', 'jinja2',
+    'pyarrow', 'openpyxl', 'autograd', 'shutil', 'numbers', 'sksurv', 'shap'
+}
+
 
 class ExecTimeoutError(Exception):
     pass
@@ -107,6 +115,15 @@ class Executor:
                 raise PermissionError("Access denied: file is outside project path")
             return open(file, mode, *args, **kwargs)
 
+        def safe_import(name, *args, **kwargs):
+            root = name.split('.')[0]
+            if root not in ALLOWED_IMPORTS:
+                raise ImportError(
+                    f"Module '{name}' is not allowed in sandbox. "
+                    f"Allowed: {', '.join(sorted(ALLOWED_IMPORTS))}"
+                )
+            return builtins.__import__(name, *args, **kwargs)
+
         safe_builtins = {
             'print': print, 'len': len, 'range': range,
             'int': int, 'float': float, 'str': str, 'bool': bool,
@@ -123,7 +140,7 @@ class Executor:
             'RuntimeError': RuntimeError, 'Exception': Exception,
             'dir': dir,
             '__build_class__': __build_class__,
-            '__import__': builtins.__import__,
+            '__import__': safe_import,
             'open': safe_open,
         }
 
@@ -208,19 +225,13 @@ class Executor:
                 result_lines.append(' ' * indent + 'print("[PLOT] saved")')
         # AST-анализ на запрещенные импорты
         import ast
-        allowed_user_imports = {
-            'pandas', 'numpy', 'matplotlib', 'scipy', 'lifelines', 'json',
-            'time', 'pathlib', 'warnings', 'statsmodels', 'sklearn', 'itertools',
-            'typing', 'math', 'seaborn', 'collections', 'docx', 'jinja2',
-            'pyarrow', 'openpyxl', 'autograd', 'shutil', 'numbers', 'sksurv', 'shap'
-        }
         try:
             tree = ast.parse(code)
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
                         root = alias.name.split('.')[0]
-                        if root not in allowed_user_imports:
+                        if root not in ALLOWED_IMPORTS:
                             return {
                                 "success": False,
                                 "output": "",
@@ -229,7 +240,7 @@ class Executor:
                             }
                 elif isinstance(node, ast.ImportFrom) and node.module:
                     root = node.module.split('.')[0]
-                    if root not in allowed_user_imports:
+                    if root not in ALLOWED_IMPORTS:
                         return {
                             "success": False,
                             "output": "",

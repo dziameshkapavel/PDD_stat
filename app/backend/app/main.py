@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -22,16 +23,18 @@ logger = logging.getLogger("pdd_stat")
 
 app = FastAPI(title="PDD_STAT API", version="1.0.0")
 
-# Auth middleware (must be first)
-app.add_middleware(APIKeyMiddleware)
-
+# CORS middleware (must be first — handles preflight before Auth)
+origins_str = os.environ.get("CORS_ORIGINS", "http://localhost:8000")
+cors_origins = [o.strip() for o in origins_str.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_middleware(APIKeyMiddleware)
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
