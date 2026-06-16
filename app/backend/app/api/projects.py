@@ -231,9 +231,34 @@ async def edit_project_data(req: EditDataRequest):
             continue
         if change.col not in loader.df.columns:
             continue
-        loader.df.at[change.row, change.col] = change.value
+        val = change.value
+        if val is not None:
+            col_dtype = loader.df[change.col].dtype
+            if pd.api.types.is_integer_dtype(col_dtype):
+                try:
+                    val = int(val)
+                except (ValueError, TypeError):
+                    pass
+            elif pd.api.types.is_float_dtype(col_dtype):
+                try:
+                    val = float(val)
+                except (ValueError, TypeError):
+                    pass
+            elif pd.api.types.is_bool_dtype(col_dtype):
+                if isinstance(val, str):
+                    val = val.lower() in ('1', 'true', 'yes', 'y')
+        loader.df.at[change.row, change.col] = val
 
-    loader.save_state()
+    try:
+        loader.save_state()
+    except Exception:
+        from app.core.data_loader import normalize_dataframe
+        loader.df = normalize_dataframe(loader.df)
+        try:
+            loader.save_state()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Cannot save: {e}")
+
     return {"status": "saved"}
 
 
