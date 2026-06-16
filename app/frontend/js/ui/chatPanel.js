@@ -168,29 +168,6 @@ export class ChatPanel {
         this._scrollToBottom();
     }
 
-    createStreamMessage(role) {
-        const msg = document.createElement('div');
-        msg.className = `chat-message ${role}`;
-        const bubble = document.createElement('div');
-        bubble.className = 'chat-bubble';
-        msg.appendChild(bubble);
-        this.messagesEl.appendChild(msg);
-        this._scrollToBottom();
-        return msg;
-    }
-
-    appendStreamToken(msgEl, token) {
-        const bubble = msgEl.querySelector('.chat-bubble');
-        bubble.textContent += token;
-        this._scrollToBottom();
-    }
-
-    finalizeStreamMessage(msgEl, html) {
-        const bubble = msgEl.querySelector('.chat-bubble');
-        bubble.innerHTML = html;
-        this._scrollToBottom();
-    }
-
     clearMessages() {
         this.messagesEl.innerHTML = '';
     }
