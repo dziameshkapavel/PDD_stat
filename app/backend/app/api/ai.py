@@ -393,17 +393,19 @@ async def pubmed_suggest(req: PubMedSuggestRequest):
 
 def _normalize_pvalues(text: str) -> str:
     """Replace scientific notation p-values with <0.0001 format."""
-    # Pattern: p=3.44e-17, p = 1.23e-05, p=1e-10, p≈3.44e-17, etc.
+    # Pattern: p=3.44e-17, p = 1.23e-05, p-value: 2.07e-07, p value = 3e-10, etc.
     text = re.sub(
-        r'(\bp\s*[=:≈<>]?\s*)\d+(?:\.\d+)?e[+-]?\d+',
+        r'(\b(?:p|p[- ]?value)\s*[=:≈<>]?\s*)\d+(?:\.\d+)?e[+-]?\d+',
         r'\1<0.0001',
         text,
+        flags=re.IGNORECASE,
     )
     # Also catch "p = 3.44 × 10⁻¹⁷" style
     text = re.sub(
-        r'(\bp\s*[=:≈]\s*)\d+[.]\d+\s*[×x]\s*10[⁻⁺^]?[⁰¹²³⁴⁵⁶⁷⁸⁹+-]?\d+',
+        r'(\b(?:p|p[- ]?value)\s*[=:≈]\s*)\d+[.]\d+\s*[×x]\s*10[⁻⁺^]?[⁰¹²³⁴⁵⁶⁷⁸⁹+-]?\d+',
         r'\1<0.0001',
         text,
+        flags=re.IGNORECASE,
     )
     return text
 
