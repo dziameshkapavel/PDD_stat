@@ -264,6 +264,8 @@ RULES (follow strictly):
         html = html.replace(/\*\*(.+?)\*\*/g,
             (m, t) => `<strong>${esc(t)}</strong>`);
         html = html.replace(/\n/g, '<br>');
+        // Collapse multiple <br> (from consecutive blank lines)
+        html = html.replace(/(<br>){2,}/g, '<br>');
         return html;
     }
 
