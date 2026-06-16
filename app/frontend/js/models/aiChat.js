@@ -43,6 +43,7 @@ RULES (follow strictly):
 - BEFORE .loc or .iloc, verify values: print(df['col'].unique()).
 - If column has float values (1.0, 2.0), convert keys: type_keys = [int(k) for k in df['col'].dropna().unique()].
 - PREFER .iloc over .loc when indexing by position.
+- For Kaplan-Meier with add_at_risk_counts: create SEPARATE KaplanMeierFitter per group, pass fitted fitters (NOT lists) to add_at_risk_counts(fitter1, fitter2, ..., ax=ax).
 - AFTER executing code: if error occurs, automatically fix and retry up to 3 times.
 - If still failing after 3 attempts, print the error for the user.`;
     }
