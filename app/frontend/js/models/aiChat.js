@@ -185,13 +185,13 @@ RULES (follow strictly):
     }
 
     _renderMarkdown(text) {
-        let html = text;
+        const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-        // 1. Tables — before HTML escaping so <table> tags survive
-        html = html.replace(
+        // 1. Markdown tables — produce raw HTML with escaped content
+        let html = text.replace(
             /^\|(.+)\|\n\|([-:| ]+)\|\n((?:\|.+\|\n?)*)/gm,
             (match, headerRow, sepRow, bodyRows) => {
-                const headers = headerRow.split('|').map(h => h.trim()).filter(h => h);
+                const headers = headerRow.split('|').map(h => esc(h.trim())).filter(h => h);
                 const lines = bodyRows.trim().split('\n');
                 let table = '<table style="border-collapse:collapse;width:100%;margin:8px 0;font-size:13px;">';
                 table += '<thead><tr>' + headers.map(h =>
@@ -201,7 +201,7 @@ RULES (follow strictly):
                     const cells = line.split('|').map(c => c.trim());
                     const rowCells = cells.filter((_, i) => i > 0 && i < cells.length - 1);
                     table += '<tr>' + headers.map((_, i) =>
-                        `<td style="border:1px solid var(--border-primary);padding:4px 8px;">${rowCells[i] || ''}</td>`
+                        `<td style="border:1px solid var(--border-primary);padding:4px 8px;">${esc(rowCells[i] || '')}</td>`
                     ).join('') + '</tr>';
                 }
                 table += '</tbody></table>';
@@ -210,14 +210,10 @@ RULES (follow strictly):
         );
 
         // 2. Plain-text tables (crosstab, print(df)) — multi-space aligned
-        const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         const lines = html.split('\n');
-        const tblStyle =
-            'border-collapse:collapse;width:100%;margin:8px 0;font-size:13px;';
-        const cellStyle =
-            'border:1px solid var(--border-primary);padding:4px 8px;';
-        const thStyle =
-            cellStyle + 'text-align:left;background:var(--bg-tertiary);';
+        const tblStyle = 'border-collapse:collapse;width:100%;margin:8px 0;font-size:13px;';
+        const cellStyle = 'border:1px solid var(--border-primary);padding:4px 8px;';
+        const thStyle = cellStyle + 'text-align:left;background:var(--bg-tertiary);';
         const resultLines = [];
         let i = 0;
         while (i < lines.length) {
@@ -255,14 +251,17 @@ RULES (follow strictly):
         }
         html = resultLines.join('\n');
 
-        html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        // 3. Inline formatting — escape content, keep HTML tags
         html = html.replace(/```(\w*)\n([\s\S]*?)```/g,
-            '<pre style="background:var(--bg-tertiary);padding:12px;border-radius:6px;overflow-x:auto;font-size:12px;"><code>$2</code></pre>');
+            (m, lang, code) => `<pre style="background:var(--bg-tertiary);padding:12px;border-radius:6px;overflow-x:auto;font-size:12px;"><code>${esc(code)}</code></pre>`);
         html = html.replace(/`([^`]+)`/g,
-            '<code style="background:var(--bg-tertiary);padding:2px 6px;border-radius:4px;font-size:12px;">$1</code>');
-        html = html.replace(/^### (.+)$/gm, '<h4 style="margin:12px 0 4px 0;font-size:14px;">$1</h4>');
-        html = html.replace(/^## (.+)$/gm, '<h3 style="margin:16px 0 6px 0;font-size:15px;">$1</h3>');
-        html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+            (m, code) => `<code style="background:var(--bg-tertiary);padding:2px 6px;border-radius:4px;font-size:12px;">${esc(code)}</code>`);
+        html = html.replace(/^### (.+)$/gm,
+            (m, t) => `<h4 style="margin:12px 0 4px 0;font-size:14px;">${esc(t)}</h4>`);
+        html = html.replace(/^## (.+)$/gm,
+            (m, t) => `<h3 style="margin:16px 0 6px 0;font-size:15px;">${esc(t)}</h3>`);
+        html = html.replace(/\*\*(.+?)\*\*/g,
+            (m, t) => `<strong>${esc(t)}</strong>`);
         html = html.replace(/\n/g, '<br>');
         return html;
     }
