@@ -3,9 +3,10 @@ import { API_BASE } from '../core/api.js';
 import { AIChatModel } from '../models/aiChat.js';
 
 export class ChatPanel {
-    constructor() {
+    constructor(modals) {
         this.model = new AIChatModel();
         this.model.chatPanel = this;
+        this.modals = modals;
 
         this.panel = document.getElementById('chatPanel');
         this.messagesEl = document.getElementById('chatMessages');
@@ -14,6 +15,7 @@ export class ChatPanel {
         this.coderBtn = document.getElementById('coderToggle');
         this.collapseBtn = document.getElementById('chatCollapseBtn');
         this.closeBtn = document.getElementById('chatCloseBtn');
+        this.clearBtn = document.getElementById('chatClearBtn');
         this.header = document.getElementById('chatPanelHeader');
         this.modelLabel = document.getElementById('chatModelLabel');
         this.aiChatBtn = document.getElementById('aiChatBtn');
@@ -42,8 +44,9 @@ export class ChatPanel {
         this.coderBtn.addEventListener('click', () => this._toggleCoder());
         this.collapseBtn.addEventListener('click', () => this._toggleExpand());
         this.closeBtn.addEventListener('click', () => this.hide());
+        this.clearBtn.addEventListener('click', () => this._clearChat());
         this.panel.addEventListener('click', (e) => {
-            if (!this.isExpanded && !e.target.closest('.send-btn, .chat-coder-btn, .chat-collapse-btn, .chat-close-btn')) {
+            if (!this.isExpanded && !e.target.closest('.send-btn, .chat-coder-btn, .chat-collapse-btn, .chat-close-btn, #chatClearBtn')) {
                 this.expand();
             }
         });
@@ -125,6 +128,21 @@ export class ChatPanel {
         this.panel.classList.remove('expanded');
         this.messagesEl.style.maxHeight = '0';
         this.header.hidden = true;
+    }
+
+    async _clearChat() {
+        const confirmed = this.modals
+            ? await this.modals.showConfirm('Clear all chat messages and history for this project?')
+            : confirm('Clear all chat messages and history for this project?');
+        if (!confirmed) return;
+
+        this.model.messages = [];
+        this.clearMessages();
+        try {
+            await fetch(`${API_BASE}/analysis/history/chat/clear`, { method: 'POST' });
+        } catch (e) {
+            console.warn('Failed to clear history:', e);
+        }
     }
 
     _toggleCoder() {

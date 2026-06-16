@@ -52,7 +52,7 @@ class App {
         
         // AI компоненты
         this.aiSettings = new AISettings();
-        this.chatPanel = new ChatPanel();
+        this.chatPanel = new ChatPanel(this.ui.modals);
         this.reports = new ReportsPanel();
         this.chain = new ChainPanel();
         this.chain.init();

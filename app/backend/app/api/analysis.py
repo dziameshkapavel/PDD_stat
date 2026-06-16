@@ -661,6 +661,26 @@ async def save_chat(req: dict):
     return {"status": "saved"}
 
 
+@router.post("/history/chat/clear")
+async def clear_chat_history():
+    """Удалить все AI-диалоги из истории проекта"""
+    loader = get_loader()
+    history_path = loader.project_path / "state" / "analysis_history.json"
+
+    if not history_path.exists():
+        return {"status": "cleared"}
+
+    with open(history_path, encoding='utf-8') as f:
+        history = json.load(f)
+
+    history = [r for r in history if r.get('template') != 'ai_chat']
+
+    with open(history_path, 'w', encoding='utf-8') as f:
+        json.dump(history, f, indent=2, ensure_ascii=False, default=str)
+
+    return {"status": "cleared"}
+
+
 class DocxReportRequest(BaseModel):
     title: str = "PDD_STAT Analysis Report"
     analyses: str = "all"
