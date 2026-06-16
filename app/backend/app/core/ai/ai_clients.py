@@ -2,12 +2,15 @@
 AI Clients for Ollama (local) and Groq (cloud)
 """
 import json
+import os
 import re
 import traceback
 from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
+
+OLLAMA_TIMEOUT = float(os.environ.get('OLLAMA_TIMEOUT', '600'))
 
 
 def _safe_str(obj) -> str:
@@ -64,7 +67,7 @@ class OllamaClient:
             }
             if tools:
                 body["tools"] = tools
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
                 response = await client.post(f"{self.base_url}/api/chat", json=body)
                 if response.status_code == 200:
                     data = response.json()
@@ -91,7 +94,7 @@ class OllamaClient:
     ) -> AsyncGenerator[str, None]:
         """Потоковая отправка сообщений"""
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client, client.stream(
+            async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client, client.stream(
                 'POST',
                 f"{self.base_url}/api/chat",
                 json={
