@@ -60,11 +60,11 @@ NUM_PATTERNS = {
     "or": re.compile(r"(?:OR|odds\s*ratio)\s*[=:≈]?\s*([0-9]+[.][0-9]+)", re.IGNORECASE),
     "beta": re.compile(r"[ββ]\s*[=:≈]?\s*(-?[0-9]+[.][0-9]+)", re.IGNORECASE),
     "p_value": re.compile(
-        r"(?:p|p-value|p\s*value)\s*[=:≈<>]?\s*([0-9]+[.]?[0-9]*(?:e[+-]?[0-9]+)?)",
+        r"(?:p|p-value|p\s*value|p-значение)\s*[=:≈<>]?\s*([0-9]+[.]?[0-9]*(?:e[+-]?[0-9]+)?)",
         re.IGNORECASE,
     ),
     "c_index": re.compile(r"(?:c-index|C-index|concordance|C-индекс)[^0-9]*?([0-9]+[.][0-9]+)", re.IGNORECASE),
-    "auc": re.compile(r"(?:AUC|auc)\s*[=:≈]?\s*([0-9]+[.][0-9]+)", re.IGNORECASE),
+    "auc": re.compile(r"(?:AUC|auc)\s*(?:\([^)]*\))?\s*[=:≈]?\s*([0-9]+[.][0-9]+)", re.IGNORECASE),
     "percentage": re.compile(r"(?<!\d)([0-9]+[.]?[0-9]*)\s*%(?!\s*(?:CI|confidence|ДИ|доверит))"),
     "ci": re.compile(
         r"(?:95%\s*(?:CI|confidence\s*interval)\s*[=:≈]?\s*)?"
