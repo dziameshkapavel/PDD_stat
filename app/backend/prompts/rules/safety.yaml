@@ -24,6 +24,12 @@ rules:
       - Every confidence interval must come from the results
       - If you cannot find the exact number, state: "Data not available"
 
+      P-VALUE FORMATTING:
+      - Never output p-values in scientific notation (e.g., "3.44e-17" or "×10⁻¹⁷")
+      - If p < 0.0001, write "p<0.0001"
+      - If 0.0001 ≤ p < 0.001, write "p<0.001"
+      - Otherwise, use the exact value as shown in the results
+
   - id: confidence_intervals
     priority: high
     instruction: |

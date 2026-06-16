@@ -173,6 +173,29 @@ RULES (follow strictly):
 
     _renderMarkdown(text) {
         let html = text;
+
+        // 1. Tables — before HTML escaping so <table> tags survive
+        html = html.replace(
+            /^\|(.+)\|\n\|([-:| ]+)\|\n((?:\|.+\|\n?)*)/gm,
+            (match, headerRow, sepRow, bodyRows) => {
+                const headers = headerRow.split('|').map(h => h.trim()).filter(h => h);
+                const lines = bodyRows.trim().split('\n');
+                let table = '<table style="border-collapse:collapse;width:100%;margin:8px 0;font-size:13px;">';
+                table += '<thead><tr>' + headers.map(h =>
+                    `<th style="border:1px solid var(--border-primary);padding:6px 8px;text-align:left;background:var(--bg-tertiary);">${h}</th>`
+                ).join('') + '</tr></thead><tbody>';
+                for (const line of lines) {
+                    const cells = line.split('|').map(c => c.trim());
+                    const rowCells = cells.filter((_, i) => i > 0 && i < cells.length - 1);
+                    table += '<tr>' + headers.map((_, i) =>
+                        `<td style="border:1px solid var(--border-primary);padding:4px 8px;">${rowCells[i] || ''}</td>`
+                    ).join('') + '</tr>';
+                }
+                table += '</tbody></table>';
+                return table;
+            }
+        );
+
         html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         html = html.replace(/```(\w*)\n([\s\S]*?)```/g,
             '<pre style="background:var(--bg-tertiary);padding:12px;border-radius:6px;overflow-x:auto;font-size:12px;"><code>$2</code></pre>');

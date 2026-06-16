@@ -391,6 +391,23 @@ async def pubmed_suggest(req: PubMedSuggestRequest):
     }
 
 
+def _normalize_pvalues(text: str) -> str:
+    """Replace scientific notation p-values with <0.0001 format."""
+    # Pattern: p=3.44e-17, p = 1.23e-05, p=1e-10, p≈3.44e-17, etc.
+    text = re.sub(
+        r'(\bp\s*[=:≈<>]?\s*)\d+(?:\.\d+)?e[+-]?\d+',
+        r'\1<0.0001',
+        text,
+    )
+    # Also catch "p = 3.44 × 10⁻¹⁷" style
+    text = re.sub(
+        r'(\bp\s*[=:≈]\s*)\d+[.]\d+\s*[×x]\s*10[⁻⁺^]?[⁰¹²³⁴⁵⁶⁷⁸⁹+-]?\d+',
+        r'\1<0.0001',
+        text,
+    )
+    return text
+
+
 @router.post("/chat")
 async def chat(req: ChatRequest):
     loader = get_loader()
@@ -444,6 +461,7 @@ async def chat(req: ChatRequest):
         final_content = result.get("content", "")
         if not final_content:
             final_content = "I'm ready to help with your analysis."
+        final_content = _normalize_pvalues(final_content)
         result["content"] = final_content
 
     except Exception as e:
@@ -479,7 +497,7 @@ async def chat(req: ChatRequest):
                     model=model, messages=corr_sanitized,
                     temperature=0.1, max_tokens=max_tokens
                 )
-                return corr_result.get("content", "")
+                return _normalize_pvalues(corr_result.get("content", ""))
 
             pubmed_articles = project_context.get('pubmed_articles', [])
 

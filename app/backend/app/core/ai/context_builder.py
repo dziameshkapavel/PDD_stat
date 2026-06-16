@@ -166,7 +166,7 @@ class ContextBuilder:
             ("best_auc", "Best AUC: {:.3f}"),
             ("lrt_p", "LRT p: {:.4f}"),
             ("p_value_global", "Global p: {:.4f}"),
-            ("logrank_overall", "Log-rank p: {:.4e}"),
+            # ("logrank_overall" handled below with conditional format)
             ("oob_score", "OOB score: {:.4f}"),
             ("intercept", "Intercept: {:.4f}"),
             ("best_C", "Best C: {:.4f}"),
@@ -189,6 +189,14 @@ class ContextBuilder:
             val = metrics.get(key)
             if val is not None:
                 lines.append(fmt.format(val))
+
+        # Log-rank p-value (conditional: <0.0001 instead of scientific notation)
+        lr_p = metrics.get("logrank_overall")
+        if lr_p is not None:
+            if lr_p < 0.0001:
+                lines.append("Log-rank p: <0.0001")
+            else:
+                lines.append(f"Log-rank p: {lr_p:.4f}")
 
         # Classification metrics
         for key, fmt in [
@@ -396,7 +404,8 @@ class ContextBuilder:
                 pv = pair.get("p_value", 1)
                 sig = pair.get("significant")
                 mark = " *" if sig else ""
-                lines.append(f"Log-rank {g1} vs {g2}: p={pv:.4f}{mark}")
+                pv_str = "<0.0001" if pv < 0.0001 else f"{pv:.4f}"
+                lines.append(f"Log-rank {g1} vs {g2}: p={pv_str}{mark}")
 
         # Model steps (stepwise selection)
         steps = metrics.get("model_steps")
