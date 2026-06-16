@@ -458,12 +458,6 @@ class ResponseValidator:
             else:
                 parts.append(f"📖 Citations: {v_result.citations_matched}/{v_result.citations_checked} verified")
 
-        if v_result.total_decimals > 0:
-            if lang == "ru":
-                parts.append(f"🔢 Все числа: {v_result.decimals_matched}/{v_result.total_decimals} совпадают с источником")
-            else:
-                parts.append(f"🔢 All numbers: {v_result.decimals_matched}/{v_result.total_decimals} match source data")
-
         if parts:
             return response + "\n\n" + "\n".join(parts)
         return response
