@@ -426,10 +426,31 @@ class ResponseValidator:
 
         parts = []
         if v_result.numbers_checked > 0:
-            if lang == "ru":
-                parts.append(f"✅ Проверено: {v_result.numbers_matched}/{v_result.numbers_checked} чисел совпадают с источником")
+            ratio = f"{v_result.numbers_matched}/{v_result.numbers_checked}"
+            if v_result.numbers_matched == v_result.numbers_checked:
+                if lang == "ru":
+                    parts.append(f"✅ Проверено: {ratio} чисел совпадают с источником")
+                else:
+                    parts.append(f"✅ Verified: {ratio} numbers match source data")
             else:
-                parts.append(f"✅ Verified: {v_result.numbers_matched}/{v_result.numbers_checked} numbers match source data")
+                # Extract specific unmatched numbers from errors
+                unmatched = []
+                for err in v_result.errors:
+                    if "Numbers not found in source metrics" in err:
+                        for m in re.finditer(r"([\d.]+)\s*\(([^)]+)\)", err):
+                            val_str, label = m.group(1), m.group(2)
+                            try:
+                                val_str = f"{float(val_str):.3g}"
+                            except ValueError:
+                                pass
+                            unmatched.append(f"{val_str} ({label})")
+                if unmatched:
+                    if lang == "ru":
+                        parts.append(f"✅ Проверено: {ratio} чисел совпадают с источником")
+                        parts.append(f"❌ Не найдены в источнике: {'; '.join(unmatched[:5])}")
+                    else:
+                        parts.append(f"✅ Verified: {ratio} numbers match source data")
+                        parts.append(f"❌ Not found in source: {'; '.join(unmatched[:5])}")
 
         if v_result.citations_checked > 0:
             if lang == "ru":
