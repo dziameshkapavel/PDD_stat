@@ -625,6 +625,10 @@ class ResponseValidator:
         unmatched = []
         matched = 0
         for fn in found_numbers:
+            # Percentages are derived values (e.g., (OR-1)*100), not directly in source
+            if fn.label == "percentage":
+                matched += 1
+                continue
             if self._check_number_in_source(fn.value, source_rounded,
                                             self.TOLERANCE, self.TOLERANCE):
                 matched += 1
