@@ -56,8 +56,8 @@ SIGNIFICANCE_PATTERNS_EN = re.compile(
 
 # Regex patterns to extract numbers with context labels
 NUM_PATTERNS = {
-    "hr": re.compile(r"(?:HR|hazard\s*ratio)\s*[=:≈]?\s*([0-9]+[.][0-9]+)", re.IGNORECASE),
-    "or": re.compile(r"(?:OR|odds\s*ratio)\s*[=:≈]?\s*([0-9]+[.][0-9]+)", re.IGNORECASE),
+    "hr": re.compile(r"(?:HR|hazard\s*ratio)\s*(?:\([^)]*\))?\s*[=:≈]?\s*([0-9]+[.][0-9]+)", re.IGNORECASE),
+    "or": re.compile(r"(?:OR|odds\s*ratio)\s*(?:\([^)]*\))?\s*[=:≈]?\s*([0-9]+[.][0-9]+)", re.IGNORECASE),
     "beta": re.compile(r"[ββ]\s*[=:≈]?\s*(-?[0-9]+[.][0-9]+)", re.IGNORECASE),
     "p_value": re.compile(
         r"(?:p|p-value|p\s*value|p-значение)\s*[=:≈<>]?\s*([0-9]+[.]?[0-9]*(?:e[+-]?[0-9]+)?)",
@@ -72,15 +72,47 @@ NUM_PATTERNS = {
         re.IGNORECASE
     ),
     "mean": re.compile(
-        r"(?:mean|Mean|среднее)\s*(?:[a-zа-яё]+\s+)*?([0-9]+[.][0-9]+)",
+        r"(?:mean|Mean|среднее)\s*[^0-9]*?([0-9]+[.][0-9]+)",
         re.IGNORECASE,
     ),
     "median": re.compile(
-        r"(?:median|Median|медиана)\s*(?:[a-zа-яё]+\s+)*?([0-9]+[.][0-9]+)",
+        r"(?:median|Median|медиана)\s*[^0-9]*?([0-9]+[.][0-9]+)",
         re.IGNORECASE,
     ),
     "std": re.compile(
-        r"(?:std|Std|SD|standard\s*deviation|σ)\s*(?:[a-zа-яё]+\s+)*?([0-9]+[.][0-9]+)",
+        r"(?:std|Std|SD|standard\s*deviation|σ)\s*[^0-9]*?([0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
+    "f_stat": re.compile(
+        r"\bF\s*[=:≈]?\s*([0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
+    "r_stat": re.compile(
+        r"\br\s*[=:≈]?\s*(-?[0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
+    "sensitivity": re.compile(
+        r"(?:sensitivity|Se|чувствительность)\s*[=:≈]?\s*([0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
+    "specificity": re.compile(
+        r"(?:specificity|Sp|специфичность)\s*[=:≈]?\s*([0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
+    "importance": re.compile(
+        r"(?:importance|Importance)\s*[=:≈]?\s*([0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
+    "oob_score": re.compile(
+        r"(?:OOB|oob)\s*(?:score)?\s*[=:≈]?\s*([0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
+    "probability": re.compile(
+        r"(?:probability|Probability|prob)\s*[=:≈]?\s*([0-9]+[.][0-9]+)",
+        re.IGNORECASE,
+    ),
+    "cohens_d": re.compile(
+        r"(?:Cohen's\s*d|d\s+Cohen|cohens\s*d)\s*[=:≈]?\s*(-?[0-9]+[.][0-9]+)",
         re.IGNORECASE,
     ),
     "kappa": re.compile(r"(?:[κκ]\s*[=:≈]?\s*|kappa\s*[=:≈]?\s*|коэффицент\s+каппа\s*[=:≈]?\s*)([0-9]+[.][0-9]+)", re.IGNORECASE),
@@ -481,7 +513,7 @@ class ResponseValidator:
     def parse_numbers(text: str) -> list[FoundNumber]:
         """Извлекает все числа с контекстными метками из текста."""
         found = []
-        seen_values = set()
+        seen_label_values = set()
         seen_keys = set()
 
         for label, pattern in NUM_PATTERNS.items():
@@ -497,8 +529,8 @@ class ResponseValidator:
                         continue
                     rounded = round(value, 2)
                     key = (label, gi, match.group(0))
-                    if rounded not in seen_values and key not in seen_keys:
-                        seen_values.add(rounded)
+                    if (label, rounded) not in seen_label_values and key not in seen_keys:
+                        seen_label_values.add((label, rounded))
                         seen_keys.add(key)
                         found.append(FoundNumber(value=value, label=label, raw=match.group(0)))
 

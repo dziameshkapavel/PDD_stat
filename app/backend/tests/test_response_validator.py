@@ -407,9 +407,8 @@ def test_validate_systematic_finds_hallucinated_decimal():
                "top_features": [{"importance": 0.42}]}
     result = ResponseValidator().validate(response, metrics)
     assert result.passed is False
-    assert any("unlabeled" in e.lower() for e in result.errors)
-    assert result.total_decimals >= 1
-    assert result.unknown_decimals >= 1
+    # 0.99 is now caught by the "importance" label pattern
+    assert any("hallucination" in e.lower() for e in result.errors)
 
 
 def test_validate_notice_shows_unmatched():
