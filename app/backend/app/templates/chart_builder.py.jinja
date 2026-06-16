@@ -70,14 +70,16 @@ elif chart_type == 'box':
         raise ValueError(f"Column '{x_col}' must be numeric for box plot")
     if group_col and group_col in df_plot.columns:
         order = sorted(df_plot[group_col].dropna().unique())
-        labels = [get_label(group_col, v) for v in order]
+        lbls = [get_label(group_col, v) for v in order]
         data = [df_plot[df_plot[group_col] == v][x_col].dropna().values for v in order]
-        bp = ax.boxplot(data, labels=labels, patch_artist=True)
+        bp = ax.boxplot(data, patch_artist=True)
+        ax.set_xticklabels(lbls)
         colors = plt.cm.Set2(np.linspace(0, 1, len(order)))
         for patch, c in zip(bp['boxes'], colors):
             patch.set_facecolor(c)
     else:
-        ax.boxplot(df_plot[x_col].dropna(), labels=[get_label(x_col)])
+        ax.boxplot(df_plot[x_col].dropna())
+        ax.set_xticklabels([get_label(x_col)])
     ax.set_ylabel(y_lbl or get_label(x_col))
 
 elif chart_type == 'scatter':
