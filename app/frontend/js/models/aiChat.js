@@ -126,10 +126,23 @@ RULES (follow strictly):
 
         let html;
         if (role === 'system') {
-            html = text.replace(/!\[([^\]]*)\]\(\/plots\/([^)]+)\)/g,
-                '<img src="/plots/$2" style="max-width:100%;border-radius:8px;border:1px solid var(--border-primary);margin:8px 0;" />');
+            const imgPl = [];
+            let t = text.replace(/!\[([^\]]*)\]\(\/plots\/([^)]+)\)/g, (m, a, s) => {
+                imgPl.push(`<img src="/plots/${s}" style="max-width:100%;border-radius:8px;border:1px solid var(--border-primary);margin:8px 0;" />`);
+                return `\x00IMG${imgPl.length - 1}\x00`;
+            });
+            html = this._renderMarkdown(t);
+            for (let i = 0; i < imgPl.length; i++) {
+                html = html.replace(`\x00IMG${i}\x00`, imgPl[i]);
+            }
         } else if (this.coderMode && role === 'assistant') {
-            html = `<pre style="background:var(--bg-tertiary);padding:12px;border-radius:6px;overflow-x:auto;font-size:12px;margin:0;"><code>${this._escapeHtml(text)}</code></pre>`;
+            const escaped = this._escapeHtml(text);
+            html = `<details style="margin:4px 0;">
+<summary style="cursor:pointer;font-size:12px;padding:6px 10px;border:1px solid var(--border-primary);border-radius:6px;background:var(--bg-tertiary);color:var(--text-secondary);user-select:none;">
+📄 Python код
+</summary>
+<pre style="background:var(--bg-tertiary);padding:12px;border-radius:0 0 6px 6px;overflow-x:auto;font-size:12px;margin:0;border:1px solid var(--border-primary);border-top:none;"><code>${escaped}</code></pre>
+</details>`;
         } else {
             html = this._renderMarkdown(text);
         }
@@ -195,6 +208,52 @@ RULES (follow strictly):
                 return table;
             }
         );
+
+        // 2. Plain-text tables (crosstab, print(df)) — multi-space aligned
+        const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const lines = html.split('\n');
+        const tblStyle =
+            'border-collapse:collapse;width:100%;margin:8px 0;font-size:13px;';
+        const cellStyle =
+            'border:1px solid var(--border-primary);padding:4px 8px;';
+        const thStyle =
+            cellStyle + 'text-align:left;background:var(--bg-tertiary);';
+        const resultLines = [];
+        let i = 0;
+        while (i < lines.length) {
+            const colCount = lines[i].split(/\s{2,}/).filter(c => c.trim()).length;
+            if (colCount >= 2) {
+                let tblRows = [];
+                let j = i;
+                while (j < lines.length) {
+                    const parts = lines[j].split(/\s{2,}/).map(c => c.trim());
+                    if (parts.length < 2) break;
+                    tblRows.push(parts);
+                    j++;
+                }
+                if (tblRows.length >= 2) {
+                    const base = Math.max(...tblRows.map(r => r.length));
+                    let tbl = `<table style="${tblStyle}">`;
+                    tbl += '<thead><tr>' + tblRows[0].slice(0, base).map(h =>
+                        `<th style="${thStyle}">${esc(h)}</th>`
+                    ).join('') + '</tr></thead><tbody>';
+                    for (let ri = 1; ri < tblRows.length; ri++) {
+                        const cells = tblRows[ri];
+                        tbl += '<tr>' +
+                            Array.from({length: base}, (_, ci) =>
+                                `<td style="${cellStyle}">${esc(cells[ci] || '')}</td>`
+                            ).join('') + '</tr>';
+                    }
+                    tbl += '</tbody></table>';
+                    resultLines.push(tbl);
+                    i = j;
+                    continue;
+                }
+            }
+            resultLines.push(lines[i]);
+            i++;
+        }
+        html = resultLines.join('\n');
 
         html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         html = html.replace(/```(\w*)\n([\s\S]*?)```/g,
