@@ -288,6 +288,7 @@ class ResponseValidator:
     @staticmethod
     def _extract_all_decimals(text: str) -> list[float]:
         """Извлекает ВСЕ десятичные числа (вида 0.73, 14.2) из текста, игнорируя PMID."""
+        text = ResponseValidator._normalize_russian_decimals(text)
         pattern = re.compile(r'(?<!\d)(\d+\.\d+)(?!\d)')
         result = []
         seen = set()
@@ -516,8 +517,18 @@ class ResponseValidator:
         return result
 
     @staticmethod
+    def _normalize_russian_decimals(text: str) -> str:
+        """Заменяет запятую-десятичный разделитель (русский формат) на точку.
+
+        Например: '2,761' → '2.761', '0,05' → '0.05'.
+        Не затрагивает запятые с пробелом после (списки: '1, 2, 3').
+        """
+        return re.sub(r'(?<=\d),(?=\d)', '.', text)
+
+    @staticmethod
     def parse_numbers(text: str) -> list[FoundNumber]:
         """Извлекает все числа с контекстными метками из текста."""
+        text = ResponseValidator._normalize_russian_decimals(text)
         found = []
         seen_label_values = set()
         seen_keys = set()
@@ -545,6 +556,7 @@ class ResponseValidator:
     @staticmethod
     def _check_ci_completeness(text: str) -> list[str]:
         """Проверяет, что при упоминании HR/OR указан 95% CI."""
+        text = ResponseValidator._normalize_russian_decimals(text)
         errors = []
         mentions = re.findall(
             r"\b(HR|hazard\s*ratio|OR|odds\s*ratio|ОР|ОШ|отношение\s+рисков|отношение\s+шансов)\b",
@@ -595,6 +607,7 @@ class ResponseValidator:
         - Проверяет цитаты PubMed (если передан pubmed_articles)
         """
         errors = []
+        response = self._normalize_russian_decimals(response)
 
         # 0. Filter hallucinated C-index CI before validation
         response = self._filter_hallucinated_ci(response, metrics)
