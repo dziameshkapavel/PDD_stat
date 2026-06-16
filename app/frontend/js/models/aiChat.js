@@ -69,30 +69,51 @@ RULES (follow strictly):
         this.messages.push({ role: 'user', content: text });
 
         this.chatPanel.expand();
-        const typingDiv = this.chatPanel.addTypingIndicator();
 
+        const model = this._getModel();
+
+        const fullMessages = [];
+        if (this.coderMode) {
+            fullMessages.push({ role: 'system', content: this._getSystemPrompt() });
+        }
+        fullMessages.push(...this.messages.slice(-20));
+
+        const body = {
+            messages: fullMessages,
+            model,
+            temperature: this._getTemperature(),
+            max_tokens: this._getMaxTokens(),
+            coder_mode: this.coderMode,
+        };
+
+        // Try streaming first
+        let streamed = false;
         try {
-            const model = this._getModel();
-
-            const fullMessages = [];
-            if (this.coderMode) {
-                fullMessages.push({ role: 'system', content: this._getSystemPrompt() });
-            }
-            fullMessages.push(...this.messages.slice(-20));
-
-            const response = await fetch(`${API_BASE}/ai/chat`, {
+            const resp = await fetch(`${API_BASE}/ai/chat/stream`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    messages: fullMessages,
-                    model,
-                    temperature: this._getTemperature(),
-                    max_tokens: this._getMaxTokens(),
-                    coder_mode: this.coderMode
-                })
+                body: JSON.stringify(body),
             });
 
-            const result = await response.json();
+            if (resp.ok) {
+                streamed = true;
+                await this._readStream(resp);
+                return;
+            }
+        } catch {
+            // Fall through to non-streaming
+        }
+
+        // Fallback: non-streaming
+        const typingDiv = this.chatPanel.addTypingIndicator();
+        try {
+            const resp = await fetch(`${API_BASE}/ai/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+
+            const result = await resp.json();
             this.chatPanel.removeTypingIndicator(typingDiv);
 
             if (result.success) {
@@ -100,13 +121,7 @@ RULES (follow strictly):
                 this.messages.push({ role: 'assistant', content: result.content });
 
                 if (this.coderMode) {
-                    const pythonBlocks = result.content.match(/```python\n([\s\S]*?)```/g) || [];
-                    for (const block of pythonBlocks) {
-                        const code = block.replace(/```python\n?/, '').replace(/```/, '').trim();
-                        if (code) {
-                            await this._executeCode(code);
-                        }
-                    }
+                    await this._runCoderBlocks(result.content);
                 }
             } else {
                 const errMsg = result.error || 'Unknown error';
@@ -118,6 +133,100 @@ RULES (follow strictly):
         }
 
         this.saveDialog();
+    }
+
+    async _readStream(resp) {
+        const msgEl = this.chatPanel.createStreamMessage('assistant');
+        let fullContent = '';
+        let finalized = false;
+        let gotDone = false;
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        const processEvent = (part) => {
+            if (!part.startsWith('data: ')) return;
+            let data;
+            try {
+                data = JSON.parse(part.slice(6));
+            } catch {
+                return;
+            }
+
+            switch (data.type) {
+                case 'token':
+                    fullContent += data.content;
+                    this.chatPanel.appendStreamToken(msgEl, data.content);
+                    break;
+
+                case 'correction':
+                    fullContent = data.content;
+                    this.chatPanel.finalizeStreamMessage(msgEl, this._renderMarkdown(fullContent));
+                    finalized = true;
+                    const notice = document.createElement('div');
+                    notice.style.cssText = 'font-size:11px;color:var(--accent-red);margin-top:4px;';
+                    notice.textContent = '⚠️ Ответ содержал неточности в числах — автоматически исправлен';
+                    msgEl.querySelector('.chat-bubble').after(notice);
+                    break;
+
+                case 'done':
+                    gotDone = true;
+                    if (!finalized) {
+                        this.chatPanel.finalizeStreamMessage(msgEl, this._renderMarkdown(fullContent));
+                        finalized = true;
+                    }
+                    this.messages.push({ role: 'assistant', content: fullContent });
+                    if (this.coderMode) {
+                        this._runCoderBlocks(fullContent);
+                    }
+                    this.saveDialog();
+                    break;
+
+                case 'error':
+                    const bubble = msgEl.querySelector('.chat-bubble');
+                    bubble.textContent = '';
+                    bubble.innerHTML = `<span style="color:var(--accent-red);">Error: ${this._escapeHtml(data.content)}</span>`;
+                    finalized = true;
+                    break;
+            }
+        };
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buf += decoder.decode(value, { stream: true });
+            const parts = buf.split('\n\n');
+            buf = parts.pop() || '';
+
+            for (const part of parts) {
+                processEvent(part);
+            }
+        }
+
+        // Flush remaining buffer
+        if (buf.trim()) processEvent(buf.trim());
+
+        // If connection closed without a done event, finalize anyway
+        if (!gotDone && fullContent) {
+            this.chatPanel.finalizeStreamMessage(msgEl, this._renderMarkdown(fullContent));
+            this.messages.push({ role: 'assistant', content: fullContent });
+            if (this.coderMode) {
+                this._runCoderBlocks(fullContent);
+            }
+            this.saveDialog();
+        }
+    }
+
+    async _runCoderBlocks(content) {
+        const pythonBlocks = content.match(/```python\n([\s\S]*?)```/g) || [];
+        for (const block of pythonBlocks) {
+            const code = block.replace(/```python\n?/, '').replace(/```/, '').trim();
+            if (code) {
+                await this._executeCode(code);
+            }
+        }
     }
 
     addMessage(role, text) {

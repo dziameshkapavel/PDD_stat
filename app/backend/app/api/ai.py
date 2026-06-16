@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.projects import get_loader
@@ -526,6 +527,134 @@ async def chat(req: ChatRequest):
 
     result["role"] = role
     return result
+
+
+@router.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """SSE-стриминг ответа AI"""
+    loader = get_loader()
+    config = load_config(loader)
+    model = (req.model or config.get('last_used_model') or 'llama3:8b').strip()
+    if not model:
+        model = 'llama3:8b'
+    role = "coder" if req.coder_mode else "consultant"
+    temperature = (0.0 if req.coder_mode else
+                  (req.temperature or _prompt_manager.get_temperature(role)))
+    max_tokens = req.max_tokens or _prompt_manager.get_max_tokens(role)
+
+    system_prompt = _prompt_manager.build_system_prompt(role=role)
+
+    project_path = loader.project_path
+    context_builder = ContextBuilder(project_path)
+
+    last_user_msg = ""
+    for m in reversed(req.messages):
+        if m.get("role") == "user":
+            last_user_msg = m.get("content", "")
+            break
+
+    context = context_builder.build_full_context(loader, user_query=last_user_msg)
+    project_context = load_context(loader)
+    if project_context.get('description'):
+        context += f"\n\n## Project\n{project_context['description'][:500]}"
+    if project_context.get('aim'):
+        context += f"\nAim: {project_context['aim'][:300]}"
+    if project_context.get('notes'):
+        context += f"\nNotes: {project_context['notes'][:500]}"
+
+    full_prompt = system_prompt + "\n\n" + context
+
+    full_messages = [{"role": "system", "content": full_prompt}] + req.messages
+    sanitized = []
+    for msg in full_messages:
+        sanitized.append({
+            "role": str(msg.get("role", "user")),
+            "content": str(msg.get("content", ""))
+        })
+
+    user_texts = [m.get("content", "") for m in req.messages if m.get("role") == "user"]
+    response_language = "ru" if any(re.search('[а-яА-ЯёЁ]', t) for t in user_texts) else "en"
+
+    async def event_stream():
+        try:
+            client = ai_clients.AIClientFactory.create(config)
+            buffer = ""
+            async for token in client.chat_stream(
+                model=model, messages=sanitized,
+                temperature=temperature, max_tokens=max_tokens
+            ):
+                if token.startswith("Error: "):
+                    yield f"data: {json.dumps({'type': 'error', 'content': token[7:]})}\n\n"
+                    return
+                buffer += token
+                yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+
+            final_content = _normalize_pvalues(buffer) if buffer else "I'm ready to help with your analysis."
+
+            if not req.coder_mode:
+                metrics = context_builder.load_last_analysis_metrics(loader)
+                if metrics:
+                    async def rewrite_fn(correction: str) -> str:
+                        corr_messages = [
+                            {"role": "system", "content": full_prompt},
+                        ]
+                        for msg in req.messages:
+                            corr_messages.append({
+                                "role": msg.get("role", "user"),
+                                "content": msg.get("content", ""),
+                            })
+                        corr_messages.append({
+                            "role": "assistant",
+                            "content": final_content,
+                        })
+                        corr_messages.append({
+                            "role": "user",
+                            "content": correction,
+                        })
+                        corr_sanitized = [{"role": m["role"], "content": str(m["content"])}
+                                          for m in corr_messages]
+                        corr_result = await client.chat(
+                            model=model, messages=corr_sanitized,
+                            temperature=0.1, max_tokens=max_tokens
+                        )
+                        return _normalize_pvalues(corr_result.get("content", ""))
+
+                    pubmed_articles = project_context.get('pubmed_articles', [])
+
+                    validated_text, passed, v_result = await ResponseValidator.auto_retry(
+                        response=final_content,
+                        metrics=metrics,
+                        llm_rewrite_fn=rewrite_fn,
+                        max_retries=2,
+                        response_language=response_language,
+                        pubmed_articles=pubmed_articles,
+                    )
+
+                    validated_text = ResponseValidator.add_validation_notice(
+                        validated_text, v_result
+                    )
+                    if validated_text != final_content:
+                        yield f"data: {json.dumps({'type': 'correction', 'content': validated_text})}\n\n"
+                        final_content = validated_text
+
+                    yield f"data: {json.dumps({
+                        'type': 'done',
+                        'validation_passed': passed,
+                        'numbers_checked': v_result.numbers_checked,
+                        'numbers_matched': v_result.numbers_matched,
+                        'citations_checked': v_result.citations_checked,
+                        'citations_matched': v_result.citations_matched,
+                        'role': role,
+                    })}\n\n"
+                    return
+
+            yield f"data: {json.dumps({'type': 'done', 'validation_passed': True, 'role': role})}\n\n"
+
+        except Exception as e:
+            tb = traceback.format_exc()
+            yield f"data: {json.dumps({'type': 'error', 'content': f'{str(e)}\\n{tb}'})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # ========== Pipeline Wizard ==========
