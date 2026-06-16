@@ -26,7 +26,7 @@ export class VariablesPanel {
         const activeField = this.state.getActiveField();
         console.log('=== VariablesPanel render ===');
         console.log('activeField:', activeField);
-        console.log('filtered vars count:', filtered.length);
+        console.log('vars count:', variables.length);
         
         let selectedVars = { target: null, time: null, covariates: new Set(), event: null, group: null, stratify: null };
         
@@ -34,7 +34,7 @@ export class VariablesPanel {
             selectedVars = this.state.getCardVariables(activeField.card.id);
         }
         
-        this.container.innerHTML = filtered.map(v => {
+        this.container.innerHTML = variables.map(v => {
             let cls = 'variable-item';
             if (selectedVars.target === v.name) cls += ' target-selected';
             if (selectedVars.time === v.name) cls += ' time-selected';
