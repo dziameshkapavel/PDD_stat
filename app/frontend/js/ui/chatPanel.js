@@ -156,7 +156,8 @@ export class ChatPanel {
         if (!this.modelLabel) return;
         const prefix = this.model.coderMode ? 'AI Coder' : 'AI Assistant';
         const model = (this.model.config && this.model.config.last_used_model) || 'llama3:8b';
-        const provider = (this.model.config && this.model.config.provider === 'ollama') ? 'local' : 'cloud';
+        const p = this.model.config && this.model.config.provider;
+        const provider = p === 'ollama' ? 'local' : p === 'gemini' ? 'gemini' : 'cloud';
         this.modelLabel.textContent = `${prefix} ${model} (${provider})`;
     }
 

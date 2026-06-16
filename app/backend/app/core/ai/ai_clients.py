@@ -232,6 +232,129 @@ class GroqClient:
             yield f"Error: {_safe_str(e)}"
 
 
+class GeminiClient:
+    """Клиент для Google Gemini API"""
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key.encode('ascii', errors='ignore').decode('ascii').strip()
+        self.base_url = "https://generativelanguage.googleapis.com/v1beta"
+
+    async def test_connection(self) -> dict[str, Any]:
+        """Проверка соединения и получение списка моделей"""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{self.base_url}/models",
+                    params={"key": self.api_key}
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    models = [
+                        m['name'].replace('models/', '')
+                        for m in data.get('models', [])
+                        if m['name'].startswith('models/gemini')
+                    ]
+                    return {
+                        "status": "connected",
+                        "models": models,
+                        "count": len(models)
+                    }
+                return {"status": "error", "message": f"HTTP {response.status_code}: {response.text}"}
+        except Exception as e:
+            return {"status": "error", "message": _safe_str(e)}
+
+    def _build_gemini_body(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+    ) -> dict[str, Any]:
+        """Конвертирует OpenAI-формат сообщений в формат Gemini."""
+        system_prompt = ""
+        contents = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_prompt = msg["content"]
+            elif msg["role"] == "user":
+                contents.append({"role": "user", "parts": [{"text": msg["content"]}]})
+            elif msg["role"] == "assistant":
+                contents.append({"role": "model", "parts": [{"text": msg["content"]}]})
+
+        body = {
+            "contents": contents,
+            "generationConfig": {
+                "temperature": temperature,
+                "maxOutputTokens": max_tokens,
+            }
+        }
+        if system_prompt:
+            body["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+        return body
+
+    async def chat(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        tools: list[dict] | None = None
+    ) -> dict[str, Any]:
+        """Отправка сообщения в Gemini"""
+        try:
+            body = self._build_gemini_body(messages, temperature, max_tokens)
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/models/{model}:generateContent",
+                    params={"key": self.api_key},
+                    json=body
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    candidate = data.get('candidates', [{}])[0]
+                    parts = candidate.get('content', {}).get('parts', [])
+                    content = "".join(p.get('text', '') for p in parts if 'text' in p)
+                    finish_reason = candidate.get('finishReason')
+                    return {
+                        "success": True,
+                        "content": content,
+                        "finish_reason": finish_reason,
+                        "model": model,
+                        "usage": data.get('usageMetadata', {})
+                    }
+                return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
+        except Exception as e:
+            return {"success": False, "error": _safe_str(f"{str(e)}\n{traceback.format_exc()}")}
+
+    async def chat_stream(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 2000
+    ) -> AsyncGenerator[str, None]:
+        """Потоковая отправка сообщений в Gemini"""
+        try:
+            body = self._build_gemini_body(messages, temperature, max_tokens)
+            async with httpx.AsyncClient(timeout=120.0) as client, client.stream(
+                'POST',
+                f"{self.base_url}/models/{model}:streamGenerateContent",
+                params={"key": self.api_key, "alt": "sse"},
+                json=body
+            ) as response:
+                async for line in response.aiter_lines():
+                    if line.startswith('data: ') and line != 'data: [DONE]':
+                        try:
+                            data = json.loads(line[6:])
+                            candidate = data.get('candidates', [{}])[0]
+                            for part in candidate.get('content', {}).get('parts', []):
+                                if 'text' in part:
+                                    yield part['text']
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            yield f"Error: {_safe_str(e)}"
+
+
 class AIClientFactory:
     """Фабрика AI-клиентов"""
 
@@ -250,6 +373,11 @@ class AIClientFactory:
             return GroqClient(
                 api_key=groq_config.get('api_key', '')
             )
+        elif provider == 'gemini':
+            gemini_config = config.get('gemini', {})
+            return GeminiClient(
+                api_key=gemini_config.get('api_key', '')
+            )
         else:
             raise ValueError(f"Unknown provider: {provider}")
 
@@ -267,6 +395,12 @@ class AIClientFactory:
             "groq": {
                 "api_key": "",
                 "default_model": "llama-3.3-70b-versatile",
+                "temperature": 0.7,
+                "max_tokens": 2000
+            },
+            "gemini": {
+                "api_key": "",
+                "default_model": "gemini-2.0-flash",
                 "temperature": 0.7,
                 "max_tokens": 2000
             },

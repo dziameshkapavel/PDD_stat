@@ -36,6 +36,8 @@ class ConfigRequest(BaseModel):
     ollama_model: str | None = "llama3:8b"
     groq_api_key: str | None = ""
     groq_model: str | None = "llama-3.3-70b-versatile"
+    gemini_api_key: str | None = ""
+    gemini_model: str | None = "gemini-2.0-flash"
     pubmed_api_key: str | None = ""
     pubmed_email: str | None = "app@pdd-stat.local"
     temperature: float | None = 0.7
@@ -129,6 +131,8 @@ async def get_config():
     config = load_config(loader)
     if 'groq' in config and 'api_key' in config['groq'] and config['groq']['api_key']:
         config['groq']['api_key'] = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'
+    if 'gemini' in config and 'api_key' in config['gemini'] and config['gemini']['api_key']:
+        config['gemini']['api_key'] = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'
     if config.get('pubmed'):
         config['pubmed']['api_key'] = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' if config['pubmed'].get('api_key') else ''
     return {"config": config}
@@ -152,6 +156,14 @@ async def save_config(req: ConfigRequest):
         'default_model': req.groq_model,
         'temperature': req.temperature or 0.7, 'max_tokens': req.max_tokens or 2000
     }
+    new_gemini_key = req.gemini_api_key
+    if not new_gemini_key or new_gemini_key == MASKED_PLACEHOLDER:
+        new_gemini_key = config.get('gemini', {}).get('api_key', '')
+    config['gemini'] = {
+        'api_key': new_gemini_key,
+        'default_model': req.gemini_model,
+        'temperature': req.temperature or 0.7, 'max_tokens': req.max_tokens or 2000
+    }
     new_pubmed_key = req.pubmed_api_key
     if not new_pubmed_key or new_pubmed_key == MASKED_PLACEHOLDER:
         new_pubmed_key = config.get('pubmed', {}).get('api_key', '')
@@ -161,7 +173,12 @@ async def save_config(req: ConfigRequest):
     }
     config['temperature'] = req.temperature or 0.7
     config['max_tokens'] = req.max_tokens or 2000
-    config['last_used_model'] = req.ollama_model if req.provider == 'ollama' else req.groq_model
+    if req.provider == 'ollama':
+        config['last_used_model'] = req.ollama_model
+    elif req.provider == 'groq':
+        config['last_used_model'] = req.groq_model
+    elif req.provider == 'gemini':
+        config['last_used_model'] = req.gemini_model
     if req.system_prompt:
         config['system_prompt'] = req.system_prompt
     config_path = get_config_path(loader)
@@ -185,6 +202,10 @@ async def test_connection(req: dict):
         if 'groq' not in test_config:
             test_config['groq'] = {}
         test_config['groq']['api_key'] = req['groq_api_key']
+    if test_provider == 'gemini' and 'gemini_api_key' in req and req['gemini_api_key']:
+        if 'gemini' not in test_config:
+            test_config['gemini'] = {}
+        test_config['gemini']['api_key'] = req['gemini_api_key']
     if test_provider == 'pubmed':
         pubmed_cfg = test_config.get('pubmed', {})
         pubmed_key = req.get('pubmed_api_key', pubmed_cfg.get('api_key', ''))

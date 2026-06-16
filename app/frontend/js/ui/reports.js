@@ -265,6 +265,9 @@ export class ReportsPanel {
             if (provider === 'groq' && (!cfg.groq || !cfg.groq.api_key)) {
                 throw new Error('AI not configured. Configure AI in Chat Settings (Groq API key missing).');
             }
+            if (provider === 'gemini' && (!cfg.gemini || !cfg.gemini.api_key)) {
+                throw new Error('AI not configured. Configure AI in Chat Settings (Gemini API key missing).');
+            }
             if (provider === 'ollama' && (!cfg.ollama || !cfg.ollama.url)) {
                 throw new Error('AI not configured. Configure AI in Chat Settings (Ollama URL missing).');
             }
@@ -340,6 +343,9 @@ export class ReportsPanel {
             const provider = cfg.provider || '';
             if (provider === 'groq' && (!cfg.groq || !cfg.groq.api_key)) {
                 throw new Error('AI not configured. Configure AI in Chat Settings (Groq API key missing).');
+            }
+            if (provider === 'gemini' && (!cfg.gemini || !cfg.gemini.api_key)) {
+                throw new Error('AI not configured. Configure AI in Chat Settings (Gemini API key missing).');
             }
             if (provider === 'ollama' && (!cfg.ollama || !cfg.ollama.url)) {
                 throw new Error('AI not configured. Configure AI in Chat Settings (Ollama URL missing).');

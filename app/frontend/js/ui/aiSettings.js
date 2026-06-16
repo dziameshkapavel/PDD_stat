@@ -26,6 +26,7 @@ export class AISettings {
             provider: 'ollama',
             ollama: { url: 'http://localhost:11434', default_model: 'llama3:8b', temperature: 0.7, max_tokens: 2000 },
             groq: { api_key: '', default_model: 'llama3-70b-8192', temperature: 0.7, max_tokens: 2000 },
+            gemini: { api_key: '', default_model: 'gemini-2.0-flash', temperature: 0.7, max_tokens: 2000 },
             pubmed: { api_key: '', email: 'app@pdd-stat.local' },
             system_prompt: 'You are PDD_STAT Assistant...',
             temperature: 0.7,
@@ -53,6 +54,7 @@ export class AISettings {
         const c = this.config;
         const isOllama = c.provider === 'ollama';
         const isGroq = c.provider === 'groq';
+        const isGemini = c.provider === 'gemini';
         
         return `
             <div class="modal-content" style="max-width:600px;">
@@ -69,6 +71,9 @@ export class AISettings {
                             </button>
                             <button class="btn-secondary provider-btn ${isGroq ? 'active' : ''}" data-provider="groq">
                                 Groq (Cloud)
+                            </button>
+                            <button class="btn-secondary provider-btn ${isGemini ? 'active' : ''}" data-provider="gemini">
+                                Gemini (Google)
                             </button>
                         </div>
                     </div>
@@ -121,6 +126,29 @@ export class AISettings {
                             <label class="form-label">Default Model</label>
                             <select class="form-input" id="groqModel" style="width:100%;">
                                 <option value="${c.groq.default_model}">${c.groq.default_model}</option>
+                            </select>
+                            <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">
+                                Click "Test Connection" to load all available models
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="geminiSettings" style="display:${isGemini ? 'block' : 'none'};">
+                        <div class="form-group">
+                            <label class="form-label">API Key</label>
+                            <input type="password" class="form-input" id="geminiApiKey" 
+                                   value="${(c.gemini && c.gemini.api_key) || ''}" 
+                                   placeholder="AIza..." style="width:100%;">
+                        </div>
+                        <div class="form-group">
+                            <button class="btn-secondary" id="testGeminiBtn">Test Connection & Load Models</button>
+                            <button class="btn-secondary" id="connectGeminiBtn" style="margin-left:4px;">Connect</button>
+                            <span id="geminiStatus" style="margin-left:8px;font-size:13px;"></span>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Default Model</label>
+                            <select class="form-input" id="geminiModel" style="width:100%;">
+                                <option value="${(c.gemini && c.gemini.default_model) || 'gemini-2.0-flash'}">${(c.gemini && c.gemini.default_model) || 'gemini-2.0-flash'}</option>
                             </select>
                             <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">
                                 Click "Test Connection" to load all available models
@@ -189,16 +217,24 @@ export class AISettings {
         const activeProvider = localStorage.getItem('pddstat_ai_provider');
         const ollamaConnect = this.modal.querySelector('#connectOllamaBtn');
         const groqConnect = this.modal.querySelector('#connectGroqBtn');
+        const geminiConnect = this.modal.querySelector('#connectGeminiBtn');
         
         if (activeProvider === 'ollama') {
             this._setConnected(ollamaConnect, true);
             this._setConnected(groqConnect, false);
+            this._setConnected(geminiConnect, false);
         } else if (activeProvider === 'groq') {
             this._setConnected(groqConnect, true);
             this._setConnected(ollamaConnect, false);
+            this._setConnected(geminiConnect, false);
+        } else if (activeProvider === 'gemini') {
+            this._setConnected(geminiConnect, true);
+            this._setConnected(ollamaConnect, false);
+            this._setConnected(groqConnect, false);
         } else {
             this._setConnected(ollamaConnect, false);
             this._setConnected(groqConnect, false);
+            this._setConnected(geminiConnect, false);
         }
         
         // Connect Ollama
@@ -212,6 +248,7 @@ export class AISettings {
                     localStorage.setItem('pddstat_ai_provider', 'ollama');
                     this._setConnected(ollamaConnect, true);
                     this._setConnected(groqConnect, false);
+                    this._setConnected(geminiConnect, false);
                 }
             });
         }
@@ -227,6 +264,23 @@ export class AISettings {
                     localStorage.setItem('pddstat_ai_provider', 'groq');
                     this._setConnected(groqConnect, true);
                     this._setConnected(ollamaConnect, false);
+                    this._setConnected(geminiConnect, false);
+                }
+            });
+        }
+        
+        // Connect Gemini
+        if (geminiConnect) {
+            geminiConnect.addEventListener('click', () => {
+                const current = localStorage.getItem('pddstat_ai_provider');
+                if (current === 'gemini') {
+                    localStorage.removeItem('pddstat_ai_provider');
+                    this._setConnected(geminiConnect, false);
+                } else {
+                    localStorage.setItem('pddstat_ai_provider', 'gemini');
+                    this._setConnected(geminiConnect, true);
+                    this._setConnected(ollamaConnect, false);
+                    this._setConnected(groqConnect, false);
                 }
             });
         }
@@ -244,6 +298,7 @@ export class AISettings {
                 const provider = btn.dataset.provider;
                 this.modal.querySelector('#ollamaSettings').style.display = provider === 'ollama' ? 'block' : 'none';
                 this.modal.querySelector('#groqSettings').style.display = provider === 'groq' ? 'block' : 'none';
+                this.modal.querySelector('#geminiSettings').style.display = provider === 'gemini' ? 'block' : 'none';
             });
         });
         
@@ -420,6 +475,74 @@ export class AISettings {
             }
         });
         
+        // Test Gemini
+        this.modal.querySelector('#testGeminiBtn').addEventListener('click', async () => {
+            const status = this.modal.querySelector('#geminiStatus');
+            const select = this.modal.querySelector('#geminiModel');
+            status.textContent = 'Testing...';
+            status.style.color = 'var(--text-muted)';
+            
+            try {
+                const apiKey = this.modal.querySelector('#geminiApiKey').value;
+                
+                // Save API key temporarily for test
+                const response = await fetch(`${API_BASE}/ai/config`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        provider: 'gemini',
+                        gemini_api_key: apiKey,
+                        gemini_model: select.value || 'gemini-2.0-flash',
+                        temperature: 0.7,
+                        max_tokens: 2000
+                    })
+                });
+                await response.json();
+                
+                const testResponse = await fetch(`${API_BASE}/ai/test`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        provider: 'gemini',
+                        gemini_api_key: apiKey
+                    })
+                });
+                const result = await testResponse.json();
+                
+                if (result.status === 'connected') {
+                    status.textContent = `Connected — ${result.count} models`;
+                    status.style.color = 'var(--accent-green)';
+                    
+                    localStorage.setItem('pddstat_ai_connected', 'true');
+                    updateHeaderButton(true);
+                    
+                    if (result.models && result.models.length > 0) {
+                        // Sort: prioritize flash then pro
+                        const sorted = [...result.models].sort((a, b) => {
+                            const aIsFlash = a.includes('flash');
+                            const bIsFlash = b.includes('flash');
+                            if (aIsFlash && !bIsFlash) return -1;
+                            if (!aIsFlash && bIsFlash) return 1;
+                            return a.localeCompare(b);
+                        });
+                        select.innerHTML = sorted
+                            .map(m => `<option value="${m}">${m}</option>`)
+                            .join('');
+                    }
+                } else {
+                    status.textContent = `${result.message}`;
+                    status.style.color = 'var(--accent-red)';
+                    updateHeaderButton(false);
+                    localStorage.setItem('pddstat_ai_connected', 'false');
+                }
+            } catch (e) {
+                status.textContent = `${e.message}`;
+                status.style.color = 'var(--accent-red)';
+                updateHeaderButton(false);
+                localStorage.setItem('pddstat_ai_connected', 'false');
+            }
+        });
+        
         // Reset prompt
         this.modal.querySelector('#resetPromptBtn').addEventListener('click', () => {
             const defaultPrompt = 'You are PDD_STAT Assistant, a biostatistics AI for clinical researchers. You have access to the dataset and analysis history. Be concise, cite specific numbers, and explain statistical concepts clearly.';
@@ -439,6 +562,8 @@ export class AISettings {
             ollama_model: this.modal.querySelector('#ollamaModel').value,
             groq_api_key: this.modal.querySelector('#groqApiKey').value,
             groq_model: this.modal.querySelector('#groqModel').value,
+            gemini_api_key: this.modal.querySelector('#geminiApiKey').value,
+            gemini_model: this.modal.querySelector('#geminiModel').value,
             pubmed_api_key: this.modal.querySelector('#pubmedApiKey').value,
             pubmed_email: 'app@pdd-stat.local',
             temperature: parseFloat(this.modal.querySelector('#temperature').value),

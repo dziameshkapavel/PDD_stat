@@ -950,6 +950,10 @@ async def generate_ai_report(req: AIReportRequest):
         groq_cfg = ai_config.get('groq', {})
         if not groq_cfg.get('api_key'):
             raise HTTPException(status_code=400, detail="AI not configured. Groq API key missing.")
+    if provider == 'gemini':
+        gemini_cfg = ai_config.get('gemini', {})
+        if not gemini_cfg.get('api_key'):
+            raise HTTPException(status_code=400, detail="AI not configured. Gemini API key missing.")
     if provider == 'ollama':
         ollama_cfg = ai_config.get('ollama', {})
         if not ollama_cfg.get('url'):
@@ -1186,6 +1190,10 @@ async def generate_article_draft(req: ArticleDraftRequest):
         groq_cfg = ai_config.get('groq', {})
         if not groq_cfg.get('api_key'):
             raise HTTPException(status_code=400, detail="AI not configured. Groq API key missing.")
+    if provider == 'gemini':
+        gemini_cfg = ai_config.get('gemini', {})
+        if not gemini_cfg.get('api_key'):
+            raise HTTPException(status_code=400, detail="AI not configured. Gemini API key missing.")
     if provider == 'ollama':
         ollama_cfg = ai_config.get('ollama', {})
         if not ollama_cfg.get('url'):
