@@ -434,8 +434,12 @@ def _normalize_pvalues(text: str) -> str:
 
 def _clean_ai_content(text: str) -> str:
     """Strip HTML tags and decode HTML entities from AI responses."""
-    text = html.unescape(text)
-    text = re.sub(r"<[^>]*>", "", text)
+    for _ in range(5):
+        unescaped = html.unescape(text)
+        if unescaped == text:
+            break
+        text = unescaped
+    text = re.sub(r"<[a-zA-Z/][^>]*>", "", text)
     return text
 
 
