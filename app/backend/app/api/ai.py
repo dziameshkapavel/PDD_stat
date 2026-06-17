@@ -434,8 +434,8 @@ def _normalize_pvalues(text: str) -> str:
 
 def _clean_ai_content(text: str) -> str:
     """Strip HTML tags and decode HTML entities from AI responses."""
-    text = re.sub(r"<[^>]*>", "", text)
     text = html.unescape(text)
+    text = re.sub(r"<[^>]*>", "", text)
     return text
 
 
@@ -476,9 +476,11 @@ async def chat(req: ChatRequest):
     full_messages = [{"role": "system", "content": full_prompt}] + req.messages
     sanitized = []
     for msg in full_messages:
+        content = str(msg.get("content", ""))
+        content = _clean_ai_content(content)
         sanitized.append({
             "role": str(msg.get("role", "user")),
-            "content": str(msg.get("content", ""))
+            "content": content
         })
 
     user_texts = [m.get("content", "") for m in req.messages if m.get("role") == "user"]
@@ -512,11 +514,11 @@ async def chat(req: ChatRequest):
                 for msg in req.messages:
                     corr_messages.append({
                         "role": msg.get("role", "user"),
-                        "content": msg.get("content", ""),
+                        "content": _clean_ai_content(str(msg.get("content", ""))),
                     })
                 corr_messages.append({
                     "role": "assistant",
-                    "content": result.get("content", ""),
+                    "content": _clean_ai_content(str(result.get("content", ""))),
                 })
                 corr_messages.append({
                     "role": "user",

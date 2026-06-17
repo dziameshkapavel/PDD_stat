@@ -1276,13 +1276,13 @@ async def generate_article_draft(req: ArticleDraftRequest):
             model=model,
             messages=[
                 {"role": "system", "content": prompt},
-                {"role": "user", "content": correction_msg}
+                {"role": "user", "content": _clean_ai_content(correction_msg)}
             ],
             temperature=temperature,
             max_tokens=max_tokens
         )
         if res.get('success'):
-            return res.get('content', '')
+            return _clean_ai_content(res.get('content', ''))
         raise Exception(res.get('error', 'AI rewrite failed'))
 
     try:
