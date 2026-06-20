@@ -122,8 +122,7 @@ async def run_analysis(req: AnalysisRequest):
     try:
         result = orchestrator.execute_template(req.template, req.params)
     except Exception as e:
-        import traceback
-        return {"success": False, "error": str(e), "traceback": traceback.format_exc(), "output": "", "metrics": {}, "table": []}
+        return {"success": False, "error": f"Analysis failed: {str(e)}", "output": "", "metrics": {}, "table": []}
 
     _save_to_history(loader.project_path, req.template, req.params, result)
 
@@ -1283,7 +1282,7 @@ async def generate_article_draft(req: ArticleDraftRequest):
         )
         if res.get('success'):
             return _clean_ai_content(res.get('content', ''))
-        raise Exception(res.get('error', 'AI rewrite failed'))
+        raise HTTPException(status_code=500, detail=res.get('error', 'AI rewrite failed'))
 
     try:
         initial_res = await client.chat(

@@ -1,5 +1,5 @@
 // js/models/base.js - Базовый класс для всех статистических моделей
-import { API_BASE, APIClient } from '../core/api.js';
+import { API_BASE } from '../core/api.js';
 
 export class BaseModel {
     constructor(state, ui) {

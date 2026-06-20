@@ -1,7 +1,6 @@
 import html
 import json
 import re
-import traceback
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -502,8 +501,7 @@ async def chat(req: ChatRequest):
         result["content"] = final_content
 
     except Exception as e:
-        tb = traceback.format_exc()
-        return {"success": False, "error": f"{str(e)}\n{tb}"}
+        return {"success": False, "error": f"Error: {ai_clients._safe_str(str(e))}"}
 
     if not result.get('success'):
         return result

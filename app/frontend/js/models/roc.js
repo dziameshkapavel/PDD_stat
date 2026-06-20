@@ -1,6 +1,6 @@
 // js/models/roc.js - ROC Analysis Model
 import { BaseModel } from './base.js';
-import { API_BASE, APIClient } from '../core/api.js';
+import { API_BASE } from '../core/api.js';
 
 export class ROCModel extends BaseModel {
     constructor(state, ui) {

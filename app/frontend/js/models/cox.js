@@ -1,6 +1,6 @@
 // js/models/cox.js - Cox Regression Model
 import { BaseModel } from './base.js';
-import { API_BASE, APIClient } from '../core/api.js';
+import { API_BASE } from '../core/api.js';
 
 export class CoxModel extends BaseModel {
     constructor(state, ui) {
