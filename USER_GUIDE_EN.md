@@ -42,12 +42,13 @@
 6. [AI Chat](#6-ai-chat)
    - 6.1. AI Settings
    - 6.2. Modes: Assistant and Coder
-7. [Reports](#7-reports)
-   - 7.1. Standard DOCX Report
-   - 7.2. AI Report
-8. [Code Editor Mode](#8-code-editor-mode)
-9. [Analysis History (Chain)](#9-analysis-history-chain)
-10. [Tips & Best Practices](#10-tips--best-practices)
+ 7. [Reports](#7-reports)
+    - 7.1. Standard DOCX Report
+    - 7.2. AI Report
+    - 7.3. AI Article Draft
+ 8. [Code Editor Mode](#8-code-editor-mode)
+ 9. [Analysis History (Chain)](#9-analysis-history-chain)
+ 10. [Tips & Best Practices](#10-tips--best-practices)
 
 ---
 
@@ -56,7 +57,7 @@
 **PDD_STAT** is a web application for statistical analysis of medical and clinical data. The system provides:
 
 - **22 analysis templates** (from descriptive statistics to regression models and survival analysis)
-- **AI assistant** powered by Ollama (local) or Groq (cloud API)
+- **AI assistant** powered by Ollama (local), Groq (cloud API), or Gemini (Google API)
 - **DOCX report generation** (standard and AI-generated)
 - **Code editor** for custom Python analysis
 - **Visualizations**: matplotlib, SHAP, DCA, calibration curves
@@ -849,11 +850,13 @@ Click **"AI Settings"** (left panel or above AI Chat):
 
 | Parameter | Description |
 |-----------|-------------|
-| **Provider** | `Ollama (Local)` — run models locally. `Groq (Cloud)` — cloud API |
+| **Provider** | `Ollama (Local)` — run models locally. `Groq (Cloud)` — cloud API. `Gemini (Google)` — Google API |
 | **Ollama URL** | Ollama server address (default `http://localhost:11434`) |
 | **Ollama Model** | Model (loaded after "Test Connection") |
 | **Groq API Key** | API key (get at console.groq.com) |
 | **Groq Model** | Model (list loaded after "Test Connection") |
+| **Gemini API Key** | API key (get at aistudio.google.com) |
+| **Gemini Model** | Model (list loaded after "Test Connection") |
 | **Temperature** | Generation temperature: 0 = deterministic, 1 = creative |
 | **Max Tokens** | Maximum response length (100-8000) |
 | **System Prompt** | AI instruction prompt (includes project context, dataset info, **up to 5 most recent analyses** with metrics and output preview) |
@@ -864,13 +867,29 @@ Click **"AI Settings"** (left panel or above AI Chat):
 - **"Reset to default"** — reset system prompt to default
 - **Save / Cancel** — save or discard settings
 
-### 6.2. Modes: Assistant and Coder
+### 6.2. Number Validation & Auto-Correction
+
+AI responses that include numbers (OR, HR, p-values, AUC, etc.) are automatically validated:
+
+| Feature | Description |
+|---------|-------------|
+| **Exact match** | Every number in AI response is compared to source metrics (2 decimal places) |
+| **Hallucination detection** | ALL decimal numbers in AI text must exist in source — catches fabricated numbers |
+| **CI completeness** | HR/OR mentions must include 95% CI in the same sentence |
+| **P-value correctness** | p<0.05 → "significant", p≥0.05 → "not significant" |
+| **Citation verification** | Numbers in cited sentences are checked against the article abstract |
+| **Forbidden phrases** | "almost significant", "trend toward significance", etc. are blocked |
+| **Auto-retry** | On validation failure, AI receives a correction prompt and rewrites (up to 2 retries) |
+| **Validation notice** | Summary shown at the end: `✅ Verified: X/Y numbers match` |
+
+### 6.3. Modes: Assistant and Coder
 
 **AI Assistant (default):**
 - Conversational chat with AI
 - Answers statistical questions, interprets results
 - Has context of project description, dataset, and analysis history
 - Supports markdown formatting
+- Numbers are validated against source metrics before display
 
 **AI Coder ("Coder" toggle):**
 - Generates Python analysis code
@@ -878,6 +897,18 @@ Click **"AI Settings"** (left panel or above AI Chat):
 - Shows code output and generated plots
 - Self-corrects on errors (up to 3 retries)
 - Uses temperature 0 (deterministic output)
+- **Note**: validation is disabled in coder mode
+
+### 6.4. Error Handling
+
+All AI providers display clean error messages without technical tracebacks:
+
+| Error | Displayed as |
+|-------|--------------|
+| Timeout | `Error (model): Request timed out (60s)...` |
+| API unavailable | `Error (model): Model temporarily unavailable...` |
+| Invalid API key | `Error (model): API key not valid...` |
+| Other | `Error (model): <human-readable message>` |
 
 ---
 
@@ -915,6 +946,21 @@ Right panel → **Reports** tab.
 **Requirements:**
 - AI must be configured (valid provider and credentials)
 - At least one analysis in history (max 5 included in prompt)
+
+### 7.3. AI Article Draft
+
+| Parameter | Description |
+|-----------|-------------|
+| **Language** | Russian or English |
+| **Section** | Full article, Methods, Results, or Discussion |
+| **Title** | Article title |
+| **Generate Article Draft** | Create AI-written scientific article draft |
+
+**Features:**
+- Numbers validated against source metrics with auto-retry
+- PubMed citations checked against article abstracts
+- Section-level generation (Methods, Results, Discussion, or Full)
+- Downloadable .docx file
 
 ---
 
