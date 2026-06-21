@@ -16,11 +16,72 @@ from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings('ignore', message='.*MATPLOTLIB.*')
 from sklearn.calibration import calibration_curve
+from scipy.optimize import minimize
+
+
+class _FirthLogisticRegression:
+    """Bias-reduced (Firth) logistic regression using penalized likelihood.
+    Handles complete separation by adding Jeffreys prior penalty.
+    """
+    def __init__(self, max_iter=1000, random_state=None, class_weight=None):
+        self.max_iter = max_iter
+        self.coef_ = None
+        self.intercept_ = None
+        self.n_iter_ = None
+        self.cov_matrix_ = None
+        self.se_ = None
+
+    def _neg_pen_loglik(self, beta, X_int, y):
+        eta = np.clip(X_int @ beta, -500, 500)
+        pi = 1 / (1 + np.exp(-eta))
+        pi = np.clip(pi, 1e-10, 1 - 1e-10)
+        ll = np.sum(y * np.log(pi) + (1 - y) * np.log(1 - pi))
+        W = pi * (1 - pi)
+        XWX = (X_int.T * W) @ X_int
+        try:
+            penalty = 0.5 * np.log(np.linalg.det(XWX))
+        except Exception:
+            penalty = 0
+        return -(ll + penalty)
+
+    def fit(self, X, y):
+        n, p = X.shape
+        X_int = np.column_stack([np.ones(n), X])
+        beta0 = np.zeros(p + 1)
+        result = minimize(
+            self._neg_pen_loglik, beta0,
+            args=(X_int, y),
+            method='L-BFGS-B',
+            options={'maxiter': self.max_iter, 'ftol': 1e-8}
+        )
+        self.intercept_ = result.x[0]
+        self.coef_ = result.x[1:].reshape(1, -1)
+        self.n_iter_ = result.nit
+        eta_opt = np.clip(X_int @ result.x, -500, 500)
+        pi_opt = 1 / (1 + np.exp(-eta_opt))
+        W_opt = pi_opt * (1 - pi_opt)
+        XWX_opt = (X_int.T * W_opt) @ X_int
+        self.cov_matrix_ = np.linalg.inv(XWX_opt + np.eye(p + 1) * 1e-10)
+        self.se_ = np.sqrt(np.diag(self.cov_matrix_))
+        return self
+
+    def predict_proba(self, X):
+        linear = X @ self.coef_.T + self.intercept_
+        prob = 1 / (1 + np.exp(-np.clip(linear, -500, 500)))
+        return np.column_stack([1 - prob, prob])
+
+    def predict(self, X):
+        return (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
 
 
 def _check_convergence(model, tag=""):
-    if hasattr(model, 'n_iter_') and len(model.n_iter_) > 0 and model.n_iter_[0] >= model.max_iter:
-        return f"Logistic regression did not converge{tag} — coefficients may be unreliable"
+    if hasattr(model, 'n_iter_'):
+        if isinstance(model.n_iter_, (list, np.ndarray)):
+            if len(model.n_iter_) > 0 and model.n_iter_[0] >= model.max_iter:
+                return f"Logistic regression did not converge{tag} — coefficients may be unreliable"
+        elif isinstance(model.n_iter_, (int, np.integer)):
+            if model.n_iter_ >= model.max_iter:
+                return f"Firth regression may not have fully converged{tag}"
     return None
 
 
@@ -112,6 +173,8 @@ validation_strategy = "{{ validation|default('none') }}"
 save_pred_col = "{{ save_pred_col|default('') }}"
 use_balanced = {{ use_balanced|default('false')|lower == 'true' }}
 cw = 'balanced' if use_balanced else None
+use_firth = {{ use_firth|default('false')|lower == 'true' }}
+_LR = _FirthLogisticRegression if use_firth else LogisticRegression
 show_roc_plot = {{ show_roc_plot|default(false) }}
 show_dca_plot = {{ show_dca_plot|default(false) }}
 show_cal_plot = {{ show_cal_plot|default(false) }}
@@ -147,7 +210,7 @@ def save_predictions_to_df(col_name, predictors_list):
     scaler = StandardScaler()
     X_full_scaled = scaler.fit_transform(X_full)
     cw = 'balanced' if use_balanced else None
-    model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
+    model = _LR(max_iter=1000, random_state=42, class_weight=cw)
     model.fit(X_full_scaled, y_all)
     df[col_name] = np.nan
     df.loc[df_log.index, col_name] = model.predict_proba(X_full_scaled)[:, 1]
@@ -343,7 +406,7 @@ def fit_logistic(pred_list):
     y = df_log[target_col].values
     X_scaled = scaler.fit_transform(X)
     cw = 'balanced' if use_balanced else None
-    model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
+    model = _LR(max_iter=1000, random_state=42, class_weight=cw)
     model.fit(X_scaled, y)
     warn = _check_convergence(model)
     return model, X_scaled, y, expanded, warn
@@ -358,7 +421,7 @@ def evaluate_final(pred_list):
         Xf_train_scaled = scaler.fit_transform(Xf_train)
         Xf_test_scaled = scaler.transform(Xf_test)
         cw = 'balanced' if use_balanced else None
-        model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
+        model = _LR(max_iter=1000, random_state=42, class_weight=cw)
         model.fit(Xf_train_scaled, y_train)
         y_pred = model.predict(Xf_test_scaled)
         y_proba = model.predict_proba(Xf_test_scaled)[:, 1]
@@ -380,7 +443,7 @@ def evaluate_final(pred_list):
         scaler = StandardScaler()
         Xf_scaled = scaler.fit_transform(Xf)
         cw = 'balanced' if use_balanced else None
-        model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
+        model = _LR(max_iter=1000, random_state=42, class_weight=cw)
         cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         y_proba_2d = cross_val_predict(model, Xf_scaled, y_all, cv=cv, method='predict_proba')
         y_proba = y_proba_2d[:, 1] if y_proba_2d.ndim == 2 and y_proba_2d.shape[1] == 2 else y_proba_2d
@@ -631,7 +694,7 @@ if regression_type == "uni":
             scaler = StandardScaler()
             Xp_train_scaled = scaler.fit_transform(Xp_train)
             Xp_test_scaled = scaler.transform(Xp_test)
-            model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
+            model = _LR(max_iter=1000, random_state=42, class_weight=cw)
             model.fit(Xp_train_scaled, y_train)
             y_proba = model.predict_proba(Xp_test_scaled)[:, 1]
             fpr, tpr, _ = roc_curve(y_test, y_proba)
@@ -642,7 +705,7 @@ if regression_type == "uni":
             Xp = X_all[:, col_idx]
             scaler = StandardScaler()
             Xp_scaled = scaler.fit_transform(Xp)
-            model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
+            model = _LR(max_iter=1000, random_state=42, class_weight=cw)
             cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
             y_proba_2d = cross_val_predict(model, Xp_scaled, y_all, cv=cv, method='predict_proba')
             y_proba = y_proba_2d[:, 1] if y_proba_2d.ndim == 2 and y_proba_2d.shape[1] == 2 else y_proba_2d
@@ -751,7 +814,7 @@ elif regression_type in ["multi", "enter"]:
         scaler = StandardScaler()
         Xm_train_scaled = scaler.fit_transform(Xm_train)
         Xm_test_scaled = scaler.transform(Xm_test)
-        model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
+        model = _LR(max_iter=1000, random_state=42, class_weight=cw)
         model.fit(Xm_train_scaled, y_train)
         cwarn = _check_convergence(model, " (backward split train)")
         if cwarn: output_metrics["warnings"].append(cwarn)
@@ -789,7 +852,7 @@ elif regression_type in ["multi", "enter"]:
         Xm = X_all[:, col_idx]
         scaler = StandardScaler()
         Xm_scaled = scaler.fit_transform(Xm)
-        model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
+        model = _LR(max_iter=1000, random_state=42, class_weight=cw)
         cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         y_proba_2d = cross_val_predict(model, Xm_scaled, y_all, cv=cv, method='predict_proba')
         y_proba = y_proba_2d[:, 1] if y_proba_2d.ndim == 2 and y_proba_2d.shape[1] == 2 else y_proba_2d
@@ -899,12 +962,19 @@ elif regression_type in ["multi", "enter"]:
 elif regression_type == "forward":
     print("### Forward Selection\n")
 
+    print('<div style="padding:15px;margin:10px 0;border:2px solid #dc3545;border-radius:8px;background:#fff5f5;color:#721c24">')
+    print("  <b>⚠️ WARNING: Stepwise p-values are INVALID</b><br>")
+    print("  P-values in the final model <b>do not account for the selection process</b>.")
+    print("  They are systematically biased and cannot be used for hypothesis testing.<br>")
+    print("  Use stepwise selection for <b>exploratory variable screening only</b>.")
+    print("  For confirmatory analysis, use a pre-specified model or LASSO.")
+    print('</div>\n')
+
     if validation_strategy == "split":
         print("⚠️ **Note:** Stepwise selection uses all data for variable selection (max power).")
         print("   Final metrics are computed on the test set.\n")
     else:
         print("⚠️ **Note:** Stepwise selection uses p-values for variable selection.")
-        print("   P-values in the final model **do not account for the selection process** and may be inflated.")
         if validation_strategy == "none":
             print("   Metrics on training data are **optimistic**. Use split or CV.")
         print("   Consider LASSO or Random Forest for more robust selection.\n")
@@ -959,7 +1029,7 @@ elif regression_type == "forward":
         hl_idx = [encoded_covs.index(e) for e in hl_expanded]
         X_hl = X_all[:, hl_idx]
         X_hl_scaled = StandardScaler().fit_transform(X_hl)
-        hl_model = LogisticRegression(max_iter=1000, random_state=42, class_weight=cw)
+        hl_model = _LR(max_iter=1000, random_state=42, class_weight=cw)
         hl_model.fit(X_hl_scaled, y_all)
         cwarn = _check_convergence(hl_model, " (Hosmer-Lemeshow)")
         if cwarn: output_metrics["warnings"].append(cwarn)

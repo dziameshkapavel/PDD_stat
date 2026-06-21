@@ -129,7 +129,7 @@ def calc_uno_cindex(y_ev, y_tm, risk, y_all_surv):
         return None
 
 def bootstrap_cindex(y_ev, y_tm, risk, y_all_surv=None, n_iter=1000):
-    """Returns Harrell C-index, Uno C-index, and bootstrap 95% CI for both."""
+    """Returns Harrell C-index, Uno C-index, bootstrap 95% CI, and H0 p-value."""
     n = len(y_ev)
     base_c = calc_cindex(y_ev, y_tm, risk)
     base_uno = calc_uno_cindex(y_ev, y_tm, risk, y_all_surv) if y_all_surv is not None else None
@@ -154,17 +154,22 @@ def bootstrap_cindex(y_ev, y_tm, risk, y_all_surv=None, n_iter=1000):
             except:
                 continue
     if len(boot_c) < 50:
-        return base_c, base_c, base_c, base_uno, None, None
+        return base_c, base_c, base_c, base_uno, None, None, None, None
     boot_c = np.array(boot_c)
     ci_low = float(np.percentile(boot_c, 2.5))
     ci_high = float(np.percentile(boot_c, 97.5))
+    # H0: C-index = 0.5 (no better than random)
+    n_extreme = min(int(np.sum(boot_c <= 0.5)), int(np.sum(boot_c >= 0.5)))
+    p_value = float((2 * n_extreme + 1) / (len(boot_c) + 1))
+    if p_value > 1.0:
+        p_value = 1.0
     uno_ci_low = None
     uno_ci_high = None
     if len(boot_uno) >= 50:
         boot_uno = np.array(boot_uno)
         uno_ci_low = float(np.percentile(boot_uno, 2.5))
         uno_ci_high = float(np.percentile(boot_uno, 97.5))
-    return float(base_c), ci_low, ci_high, base_uno, uno_ci_low, uno_ci_high
+    return float(base_c), ci_low, ci_high, base_uno, uno_ci_low, uno_ci_high, float(p_value), len(boot_c)
 
 def calc_time_auc_bootstrap(y_surv_local, risk, times, y_ev, y_tm, n_iter=500):
     n = len(y_ev)
@@ -270,7 +275,7 @@ for s in strata:
         risk = stratum_df[pred_col].values
 
         if n_bootstrap > 0:
-            c_val, ci_low, ci_high, c_uno, uno_low, uno_high = bootstrap_cindex(
+            c_val, ci_low, ci_high, c_uno, uno_low, uno_high, c_p_value, n_boot_actual = bootstrap_cindex(
                 local_y_event, local_y_time, risk, local_y_surv, n_bootstrap
             )
         else:
@@ -278,8 +283,9 @@ for s in strata:
             ci_low, ci_high = c_val, c_val
             c_uno = calc_uno_cindex(local_y_event, local_y_time, risk, local_y_surv)
             uno_low, uno_high = c_uno, c_uno if c_uno is not None else None
+            c_p_value = None
 
-        c_indices[pred_col] = {'value': c_val, 'ci_low': ci_low, 'ci_high': ci_high, 'uno': c_uno, 'uno_low': uno_low, 'uno_high': uno_high}
+        c_indices[pred_col] = {'value': c_val, 'ci_low': ci_low, 'ci_high': ci_high, 'uno': c_uno, 'uno_low': uno_low, 'uno_high': uno_high, 'p_value': c_p_value}
         auc_data[pred_col] = calc_time_auc_bootstrap(local_y_surv, risk, local_times, local_y_event, local_y_time, min(500, n_bootstrap))
 
     results_by_stratum.append({
@@ -293,13 +299,16 @@ for s in strata:
     print(f"### Stratum: {label} (n={len(stratum_df)}, events={int(local_y_event.sum())})\n")
 
     print("**Harrell C-index**")
-    print("| Model | C-index | 95% CI |")
-    print("|-------|---------|--------|")
+    print("| Model | C-index | 95% CI | p (H₀: C=0.5) |")
+    print("|-------|---------|--------|-----------------|")
     for m, c in c_indices.items():
-        print(f"| {m} | {c['value']:.4f} | [{c['ci_low']:.4f}, {c['ci_high']:.4f}] |")
+        p_str = fmt_p(c['p_value']) + "**" if (c['p_value'] is not None and c['p_value'] < 0.05) else (fmt_p(c['p_value']) if c['p_value'] is not None else "—")
+        print(f"| {m} | {c['value']:.4f} | [{c['ci_low']:.4f}, {c['ci_high']:.4f}] | {p_str} |")
     print()
 
     print("**Uno C-index** (IPCW-corrected)")
+
+    print("\n**Uno C-index** (IPCW-corrected)")
     print("| Model | C-index | 95% CI |")
     print("|-------|---------|--------|")
     for m, c in c_indices.items():

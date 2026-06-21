@@ -190,7 +190,7 @@ if is_binary:
     
     # RF-102: Calibration metrics
     from sklearn.metrics import brier_score_loss
-    from sklearn.isotonic import IsotonicRegression
+    from sklearn.calibration import CalibratedClassifierCV
     from scipy import stats
     brier = brier_score_loss(y_test, y_proba)
     print(f"| **Brier score** | **{brier:.4f}** |")
@@ -200,13 +200,15 @@ if is_binary:
     print(f"**Brier null model (always predict mean):** {brier_null:.4f}")
     print(f"**Brier skill score:** {1 - brier/brier_null:.4f} (1=perfect, 0=no better than mean)\n")
     
-    # Calibration curve via isotonic regression
-    iso_reg = IsotonicRegression(out_of_bounds='clip')
-    iso_reg.fit(y_proba, y_test)
-    calibrated_probs = iso_reg.predict(y_proba)
+    # Calibrated probabilities via CalibratedClassifierCV (cross-validated, avoids overfitting)
+    calibrated_clf = CalibratedClassifierCV(rf, method='isotonic', cv=5)
+    calibrated_clf.fit(X_train, y_train)
+    cal_probs = calibrated_clf.predict_proba(X_test)[:, 1]
+    cal_brier = brier_score_loss(y_test, cal_probs)
+    print(f"**Calibrated Brier score (5-fold CV):** {cal_brier:.4f}\n")
     from sklearn.linear_model import LogisticRegression
     logit_cal = LogisticRegression(solver='lbfgs')
-    logit_cal.fit(y_proba.reshape(-1, 1), y_test)
+    logit_cal.fit(cal_probs.reshape(-1, 1), y_test)
     cal_intercept = float(logit_cal.intercept_[0])
     cal_slope = float(logit_cal.coef_[0][0])
     print(f"**Calibration intercept:** {cal_intercept:.4f} (0=perfect)")
@@ -218,9 +220,11 @@ if is_binary:
     
     # Calibration plot
     from sklearn.calibration import calibration_curve
-    prob_true, prob_pred = calibration_curve(y_test, y_proba, n_bins=10, strategy='uniform')
+    prob_true_raw, prob_pred_raw = calibration_curve(y_test, y_proba, n_bins=10, strategy='uniform')
+    prob_true_cal, prob_pred_cal = calibration_curve(y_test, cal_probs, n_bins=10, strategy='uniform')
     fig_cal, ax_cal = plt.subplots(figsize=(8, 7))
-    ax_cal.plot(prob_pred, prob_true, marker='o', linewidth=2, label='RF')
+    ax_cal.plot(prob_pred_raw, prob_true_raw, 'o-', linewidth=2, label=f'Raw RF (Brier={brier:.3f})', alpha=0.7)
+    ax_cal.plot(prob_pred_cal, prob_true_cal, 's-', linewidth=2, label=f'Calibrated (Brier={cal_brier:.3f})', alpha=0.7)
     ax_cal.plot([0, 1], [0, 1], 'k--', linewidth=1, label='Perfect')
     ax_cal.set_xlabel('Mean predicted probability')
     ax_cal.set_ylabel('Observed proportion')
@@ -466,6 +470,7 @@ output_metrics = {
     "accuracy": float(accuracy_score(y_test, y_pred)),
     "auc": float(auc) if is_binary else None,
     "brier_score": float(brier) if is_binary else None,
+    "calibrated_brier_score": float(cal_brier) if is_binary else None,
     "brier_skill_score": float(1 - brier/brier_null) if is_binary else None,
     "calibration_intercept": float(cal_intercept) if is_binary else None,
     "calibration_slope": float(cal_slope) if is_binary else None,

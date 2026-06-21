@@ -190,6 +190,44 @@ class DataLoader:
             columns.append({"name": col, "type": col_type, "complete": complete})
         return columns
 
+    def mice_impute(self, columns: list[str] | None = None, max_iter: int = 10, random_state: int = 42) -> None:
+        """MICE (Multiple Imputation by Chained Equations) for numeric columns.
+        Uses IterativeImputer with BayesianRidge estimator.
+        Note: Median/mode imputation assumes MCAR. MICE handles MAR more robustly.
+        """
+        if self.df is None:
+            raise ValueError("Data not loaded.")
+        try:
+            from sklearn.experimental import enable_iterative_imputer  # noqa: F401
+        except ImportError:
+            raise ImportError("MICE requires scikit-learn >= 0.21")
+        from sklearn.impute import IterativeImputer
+        from sklearn.linear_model import BayesianRidge
+
+        if columns is None:
+            columns = self.df.columns.tolist()
+
+        df_sub = self.df[columns].copy()
+        numeric_cols = df_sub.select_dtypes(include=[np.number]).columns.tolist()
+
+        if not numeric_cols:
+            raise ValueError("No numeric columns found for MICE imputation.")
+
+        imputer = IterativeImputer(
+            estimator=BayesianRidge(),
+            max_iter=max_iter,
+            random_state=random_state,
+            imputation_order='ascending'
+        )
+
+        imputed_array = imputer.fit_transform(df_sub[numeric_cols])
+        df_imputed = pd.DataFrame(imputed_array, columns=numeric_cols, index=df_sub.index)
+
+        for col in numeric_cols:
+            self.df[col] = df_imputed[col]
+
+        print(f"[MICE] Imputed {len(numeric_cols)} numeric columns ({max_iter} iterations)")
+
     def _load_parquet(self, path: Path):
         import pandas as pd
         return pd.read_parquet(path)
